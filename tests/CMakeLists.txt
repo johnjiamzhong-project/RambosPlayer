@@ -18,9 +18,9 @@ endfunction()
 # Tests enabled as each task is completed:
 
 # Task 2 - FrameQueue
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_framequeue.cpp")
-#     add_qt_test(TstFrameQueue tst_framequeue.cpp)
-# endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_framequeue.cpp")
+    add_qt_test(TstFrameQueue tst_framequeue.cpp)
+endif()
 
 # Task 3 - AVSync
 # if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_avsync.cpp")
