@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug RambosPlayer",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/RambosPlayer.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "externalTerminal",
+            "preLaunchTask": "CMake Build",
+            "visualizerFile": "c:\\Users\\13031_t92iryl\\AppData\\Roaming\\Code\\User\\workspaceStorage\\85cda70dc53dc42eae917a2a9474e868\\tonka3000.qtvsctools\\qt.natvis.xml"
+        }
+    ]
+}
