@@ -64,14 +64,14 @@ RambosPlayer/
 
 ---
 
-## Task 1: 项目脚手架
+## Task 1: 项目脚手架 ✅
 
 **Files:**
 - Create: `RambosPlayer.pro`
 - Create: `src/main.cpp`
 - Create: `tests/tests.pro`
 
-- [ ] **Step 1: 创建 qmake 主项目文件**
+- [x] **Step 1: 创建 qmake 主项目文件**
 
 ```pro
 # RambosPlayer.pro
@@ -109,7 +109,7 @@ HEADERS += src/mainwindow.h \
 FORMS   += src/mainwindow.ui
 ```
 
-- [ ] **Step 2: 创建最小 main.cpp**
+- [x] **Step 2: 创建最小 main.cpp**
 
 ```cpp
 // src/main.cpp
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
 }
 ```
 
-- [ ] **Step 3: 创建测试子项目**
+- [x] **Step 3: 创建测试子项目**
 
 ```pro
 # tests/tests.pro
@@ -141,11 +141,11 @@ LIBS += -L$$VCPKG/lib -lavformat -lavcodec -lavutil -lswresample -lswscale
 SOURCES += tst_framequeue.cpp tst_avsync.cpp tst_demuxthread.cpp
 ```
 
-- [ ] **Step 4: 确认编译通过（空实现）**
+- [x] **Step 4: 确认编译通过（空实现）**
 
 在 VS2017 中打开 qmake 生成的 .sln，Build → 应编译无错。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add RambosPlayer.pro src/main.cpp tests/tests.pro
@@ -154,13 +154,13 @@ git commit -m "chore: 项目脚手架"
 
 ---
 
-## Task 2: FrameQueue（线程安全帧队列）
+## Task 2: FrameQueue（线程安全帧队列）✅
 
 **Files:**
 - Create: `src/framequeue.h`
 - Create: `tests/tst_framequeue.cpp`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```cpp
 // tests/tst_framequeue.cpp
@@ -234,14 +234,14 @@ QTEST_MAIN(TstFrameQueue)
 #include "tst_framequeue.moc"
 ```
 
-- [ ] **Step 2: 运行测试，确认 FAIL（类不存在）**
+- [x] **Step 2: 运行测试，确认 FAIL（类不存在）**
 
 ```
 qmake tests.pro && nmake
 tests.exe   → 编译错误：'FrameQueue' was not declared
 ```
 
-- [ ] **Step 3: 实现 FrameQueue**
+- [x] **Step 3: 实现 FrameQueue**  ✅ `7 passed, 0 failed, 0 skipped, 252ms`
 
 ```cpp
 // src/framequeue.h
@@ -310,7 +310,7 @@ private:
 };
 ```
 
-- [ ] **Step 4: 运行测试，确认全部 PASS**
+- [x] **Step 4: 运行测试，确认全部 PASS**
 
 ```
 tests.exe
@@ -321,7 +321,7 @@ PASS   TstFrameQueue::abort_unblocks_pop
 PASS   TstFrameQueue::size_and_clear
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framequeue.h tests/tst_framequeue.cpp
