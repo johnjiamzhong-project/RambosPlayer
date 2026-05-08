@@ -23,7 +23,7 @@
 | Task 1 — 项目脚手架（CMake + Qt5 + FFmpeg） | ✅ 完成 |
 | Task 2 — FrameQueue 线程安全队列（TDD） | ✅ 完成 |
 | Task 3 — AVSync 音频时钟（TDD） | ✅ 完成 |
-| Task 4 — DemuxThread 解复用线程（TDD） | 📋 |
+| Task 4 — DemuxThread 解复用线程（TDD） | ✅ 完成 |
 | Task 5 — VideoDecodeThread | 📋 |
 | Task 6 — AudioDecodeThread | 📋 |
 | Task 7 — VideoRenderer | 📋 |

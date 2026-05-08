@@ -29,6 +29,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_avsync.cpp")
 endif()
 
 # Task 4 - DemuxThread
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_demuxthread.cpp")
-#     add_qt_test(TstDemuxThread tst_demuxthread.cpp)
-# endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_demuxthread.cpp")
+    add_qt_test(TstDemuxThread tst_demuxthread.cpp)
+    target_sources(TstDemuxThread PRIVATE ${CMAKE_SOURCE_DIR}/src/demuxthread.cpp)
+endif()

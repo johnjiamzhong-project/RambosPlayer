@@ -15,7 +15,11 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
 find_package(FFMPEG REQUIRED)
 
-add_executable(RambosPlayer src/main.cpp)
+add_executable(RambosPlayer
+    src/main.cpp
+    src/avsync.cpp
+    src/demuxthread.cpp
+)
 
 target_include_directories(RambosPlayer PRIVATE
     ${FFMPEG_INCLUDE_DIRS}
