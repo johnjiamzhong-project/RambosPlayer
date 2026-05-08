@@ -1,0 +1,19 @@
+# docs/superpowers
+
+本目录存放由 Superpowers 技能生成的结构化文档，分两类子目录：
+
+## plans/
+
+实现计划文件（由 `superpowers:writing-plans` 技能生成）。每份文件对应一个开发阶段，包含任务分解、逐步 checkbox、完整代码片段，供 `superpowers:executing-plans` 或 `superpowers:subagent-driven-development` 技能按步骤执行。
+
+| 文件 | 覆盖范围 |
+|------|----------|
+| [2026-04-26-rambos-player-core.md](plans/2026-04-26-rambos-player-core.md) | Task 1–10：项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 集成验证 |
+
+## specs/
+
+设计规格文件，记录单个组件的接口约定、行为契约和边界条件，是实现前的"需求文档"。
+
+| 文件 | 组件 |
+|------|------|
+| [2026-05-08-framequeue-design.md](specs/2026-05-08-framequeue-design.md) | `FrameQueue<T>` — 线程安全有界阻塞队列 |

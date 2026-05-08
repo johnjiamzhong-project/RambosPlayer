@@ -21,8 +21,8 @@
 | 任务 | 状态 |
 |------|:----:|
 | Task 1 — 项目脚手架（CMake + Qt5 + FFmpeg） | ✅ 完成 |
-| Task 2 — FrameQueue 线程安全队列（TDD） | 📋 |
-| Task 3 — AVSync 音频时钟（TDD） | 📋 |
+| Task 2 — FrameQueue 线程安全队列（TDD） | ✅ 完成 |
+| Task 3 — AVSync 音频时钟（TDD） | ✅ 完成 |
 | Task 4 — DemuxThread 解复用线程（TDD） | 📋 |
 | Task 5 — VideoDecodeThread | 📋 |
 | Task 6 — AudioDecodeThread | 📋 |
@@ -62,6 +62,19 @@ VideoDecodeThread                     AudioDecodeThread
     ▼                                    │ 维护音频时钟
 VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 ```
+
+### 核心组件
+
+| 组件 | 文件 | 说明 |
+|------|------|------|
+| `FrameQueue<T>` | `src/framequeue.h` | 线程安全有界阻塞队列，生产者满时阻塞，消费者空时按超时等待，`abort()` 解锁所有等待线程 |
+| `AVSync` | `src/avsync.h/.cpp` | 原子量存储音频时钟 PTS，`videoDelay(pts)` 返回视频帧应等待的毫秒数；落后超过 400 ms 返回 0（丢帧） |
+| `DemuxThread` | `src/demuxthread.h/.cpp` | `av_read_frame` 循环，按流索引将 `AVPacket*` 分发到视频/音频包队列 |
+| `VideoDecodeThread` | `src/videodecodethread.h/.cpp` | 消费视频包队列，解码为 `AVFrame*` 推入帧队列 |
+| `AudioDecodeThread` | `src/audiodecodethread.h/.cpp` | 解码 + `swr_convert` 重采样为 S16 立体声 → `QAudioSink`，同步更新音频时钟 |
+| `VideoRenderer` | `src/videorenderer.h/.cpp` | `QTimer` 1 ms 检查渲染时机，`sws_scale` YUV420P→RGB32，`QPainter` 绘帧 |
+| `PlayerController` | `src/playercontroller.h/.cpp` | 持有并管理所有组件生命周期，对外暴露 open/play/pause/stop/seek/setVolume |
+| `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏 |
 
 ---
 

@@ -1,4 +1,6 @@
-# 如何用 Claude Code 从 0 开发项目（面试回答）
+# 如何用 Claude Code 从 0 开发项目
+
+> 记录 RambosPlayer 项目的开发过程与架构理解，包括 Claude Code 工作流和关键设计决策。
 
 ## 结构化回答（STAR 框架）
 

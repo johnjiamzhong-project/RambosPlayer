@@ -23,9 +23,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_framequeue.cpp")
 endif()
 
 # Task 3 - AVSync
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_avsync.cpp")
-#     add_qt_test(TstAVSync tst_avsync.cpp)
-# endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_avsync.cpp")
+    add_qt_test(TstAVSync tst_avsync.cpp)
+    target_sources(TstAVSync PRIVATE ${CMAKE_SOURCE_DIR}/src/avsync.cpp)
+endif()
 
 # Task 4 - DemuxThread
 # if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_demuxthread.cpp")

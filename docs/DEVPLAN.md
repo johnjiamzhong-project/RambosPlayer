@@ -34,13 +34,14 @@
 
 **目标：** 空 Qt 项目能编译运行，测试子项目框架就位。
 
-- [ ] 创建 `RambosPlayer.pro`，配置 Qt modules（`core gui widgets multimedia`）、C++17、vcpkg 头文件和库路径
-- [ ] 创建 `src/main.cpp`，`QApplication` + 空 `QMainWindow` 显示窗口
-- [ ] 创建 `tests/tests.pro`，引入 `testlib`，编译通过
-- [ ] 在 VS2017 中打开 qmake 生成的 .sln，Build → 0 error
-- [ ] `git init && git add . && git commit -m "chore: 项目骨架"`
+- [x] 创建 `CMakeLists.txt`，配置 Qt5 模块（`Core Gui Widgets Multimedia`）、C++17、vcpkg toolchain 和 FFmpeg
+- [x] 创建 `CMakePresets.json`，preset `default` 指定 VS2017 x64 生成器和 vcpkg toolchain
+- [x] 创建 `src/main.cpp`，`QApplication` + 空 `QMainWindow` 显示窗口
+- [x] 创建 `tests/CMakeLists.txt`，封装 `add_qt_test` helper，`enable_testing()` 就位
+- [x] `cmake --preset default && cmake --build build --config Debug` → 0 error
+- [x] `git commit -m "chore: 项目脚手架"`
 
-**验收：** 运行程序出现空窗口，`tests.exe` 能启动（无测试用例时直接退出也算通过）。
+**验收：** 运行程序出现空窗口；`ctest --test-dir build --config Debug` 能执行（无用例时直接通过）。
 
 ---
 
@@ -48,19 +49,19 @@
 
 **目标：** `FrameQueue<T>` 和 `AVSync` 单元测试全绿。
 
-### FrameQueue（线程安全模板队列）
+### FrameQueue（线程安全模板队列）✅
 
-- [ ] 创建 `src/framequeue.h`，实现 `push` / `tryPop` / `clear` / `abort` / `reset` / `size`
-- [ ] 创建 `tests/tst_framequeue.cpp`，覆盖：单线程推取、超时返回 false、达到上限时阻塞、`abort` 解锁等待线程、`clear` 后 size 为 0
-- [ ] 运行 `tests.exe`，全部 PASS
-- [ ] `git commit -m "feat: FrameQueue 线程安全队列"`
+- [x] 创建 `src/framequeue.h`，实现 `push` / `tryPop` / `clear` / `abort` / `reset` / `size`
+- [x] 创建 `tests/tst_framequeue.cpp`，覆盖：单线程推取、超时返回 false、达到上限时阻塞、`abort` 解锁等待线程、`clear` 后 size 为 0
+- [x] 运行 `TstFrameQueue.exe`，全部 PASS（7 passed, 0 failed）
+- [x] `git commit -m "feat: FrameQueue 线程安全有界阻塞队列（Task 2）"`
 
-### AVSync（音频时钟）
+### AVSync（音频时钟）✅
 
-- [ ] 创建 `src/avsync.h` / `src/avsync.cpp`，实现 `setAudioClock` / `audioClock` / `videoDelay`
+- [x] 创建 `src/avsync.h` / `src/avsync.cpp`，实现 `setAudioClock` / `audioClock` / `videoDelay`
   - `videoDelay(pts)`：视频领先 → 返回等待毫秒数；落后超过 400 ms → 返回 0（丢帧）
-- [ ] 创建 `tests/tst_avsync.cpp`，覆盖：默认时钟为负、set/get 精度、同步时延迟≈0、领先 100 ms 时延迟≈100、落后 500 ms 时延迟=0
-- [ ] 运行 `tests.exe`，全部 PASS
+- [x] 创建 `tests/tst_avsync.cpp`，覆盖：默认时钟为负、set/get 精度、同步时延迟≈0、领先 200 ms 时延迟≈200、落后 500 ms 时延迟=0
+- [x] 运行 `TstAVSync.exe`，全部 PASS（7 passed, 0 failed）
 - [ ] `git commit -m "feat: AVSync 音频时钟与视频延迟计算"`
 
 **验收：** `tests.exe` 输出 0 failures。
@@ -249,8 +250,8 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 ## 当前进度
 
-- [x] Phase 1 — 项目骨架（计划已就绪，待执行）
-- [ ] Phase 2 — 基础组件
+- [x] Phase 1 — 项目骨架
+- [x] Phase 2 — 基础组件（FrameQueue ✅，AVSync ✅）
 - [ ] Phase 3 — 解复用线程
 - [ ] Phase 4 — 解码层
 - [ ] Phase 5 — 渲染与同步

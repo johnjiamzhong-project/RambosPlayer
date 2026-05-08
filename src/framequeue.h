@@ -3,6 +3,9 @@
 #include <QMutex>
 #include <QWaitCondition>
 
+// 线程安全的有界阻塞队列，用于生产者-消费者管道。
+// 队列满时 push 阻塞，队列空时 tryPop 按超时等待；
+// abort() 立即唤醒所有等待线程，reset() 清空并恢复正常状态。
 template<typename T>
 class FrameQueue {
 public:
