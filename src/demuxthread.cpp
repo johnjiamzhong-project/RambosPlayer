@@ -8,12 +8,16 @@ extern "C" {
 
 #include <QtDebug>
 
+// 先 stop() 通知线程退出，再 wait() 等线程结束，最后释放 AVFormatContext。
+// 顺序不能颠倒：必须确保 run() 不再访问 fmtCtx_ 后才能释放它。
 DemuxThread::~DemuxThread() {
     stop();
     wait();
     if (fmtCtx_) avformat_close_input(&fmtCtx_);
 }
 
+// 打开媒体文件，探测流信息，记录第一条视频流和音频流的索引。
+// 任一步骤失败均返回 false，并确保 fmtCtx_ 已释放（调用方可直接析构）。
 bool DemuxThread::open(const QString& path,
                         FrameQueue<AVPacket*>* videoQueue,
                         FrameQueue<AVPacket*>* audioQueue) {
@@ -39,16 +43,22 @@ bool DemuxThread::open(const QString& path,
     return true;
 }
 
+// 设置 abort_ 标志，并对两条队列调用 abort()，
+// 唤醒任何阻塞在 push/tryPop 的线程，使 run() 能在下次循环检查时退出。
 void DemuxThread::stop() {
     abort_.store(true, std::memory_order_relaxed);
     if (videoQueue_) videoQueue_->abort();
     if (audioQueue_) audioQueue_->abort();
 }
 
+// 将 seek 目标原子写入 seekTarget_；实际跳转在 run() 下次循环顶部的 handleSeek() 中执行。
 void DemuxThread::seek(double seconds) {
     seekTarget_.store(seconds, std::memory_order_relaxed);
 }
 
+// 检查是否有待处理的 seek 请求。若有，调用 av_seek_frame 跳转到目标关键帧，
+// 然后逐一 pop+free 清空两条队列中的残留包，避免解码线程消费过期数据。
+// 使用 pop+free 而非 clear()，是因为 clear() 不释放队列中的 AVPacket* 指针。
 void DemuxThread::handleSeek() {
     if (!fmtCtx_) { seekTarget_.store(-1.0, std::memory_order_relaxed); return; }
 
@@ -58,12 +68,14 @@ void DemuxThread::handleSeek() {
     int64_t ts = (int64_t)(target * AV_TIME_BASE);
     av_seek_frame(fmtCtx_, -1, ts, AVSEEK_FLAG_BACKWARD);
 
-    // pop+free：不能只调 clear()，会泄漏 AVPacket*
     AVPacket* p;
     while (videoQueue_->tryPop(p, 0)) av_packet_free(&p);
     while (audioQueue_->tryPop(p, 0)) av_packet_free(&p);
 }
 
+// 解复用主循环：持续读取 AVPacket 并按流索引分发到对应队列。
+// 每轮循环先处理 seek 请求，再读一个包，clone 后 push 进队列（clone 使所有权独立）。
+// 遇到 EOF 或读取错误时退出；stop() 设置 abort_ 后下次循环检查时也会退出。
 void DemuxThread::run() {
     AVPacket* pkt = av_packet_alloc();
 
