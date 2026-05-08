@@ -6,6 +6,15 @@
 
 **Architecture:** 解复用线程将包推入两条包队列，视频/音频解码线程分别消费包队列并产出帧；音频解码线程以 QAudioSink 推送 PCM 并维护音频时钟，视频渲染器依据音频时钟计算延迟后 QPainter 绘帧，PlayerController 串联全部组件并向 MainWindow 暴露简单控制接口。
 
+| 阶段 | 组件 | 作用 |
+|------|------|------|
+| 1️⃣ 解复用 | DemuxThread | 读取视频文件，分离视频/音频包 → 推入 2 条队列 |
+| 2️⃣ 解码 | VideoDecodeThread + AudioDecodeThread | 消费包队列，解码成帧 |
+| 3️⃣ 同步 | AudioDecodeThread + AVSync | 音频输出推动主时钟，视频帧依音频延迟决定绘制时间 |
+| 4️⃣ 渲染 | VideoRenderer + MainWindow | 计算延迟后用 QPainter 绘帧，暴露播放/暂停/音量等控制 |
+
+**核心设计**：音频是主时钟，视频跟音频同步。
+
 **Tech Stack:** C++17, VS2017, Qt 5.14.2 (QThread / QAudioSink / QPainter / QSlider), FFmpeg 4.x via vcpkg (libavformat / libavcodec / libswresample / libswscale)
 
 ---
