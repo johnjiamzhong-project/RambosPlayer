@@ -9,6 +9,7 @@
 | 文件 | 覆盖范围 |
 |------|----------|
 | [2026-04-26-rambos-player-core.md](plans/2026-04-26-rambos-player-core.md) | Task 1–10：项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 集成验证 |
+| [2026-05-08-demuxthread.md](plans/2026-05-08-demuxthread.md) | Task 4 专项计划：`DemuxThread` av_read_frame 循环、stop/seek 支持 |
 
 ## specs/
 
@@ -17,3 +18,4 @@
 | 文件 | 组件 |
 |------|------|
 | [2026-05-08-framequeue-design.md](specs/2026-05-08-framequeue-design.md) | `FrameQueue<T>` — 线程安全有界阻塞队列 |
+| [2026-05-08-demuxthread-design.md](specs/2026-05-08-demuxthread-design.md) | `DemuxThread` — FFmpeg 解复用线程，stop/seek/内存/测试策略 |

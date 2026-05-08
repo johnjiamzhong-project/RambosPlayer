@@ -79,15 +79,15 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
        -c:v libx264 -c:a aac -shortest tests/data/sample.mp4
 ```
 
-- [ ] 创建 `src/demuxthread.h` / `src/demuxthread.cpp`
+- [x] 创建 `src/demuxthread.h` / `src/demuxthread.cpp`
   - `open(path, videoQueue, audioQueue)` → bool
   - `run()` 循环：`av_read_frame` → 按 stream_index 克隆包推入对应队列
   - `stop()` 设 abort 标志并 abort 两条队列
   - `seek(seconds)` 存原子量，`run()` 检测后调用 `av_seek_frame` 并清空队列
   - 暴露：`duration()`（微秒）、`videoStreamIdx()`、`audioStreamIdx()`、`formatContext()`
-- [ ] 创建 `tests/tst_demuxthread.cpp`，覆盖：open 有效文件返回 true、open 无效文件返回 false、运行 300 ms 后两条队列均有包
-- [ ] 运行测试，全部 PASS；清理测试中分配的 `AVPacket*`
-- [ ] `git commit -m "feat: DemuxThread 解复用线程"`
+- [x] 创建 `tests/tst_demuxthread.cpp`，覆盖：open 有效文件返回 true、open 无效文件返回 false、运行 300 ms 后两条队列均有包
+- [x] 运行测试，全部 PASS；清理测试中分配的 `AVPacket*`
+- [x] `git commit -m "feat: DemuxThread 解复用线程"`
 
 **验收：** 测试通过；Valgrind / ASAN 无包泄漏。
 
@@ -252,7 +252,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 - [x] Phase 1 — 项目骨架
 - [x] Phase 2 — 基础组件（FrameQueue ✅，AVSync ✅）
-- [ ] Phase 3 — 解复用线程
+- [x] Phase 3 — 解复用线程（DemuxThread ✅）
 - [ ] Phase 4 — 解码层
 - [ ] Phase 5 — 渲染与同步
 - [ ] Phase 6 — 完整播放器 UI

@@ -9,36 +9,41 @@ RambosPlayer is a multithreaded multimedia player built with C++17, Qt 5.14.2, a
 - Master plan (all 10 phases): `docs/DEVPLAN.md`
 - Detailed TDD execution plan (Phase 1–6, with full code): `docs/superpowers/plans/2026-04-26-rambos-player-core.md`
 
+## Rules
+
+- **Git commit 信息必须用中文描述**
+- **模块完成后同步更新文档**：每个 Task/Phase 完成时，在 commit 前同步更新以下三个文件的进度状态：
+  - `readme.md` — 功能1进度表中对应任务改为 ✅ 完成
+  - `docs/DEVPLAN.md` — 对应 Phase 的 checkbox 全部勾选，"当前进度"末尾标记完成
+  - `docs/superpowers/README.md` — 若产出了新的 plan 或 spec 文件，补充到对应表格
+
 ## Environment
 
 | Item | Value |
 |------|-------|
-| IDE | Visual Studio 2017 |
-| UI | Qt 5.14.2 |
-| FFmpeg | vcpkg, path `D:\vcpkg\installed\x64-windows` |
-| Build system | qmake → nmake (or open .sln in VS2017) |
+| IDE | VSCode + CMake Tools 扩展 |
+| UI | Qt 5.14.2（`E:\Qt\Qt5.14.2\5.14.2\msvc2017_64`） |
+| FFmpeg | vcpkg，toolchain `D:\vcpkg\scripts\buildsystems\vcpkg.cmake` |
+| Build system | CMake 3.16+，preset `default`，生成器 Visual Studio 15 2017 x64 |
 
 ## Build & Test Commands
 
-```bash
-# Generate VS solution from qmake project
-qmake RambosPlayer.pro
+```powershell
+# Configure（首次或 CMakeLists.txt 修改后）
+cmake --preset default
 
-# Build (from VS2017 Developer Command Prompt)
-nmake
+# Build
+cmake --build build --config Debug
 
-# Build and run tests
-cd tests
-qmake tests.pro
-nmake
-tests.exe
+# Run tests
+ctest --test-dir build --config Debug --output-on-failure
 ```
 
-To run a single test class, pass the class name:
-```bash
-tests.exe TstFrameQueue
-tests.exe TstAVSync
-tests.exe TstDemuxThread
+To run a single test:
+```powershell
+.\build\Debug\TstFrameQueue.exe
+.\build\Debug\TstAVSync.exe
+.\build\Debug\TstDemuxThread.exe
 ```
 
 ## Architecture
