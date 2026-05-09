@@ -11,7 +11,9 @@
       "Bash(git push *)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); hooks=d.get\\('hooks',{}\\); print\\(json.dumps\\(hooks, indent=2, ensure_ascii=False\\)\\)\")",
       "Bash(where bash *)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "PowerShell(cmake *)",
+      "PowerShell(Get-Process *)"
     ]
   }
 }

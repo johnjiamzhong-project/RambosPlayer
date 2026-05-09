@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>DemuxThread 设计文档</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#181c27;--card:#1e2235;--border:#2a3050;
+  --accent:#4f8ef7;--accent2:#a78bfa;--green:#34d399;--yellow:#fbbf24;--red:#f87171;
+  --text:#e2e8f0;--muted:#8892a4;--code-bg:#13161f;
+  --sidebar-w:220px;
+}
+html{scroll-behavior:smooth}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.7;
+  background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+
+/* ── sidebar ── */
+nav{width:var(--sidebar-w);min-height:100vh;background:var(--surface);
+  border-right:1px solid var(--border);padding:28px 0;position:sticky;top:0;
+  align-self:flex-start;flex-shrink:0}
+nav .logo{padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:16px}
+nav .logo h2{font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.05em;text-transform:uppercase}
+nav .logo p{font-size:11px;color:var(--muted);margin-top:3px}
+nav a{display:block;padding:7px 20px;font-size:12.5px;color:var(--muted);
+  text-decoration:none;border-left:3px solid transparent;transition:.15s}
+nav a:hover,nav a.active{color:var(--text);border-left-color:var(--accent);background:rgba(79,142,247,.07)}
+nav .section-label{padding:14px 20px 4px;font-size:10px;font-weight:700;
+  color:var(--border);letter-spacing:.1em;text-transform:uppercase}
+
+/* ── main ── */
+main{flex:1;padding:48px 56px;max-width:900px}
+
+h1{font-size:1.75rem;font-weight:800;color:#fff;margin-bottom:6px}
+.meta{font-size:12px;color:var(--muted);margin-bottom:36px;display:flex;gap:16px}
+.meta span{display:flex;align-items:center;gap:5px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-blue{background:rgba(79,142,247,.18);color:var(--accent)}
+.badge-purple{background:rgba(167,139,250,.18);color:var(--accent2)}
+.badge-green{background:rgba(52,211,153,.18);color:var(--green)}
+
+section{margin-bottom:52px}
+h2{font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:18px;
+  padding-bottom:8px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px}
+h2 .icon{width:22px;height:22px;border-radius:5px;display:flex;align-items:center;
+  justify-content:center;font-size:12px;flex-shrink:0}
+h2 .icon.blue{background:rgba(79,142,247,.2);color:var(--accent)}
+h2 .icon.purple{background:rgba(167,139,250,.2);color:var(--accent2)}
+h2 .icon.green{background:rgba(52,211,153,.2);color:var(--green)}
+h2 .icon.yellow{background:rgba(251,191,36,.2);color:var(--yellow)}
+
+p{color:#c8d0dc;margin-bottom:12px;font-size:13.5px}
+ul{list-style:none;margin-bottom:12px}
+ul li{padding:3px 0 3px 16px;color:#c8d0dc;font-size:13.5px;position:relative}
+ul li::before{content:"▸";position:absolute;left:0;color:var(--accent);font-size:11px;top:5px}
+
+/* code */
+pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+  padding:18px 20px;overflow-x:auto;font-family:"Cascadia Code","Fira Code",Consolas,monospace;
+  font-size:12.5px;line-height:1.6;margin-bottom:16px}
+code{font-family:"Cascadia Code","Fira Code",Consolas,monospace;font-size:12px;
+  background:rgba(79,142,247,.1);color:#a5c8ff;padding:1px 5px;border-radius:3px}
+pre code{background:transparent;padding:0;color:#cdd6f4}
+
+/* keyword colors in pre blocks */
+.kw{color:#c792ea}.type{color:#82aaff}.fn{color:#82cfff}
+.str{color:#c3e88d}.cmt{color:#546e7a;font-style:italic}.num{color:#f78c6c}
+
+/* table */
+table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
+th{background:var(--card);color:var(--muted);font-weight:600;text-align:left;
+  padding:9px 14px;border:1px solid var(--border);font-size:11.5px;letter-spacing:.03em}
+td{padding:9px 14px;border:1px solid var(--border);color:#c8d0dc;vertical-align:top}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+/* note box */
+.note{background:rgba(79,142,247,.08);border:1px solid rgba(79,142,247,.25);
+  border-radius:7px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#b8cfee}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.25);color:#e8d5a0}
+.note strong{color:#fff}
+
+/* diagram containers */
+.diagram{background:var(--card);border:1px solid var(--border);border-radius:10px;
+  padding:24px;margin-bottom:20px;overflow-x:auto}
+.diagram svg{display:block;margin:auto}
+
+/* test cards */
+.test-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:4px}
+.test-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+.test-card .tc-name{font-family:"Cascadia Code",Consolas,monospace;font-size:11.5px;
+  color:var(--green);margin-bottom:6px;word-break:break-all}
+.test-card .tc-desc{font-size:12.5px;color:var(--muted)}
+
+/* limits */
+.limit-row{display:flex;gap:12px;align-items:flex-start;padding:8px 0;
+  border-bottom:1px solid var(--border)}
+.limit-row:last-child{border-bottom:none}
+.limit-tag{flex-shrink:0;padding:3px 9px;border-radius:4px;font-size:11px;font-weight:700;
+  background:rgba(248,113,113,.15);color:var(--red)}
+.limit-tag.todo{background:rgba(251,191,36,.15);color:var(--yellow)}
+.limit-body{font-size:13px;color:#c8d0dc}
+
+hr{border:none;border-top:1px solid var(--border);margin:32px 0}
+</style>
+</head>
+<body>
+
+<!-- ═══ SIDEBAR ═══ -->
+<nav>
+  <div class="logo">
+    <h2>RambosPlayer</h2>
+    <p>Task 4 · DemuxThread</p>
+  </div>
+  <div class="section-label">设计文档</div>
+  <a href="#responsibility">职责</a>
+  <a href="#api">公共接口</a>
+  <a href="#lifecycle">线程生命周期</a>
+  <a href="#seek">Seek 机制</a>
+  <a href="#memory">内存管理</a>
+  <a href="#tests">测试策略</a>
+  <a href="#limits">已知局限</a>
+</nav>
+
+<!-- ═══ MAIN ═══ -->
+<main>
+  <h1>DemuxThread 设计文档</h1>
+  <div class="meta">
+    <span>📅 2026-05-08</span>
+    <span><span class="badge badge-blue">Task 4</span></span>
+    <span><span class="badge badge-purple">src/demuxthread.h/.cpp</span></span>
+    <span><span class="badge badge-purple">tests/tst_demuxthread.cpp</span></span>
+  </div>
+
+  <!-- ── 职责 ── -->
+  <section id="responsibility">
+    <h2><span class="icon blue">⚙</span>职责</h2>
+    <p><code>DemuxThread</code> 是 <code>QThread</code> 子类，在整个播放器流水线中负责读取媒体容器并分发裸包，<strong>不负责解码</strong>。</p>
+
+    <!-- Pipeline 位置图 -->
+    <div class="diagram">
+      <svg width="720" height="110" viewBox="0 0 720 110" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#4f8ef7"/>
+          </marker>
+          <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#a78bfa"/>
+          </marker>
+        </defs>
+        <!-- File -->
+        <rect x="10" y="35" width="110" height="40" rx="7" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="65" y="52" text-anchor="middle" fill="#8892a4" font-size="11" font-family="Segoe UI,sans-serif">媒体文件</text>
+        <text x="65" y="67" text-anchor="middle" fill="#4f8ef7" font-size="10.5" font-family="Cascadia Code,monospace">.mp4 / .mkv</text>
+
+        <!-- Arrow -->
+        <line x1="120" y1="55" x2="168" y2="55" stroke="#4f8ef7" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="144" y="48" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">avformat</text>
+
+        <!-- DemuxThread -->
+        <rect x="170" y="20" width="150" height="70" rx="8" fill="#1a2340" stroke="#4f8ef7" stroke-width="2"/>
+        <text x="245" y="45" text-anchor="middle" fill="#4f8ef7" font-size="13" font-weight="700" font-family="Segoe UI,sans-serif">DemuxThread</text>
+        <text x="245" y="63" text-anchor="middle" fill="#8892a4" font-size="10.5" font-family="Cascadia Code,monospace">av_read_frame()</text>
+        <text x="245" y="79" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">按流索引分发</text>
+
+        <!-- Arrow to videoQ -->
+        <line x1="320" y1="42" x2="388" y2="32" stroke="#82aaff" stroke-width="1.5" marker-end="url(#arr)"/>
+        <!-- Arrow to audioQ -->
+        <line x1="320" y1="68" x2="388" y2="80" stroke="#c792ea" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+        <!-- VideoQueue -->
+        <rect x="390" y="14" width="148" height="36" rx="6" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="464" y="29" text-anchor="middle" fill="#82aaff" font-size="10.5" font-weight="700" font-family="Segoe UI,sans-serif">videoPacketQueue</text>
+        <text x="464" y="43" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">FrameQueue&lt;AVPacket*&gt; cap=100</text>
+
+        <!-- AudioQueue -->
+        <rect x="390" y="62" width="148" height="36" rx="6" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="464" y="77" text-anchor="middle" fill="#c792ea" font-size="10.5" font-weight="700" font-family="Segoe UI,sans-serif">audioPacketQueue</text>
+        <text x="464" y="91" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">FrameQueue&lt;AVPacket*&gt; cap=400</text>
+
+        <!-- Arrow to decoders -->
+        <line x1="538" y1="32" x2="590" y2="32" stroke="#82aaff" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="538" y1="80" x2="590" y2="80" stroke="#c792ea" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <text x="620" y="29" text-anchor="middle" fill="#82aaff" font-size="10" font-family="Segoe UI,sans-serif">Video</text>
+        <text x="620" y="41" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">Decoder</text>
+        <text x="620" y="77" text-anchor="middle" fill="#c792ea" font-size="10" font-family="Segoe UI,sans-serif">Audio</text>
+        <text x="620" y="89" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">Decoder</text>
+      </svg>
+    </div>
+
+    <ul>
+      <li>用 <code>avformat_open_input</code> / <code>avformat_find_stream_info</code> 打开媒体文件</li>
+      <li><code>run()</code> 循环调 <code>av_read_frame</code>，按流索引分发 <code>AVPacket*</code></li>
+      <li>响应外部的 <code>stop()</code> 和 <code>seek()</code> 请求，线程安全地退出或跳转</li>
+      <li><strong>不负责</strong>解码，不拥有解码器</li>
+    </ul>
+  </section>
+
+  <!-- ── 公共接口 ── -->
+  <section id="api">
+    <h2><span class="icon purple">{ }</span>公共接口</h2>
+    <pre><code><span class="kw">class</span> <span class="type">DemuxThread</span> : <span class="kw">public</span> <span class="type">QThread</span> {
+<span class="kw">public</span>:
+    ~<span class="type">DemuxThread</span>() <span class="kw">override</span>;
+
+    <span class="kw">bool</span> <span class="fn">open</span>(<span class="kw">const</span> <span class="type">QString</span>&amp; path,
+              <span class="type">FrameQueue</span>&lt;<span class="type">AVPacket</span>*&gt;* videoQueue,
+              <span class="type">FrameQueue</span>&lt;<span class="type">AVPacket</span>*&gt;* audioQueue);
+    <span class="kw">void</span> <span class="fn">stop</span>();
+    <span class="kw">void</span> <span class="fn">seek</span>(<span class="kw">double</span> seconds);   <span class="cmt">// 秒，原子存储，run() 下次循环生效</span>
+
+    <span class="type">int64_t</span> <span class="fn">duration</span>() <span class="kw">const</span>;            <span class="cmt">// 单位：微秒（AV_TIME_BASE）</span>
+    <span class="kw">int</span> <span class="fn">videoStreamIdx</span>() <span class="kw">const</span>;
+    <span class="kw">int</span> <span class="fn">audioStreamIdx</span>() <span class="kw">const</span>;
+    <span class="type">AVFormatContext</span>* <span class="fn">formatContext</span>() <span class="kw">const</span>;  <span class="cmt">// PlayerController 用于取 codecpar/time_base</span>
+
+<span class="kw">signals</span>:
+    <span class="kw">void</span> <span class="fn">finished</span>();
+
+<span class="kw">protected</span>:
+    <span class="kw">void</span> <span class="fn">run</span>() <span class="kw">override</span>;
+};</code></pre>
+
+    <div class="note">
+      <strong>生命周期约束：</strong>
+      <code>formatContext()</code> 暴露裸指针，生命周期由 <code>DemuxThread</code> 管理（析构时 <code>avformat_close_input</code>）。调用方不得持有超过 <code>DemuxThread</code> 生命周期的引用。
+    </div>
+    <div class="note">
+      <strong>duration() 单位：</strong>返回 <code>fmtCtx_-&gt;duration</code>（微秒），调用方除以 1000 得毫秒，除以 <code>AV_TIME_BASE</code> 得秒。
+    </div>
+  </section>
+
+  <!-- ── 线程生命周期 ── -->
+  <section id="lifecycle">
+    <h2><span class="icon green">⟳</span>线程生命周期与停止机制</h2>
+
+    <div class="diagram">
+      <svg width="660" height="280" viewBox="0 0 660 280" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#4f8ef7"/>
+          </marker>
+          <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#f87171"/>
+          </marker>
+          <marker id="ag" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#34d399"/>
+          </marker>
+        </defs>
+
+        <!-- Title labels -->
+        <text x="170" y="20" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700" font-family="Segoe UI,sans-serif">正常退出（EOF）</text>
+        <text x="490" y="20" text-anchor="middle" fill="#f87171" font-size="12" font-weight="700" font-family="Segoe UI,sans-serif">外部 stop()</text>
+
+        <!-- divider -->
+        <line x1="330" y1="30" x2="330" y2="270" stroke="#2a3050" stroke-width="1" stroke-dasharray="4,4"/>
+
+        <!-- === LEFT: EOF path === -->
+        <!-- run() start -->
+        <rect x="60" y="38" width="220" height="34" rx="6" fill="#1a2340" stroke="#34d399" stroke-width="1.5"/>
+        <text x="170" y="60" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Cascadia Code,monospace">run() 循环</text>
+
+        <line x1="170" y1="72" x2="170" y2="98" stroke="#34d399" stroke-width="1.5" marker-end="url(#ag)"/>
+
+        <!-- av_read_frame -->
+        <rect x="60" y="100" width="220" height="34" rx="6" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="170" y="118" text-anchor="middle" fill="#8892a4" font-size="11.5" font-family="Cascadia Code,monospace">av_read_frame()</text>
+
+        <line x1="170" y1="134" x2="170" y2="158" stroke="#4f8ef7" stroke-width="1.5" marker-end="url(#a)"/>
+        <text x="220" y="150" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">返回 &lt; 0</text>
+
+        <!-- break -->
+        <rect x="100" y="160" width="140" height="30" rx="6" fill="#1a3020" stroke="#34d399" stroke-width="1.5"/>
+        <text x="170" y="180" text-anchor="middle" fill="#34d399" font-size="11.5" font-family="Cascadia Code,monospace">break</text>
+
+        <line x1="170" y1="190" x2="170" y2="214" stroke="#34d399" stroke-width="1.5" marker-end="url(#ag)"/>
+
+        <!-- av_packet_free -->
+        <rect x="60" y="216" width="220" height="30" rx="6" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="170" y="236" text-anchor="middle" fill="#8892a4" font-size="11" font-family="Cascadia Code,monospace">av_packet_free(&amp;pkt)</text>
+
+        <line x1="170" y1="246" x2="170" y2="262" stroke="#34d399" stroke-width="1.5" marker-end="url(#ag)"/>
+
+        <!-- emit finished -->
+        <rect x="80" y="264" width="180" height="10" rx="5" fill="#1a3020" stroke="#34d399" stroke-width="1"/>
+        <text x="170" y="258" text-anchor="middle" fill="#34d399" font-size="11" font-family="Cascadia Code,monospace">emit finished()</text>
+
+        <!-- === RIGHT: stop() path === -->
+        <!-- stop() called -->
+        <rect x="360" y="38" width="260" height="50" rx="6" fill="#2a1520" stroke="#f87171" stroke-width="1.5"/>
+        <text x="490" y="57" text-anchor="middle" fill="#f87171" font-size="11.5" font-weight="700" font-family="Segoe UI,sans-serif">stop() 被调用</text>
+        <text x="490" y="73" text-anchor="middle" fill="#8892a4" font-size="10.5" font-family="Cascadia Code,monospace">abort_ = true</text>
+
+        <line x1="490" y1="88" x2="490" y2="108" stroke="#f87171" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <!-- abort queues -->
+        <rect x="360" y="110" width="260" height="50" rx="6" fill="#13161f" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="490" y="129" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="Cascadia Code,monospace">videoQueue_-&gt;abort()</text>
+        <text x="490" y="147" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="Cascadia Code,monospace">audioQueue_-&gt;abort()</text>
+
+        <!-- annotation -->
+        <text x="628" y="120" fill="#546e7a" font-size="9.5" font-family="Segoe UI,sans-serif" text-anchor="middle">wakeAll</text>
+        <text x="628" y="132" fill="#546e7a" font-size="9.5" font-family="Segoe UI,sans-serif" text-anchor="middle">notFull_</text>
+        <text x="628" y="144" fill="#546e7a" font-size="9.5" font-family="Segoe UI,sans-serif" text-anchor="middle">notEmpty_</text>
+
+        <line x1="490" y1="160" x2="490" y2="188" stroke="#f87171" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="540" y="178" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">push() 解锁</text>
+
+        <!-- loop check -->
+        <rect x="380" y="190" width="220" height="36" rx="6" fill="#2a1520" stroke="#f87171" stroke-width="1.5"/>
+        <text x="490" y="207" text-anchor="middle" fill="#e2e8f0" font-size="11" font-family="Cascadia Code,monospace">while (!abort_)</text>
+        <text x="490" y="220" text-anchor="middle" fill="#f87171" font-size="10.5" font-family="Segoe UI,sans-serif">→ 退出循环</text>
+
+        <line x1="490" y1="226" x2="490" y2="260" stroke="#f87171" stroke-width="1.5" marker-end="url(#ar)"/>
+        <rect x="400" y="262" width="180" height="10" rx="5" fill="#2a1520" stroke="#f87171" stroke-width="1"/>
+        <text x="490" y="258" text-anchor="middle" fill="#f87171" font-size="11" font-family="Cascadia Code,monospace">线程退出</text>
+      </svg>
+    </div>
+
+    <div class="note warn">
+      <strong>push 阻塞场景：</strong>若 <code>run()</code> 正阻塞在 <code>videoQueue_-&gt;push(p)</code>（队列满），<code>queue-&gt;abort()</code> 通过 <code>notFull_.wakeAll()</code> 解锁，<code>push</code> 内部判断 <code>aborted_</code> 后直接 return，循环继续到 <code>!abort_</code> 检查后退出。
+    </div>
+    <div class="note">
+      <strong>av_read_frame 阻塞：</strong>本阶段仅处理本地文件，<code>av_read_frame</code> 不会长时间阻塞，无需 <code>interrupt_callback</code>。网络流阶段再补。
+    </div>
+  </section>
+
+  <!-- ── Seek ── -->
+  <section id="seek">
+    <h2><span class="icon yellow">⏩</span>Seek 机制</h2>
+
+    <!-- Seek flow -->
+    <div class="diagram">
+      <svg width="640" height="200" viewBox="0 0 640 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ay" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#fbbf24"/>
+          </marker>
+          <marker id="ab" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#4f8ef7"/>
+          </marker>
+        </defs>
+
+        <!-- PlayerController -->
+        <rect x="10" y="75" width="140" height="50" rx="7" fill="#1e2235" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="80" y="97" text-anchor="middle" fill="#8892a4" font-size="11" font-family="Segoe UI,sans-serif">PlayerController</text>
+        <text x="80" y="113" text-anchor="middle" fill="#fbbf24" font-size="10.5" font-family="Cascadia Code,monospace">seek(seconds)</text>
+
+        <!-- Arrow -->
+        <line x1="150" y1="100" x2="198" y2="100" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#ay)"/>
+
+        <!-- atomic store -->
+        <rect x="200" y="70" width="160" height="60" rx="7" fill="#2a2010" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="280" y="93" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700" font-family="Segoe UI,sans-serif">原子存储</text>
+        <text x="280" y="110" text-anchor="middle" fill="#8892a4" font-size="10.5" font-family="Cascadia Code,monospace">seekTarget_.store(s)</text>
+        <text x="280" y="124" text-anchor="middle" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">memory_order_relaxed</text>
+
+        <!-- Arrow to run -->
+        <line x1="360" y1="100" x2="408" y2="100" stroke="#4f8ef7" stroke-width="1.5" marker-end="url(#ab)"/>
+        <text x="384" y="93" fill="#546e7a" font-size="10" text-anchor="middle" font-family="Segoe UI,sans-serif">下次循环</text>
+
+        <!-- handleSeek -->
+        <rect x="410" y="20" width="210" height="160" rx="8" fill="#131825" stroke="#4f8ef7" stroke-width="1.5"/>
+        <text x="515" y="44" text-anchor="middle" fill="#4f8ef7" font-size="12" font-weight="700" font-family="Segoe UI,sans-serif">handleSeek()</text>
+
+        <text x="425" y="65" fill="#c792ea" font-size="10.5" font-family="Cascadia Code,monospace">exchange(-1.0)</text>
+        <text x="425" y="82" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">↳ 取最新目标，中间值丢弃</text>
+
+        <line x1="515" y1="88" x2="515" y2="98" stroke="#4f8ef7" stroke-width="1"/>
+
+        <text x="425" y="112" fill="#82cfff" font-size="10.5" font-family="Cascadia Code,monospace">av_seek_frame()</text>
+        <text x="425" y="127" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">AVSEEK_FLAG_BACKWARD</text>
+
+        <line x1="515" y1="133" x2="515" y2="143" stroke="#4f8ef7" stroke-width="1"/>
+
+        <text x="425" y="158" fill="#f87171" font-size="10.5" font-family="Cascadia Code,monospace">tryPop + av_packet_free</text>
+        <text x="425" y="172" fill="#546e7a" font-size="10" font-family="Segoe UI,sans-serif">↳ 清空两个队列残留包</text>
+      </svg>
+    </div>
+
+    <pre><code><span class="kw">void</span> <span class="fn">handleSeek</span>() {
+    <span class="kw">double</span> target = seekTarget_.<span class="fn">exchange</span>(-<span class="num">1.0</span>, std::memory_order_relaxed);
+    <span class="kw">if</span> (target &lt; <span class="num">0.0</span>) <span class="kw">return</span>;
+
+    <span class="type">int64_t</span> ts = (<span class="type">int64_t</span>)(target * AV_TIME_BASE);
+    <span class="fn">av_seek_frame</span>(fmtCtx_, -<span class="num">1</span>, ts, AVSEEK_FLAG_BACKWARD);
+
+    <span class="cmt">// 清空队列并释放残留包（必须 free，不能只 clear）</span>
+    <span class="type">AVPacket</span>* p;
+    <span class="kw">while</span> (videoQueue_-&gt;<span class="fn">tryPop</span>(p, <span class="num">0</span>)) <span class="fn">av_packet_free</span>(&amp;p);
+    <span class="kw">while</span> (audioQueue_-&gt;<span class="fn">tryPop</span>(p, <span class="num">0</span>)) <span class="fn">av_packet_free</span>(&amp;p);
+}</code></pre>
+
+    <table>
+      <thead><tr><th>要点</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>多次快速 seek</td><td><code>exchange</code> 保证只取最新目标，中间值丢弃，行为正确</td></tr>
+        <tr><td>seek 延迟</td><td>请求在 <code>run()</code> 下次循环顶部才执行；若阻塞在 <code>push</code>（队列满），延迟数十 ms，用户体感可接受</td></tr>
+        <tr><td>seek 精度</td><td><code>AVSEEK_FLAG_BACKWARD</code>，定位到目标前最近关键帧（H.264 通常 1–2 秒间隔）</td></tr>
+        <tr><td>解码器 flush</td><td>由 <code>PlayerController::seek()</code> 负责调 <code>videoDec_.flush()</code> 和 <code>audioDec_.flush()</code>，消除 B 帧花屏</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 内存管理 ── -->
+  <section id="memory">
+    <h2><span class="icon blue">♻</span>内存管理</h2>
+
+    <!-- Ownership diagram -->
+    <div class="diagram">
+      <svg width="620" height="160" viewBox="0 0 620 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ao" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#34d399"/>
+          </marker>
+          <marker id="aro" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#f87171"/>
+          </marker>
+        </defs>
+
+        <!-- run() alloc -->
+        <rect x="10" y="50" width="130" height="60" rx="7" fill="#1a2340" stroke="#4f8ef7" stroke-width="1.5"/>
+        <text x="75" y="72" text-anchor="middle" fill="#4f8ef7" font-size="11" font-weight="700" font-family="Segoe UI,sans-serif">run() 分配</text>
+        <text x="75" y="88" text-anchor="middle" fill="#8892a4" font-size="10" font-family="Cascadia Code,monospace">av_packet_alloc</text>
+        <text x="75" y="103" text-anchor="middle" fill="#8892a4" font-size="10" font-family="Cascadia Code,monospace">复用整个 run 期间</text>
+
+        <!-- clone -->
+        <line x1="140" y1="80" x2="178" y2="80" stroke="#34d399" stroke-width="1.5" marker-end="url(#ao)"/>
+        <text x="159" y="72" text-anchor="middle" fill="#34d399" font-size="10" font-family="Segoe UI,sans-serif">clone</text>
+
+        <!-- Queue -->
+        <rect x="180" y="30" width="140" height="100" rx="7" fill="#131825" stroke="#2a3050" stroke-width="1.5"/>
+        <text x="250" y="55" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700" font-family="Segoe UI,sans-serif">FrameQueue</text>
+        <text x="250" y="72" text-anchor="middle" fill="#8892a4" font-size="10" font-family="Cascadia Code,monospace">AVPacket* 队列</text>
+        <text x="250" y="90" text-anchor="middle" fill="#546e7a" font-size="9.5" font-family="Segoe UI,sans-serif">videoPacketQueue</text>
+        <text x="250" y="103" text-anchor="middle" fill="#546e7a" font-size="9.5" font-family="Segoe UI,sans-serif">audioPacketQueue</text>
+
+        <!-- Normal consume -->
+        <line x1="320" y1="65" x2="368" y2="50" stroke="#34d399" stroke-width="1.5" marker-end="url(#ao)"/>
+        <text x="344" y="43" text-anchor="middle" fill="#34d399" font-size="9.5" font-family="Segoe UI,sans-serif">正常消费</text>
+
+        <!-- Seek drain -->
+        <line x1="320" y1="90" x2="368" y2="110" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#ao)"/>
+        <text x="344" y="107" text-anchor="middle" fill="#fbbf24" font-size="9.5" font-family="Segoe UI,sans-serif">seek 清空</text>
+
+        <!-- Decode thread free -->
+        <rect x="370" y="30" width="130" height="36" rx="6" fill="#1a3020" stroke="#34d399" stroke-width="1.5"/>
+        <text x="435" y="49" text-anchor="middle" fill="#34d399" font-size="10.5" font-family="Segoe UI,sans-serif">解码线程 free</text>
+        <text x="435" y="62" text-anchor="middle" fill="#546e7a" font-size="9.5" font-family="Cascadia Code,monospace">av_packet_free</text>
+
+        <!-- handleSeek free -->
+        <rect x="370" y="96" width="130" height="36" rx="6" fill="#2a2010" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="435" y="115" text-anchor="middle" fill="#fbbf24" font-size="10.5" font-family="Segoe UI,sans-serif">handleSeek free</text>
+        <text x="435" y="128" text-anchor="middle" fill="#546e7a" font-size="9.5" font-family="Cascadia Code,monospace">tryPop + free</text>
+
+        <!-- stop residual -->
+        <line x1="320" y1="80" x2="530" y2="80" stroke="#f87171" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#aro)"/>
+        <rect x="532" y="65" width="82" height="30" rx="5" fill="#2a1520" stroke="#f87171" stroke-width="1"/>
+        <text x="573" y="78" text-anchor="middle" fill="#f87171" font-size="10" font-family="Segoe UI,sans-serif">stop 后残留</text>
+        <text x="573" y="90" text-anchor="middle" fill="#546e7a" font-size="9" font-family="Segoe UI,sans-serif">PlayerController</text>
+      </svg>
+    </div>
+
+    <table>
+      <thead><tr><th>位置</th><th>职责</th></tr></thead>
+      <tbody>
+        <tr><td><code>run()</code> 分配的 <code>pkt</code></td>
+            <td><code>av_packet_alloc</code> / <code>av_packet_free</code>，整个 run 期间复用</td></tr>
+        <tr><td>clone 进队列的包</td>
+            <td><code>av_packet_clone</code> 分配，消费方（解码线程或 <code>handleSeek</code>）负责 <code>av_packet_free</code></td></tr>
+        <tr><td>seek 时队列残留</td>
+            <td><code>handleSeek()</code> 里 pop+free（<strong>不能用 <code>FrameQueue::clear()</code></strong>，会泄漏）</td></tr>
+        <tr><td>stop 后队列残留</td>
+            <td><code>PlayerController::stopAllThreads()</code> 负责在线程退出后 pop+free</td></tr>
+        <tr><td><code>fmtCtx_</code></td>
+            <td><code>DemuxThread::~DemuxThread()</code> 里 <code>avformat_close_input</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 测试策略 ── -->
+  <section id="tests">
+    <h2><span class="icon green">✓</span>测试策略</h2>
+    <p>使用真实文件 <code>tests/data/sample.mp4</code>（2 秒 320×240 H.264+AAC）。Seek / stop 集成行为在 Task 8（PlayerController）覆盖。</p>
+
+    <div class="test-grid">
+      <div class="test-card">
+        <div class="tc-name">open_validFile_returnsTrue</div>
+        <div class="tc-desc">open 成功，<code>duration() &gt; 0</code></div>
+      </div>
+      <div class="test-card">
+        <div class="tc-name">open_invalidFile_returnsFalse</div>
+        <div class="tc-desc">不存在的路径返回 false，不崩溃</div>
+      </div>
+      <div class="test-card">
+        <div class="tc-name">run_populatesQueues</div>
+        <div class="tc-desc"><code>start()</code> 后 300 ms，视频队列和音频队列均有包；结束后 pop+free 清理</div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:14px">
+      生成测试文件：<br/>
+      <code style="font-size:12px">ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" -f lavfi -i "sine=frequency=440:duration=2" -c:v libx264 -c:a aac -shortest tests/data/sample.mp4</code>
+    </div>
+  </section>
+
+  <!-- ── 已知局限 ── -->
+  <section id="limits">
+    <h2><span class="icon yellow">⚠</span>已知局限与后续</h2>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 20px">
+      <div class="limit-row">
+        <span class="limit-tag todo">TODO</span>
+        <div class="limit-body"><strong>seek 时 push 阻塞延迟</strong> — 接受现状，网络流 / 精确 seek 阶段再优化</div>
+      </div>
+      <div class="limit-row">
+        <span class="limit-tag">限制</span>
+        <div class="limit-body"><strong>av_read_frame 网络阻塞</strong> — 本地文件无问题；网络流需加 <code>interrupt_callback</code></div>
+      </div>
+      <div class="limit-row">
+        <span class="limit-tag">限制</span>
+        <div class="limit-body"><strong>seek 精度</strong> — 关键帧级（BACKWARD），精确逐帧 seek 留后续阶段实现</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// highlight active nav link on scroll
+const sections = document.querySelectorAll('section[id]');
+const links = document.querySelectorAll('nav a');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const a = document.querySelector(`nav a[href="#${e.target.id}"]`);
+      if (a) a.classList.add('active');
+    }
+  });
+}, { threshold: 0.35 });
+sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
