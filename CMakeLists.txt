@@ -21,6 +21,7 @@ add_executable(RambosPlayer
     src/demuxthread.cpp
     src/videodecodethread.cpp
     src/audiodecodethread.cpp
+    src/videorenderer.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE

@@ -26,7 +26,7 @@
 | Task 4 — DemuxThread 解复用线程（TDD） | ✅ 完成 |
 | Task 5 — VideoDecodeThread | ✅ 完成 |
 | Task 6 — AudioDecodeThread | ✅ 完成 |
-| Task 7 — VideoRenderer | 📋 |
+| Task 7 — VideoRenderer | ✅ 完成 |
 | Task 8 — PlayerController | 📋 |
 | Task 9 — MainWindow UI | 📋 |
 | Task 10 — 集成验证 | 📋 |

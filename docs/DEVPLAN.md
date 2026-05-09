@@ -125,12 +125,12 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 **目标：** `VideoRenderer` 以音频时钟为基准定时渲染帧，视频不撕裂不跳帧。
 
-- [ ] 创建 `src/videorenderer.h` / `src/videorenderer.cpp`
+- [x] 创建 `src/videorenderer.h` / `src/videorenderer.cpp`
   - 继承 `QWidget`，`setAttribute(Qt::WA_OpaquePaintEvent)`
   - `init(width, height, timeBase, AVSync*, FrameQueue<AVFrame*>*)` 初始化 `SwsContext`（YUV420P → RGB32）和 `QImage`
   - `QTimer`（1 ms）触发 `onTimer()`：从队列 `tryPop`（超时 0）→ 调用 `sync_->videoDelay(pts)` → 领先则 `push` 回队列等下次，`msleep` 延迟后 `sws_scale` 写入 `QImage` → `update()`
   - `paintEvent` 用 `QPainter` 保持宽高比居中绘制，背景黑色
-- [ ] 手动集成测试：用 DemuxThread + VideoDecodeThread + AudioDecodeThread + VideoRenderer 搭出最小 demo，打开 sample.mp4，确认视频/音频同步播放
+- [ ] 手动集成测试：用 DemuxThread + VideoDecodeThread + AudioDecodeThread + VideoRenderer 搭出最小 demo，打开 sample.mp4，确认视频/音频同步播放（待 Task 8 PlayerController 完成后执行）
 - [ ] `git commit -m "feat: VideoRenderer QPainter 帧渲染与音视频同步"`
 
 **验收：** 视频流畅，音画同步误差 < 100 ms（耳听目测）。
