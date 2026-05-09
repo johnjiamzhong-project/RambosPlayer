@@ -11,6 +11,8 @@ VideoDecodeThread::~VideoDecodeThread() {
 
 // 根据 codec_id 查找并打开解码器
 bool VideoDecodeThread::init(AVCodecParameters* params) {
+    abort_.store(false, std::memory_order_relaxed);
+
     const AVCodec* codec = avcodec_find_decoder(params->codec_id);
     if (!codec) return false;
     codecCtx_ = avcodec_alloc_context3(codec);

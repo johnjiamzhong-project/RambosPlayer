@@ -53,7 +53,7 @@ bool PlayerController::open(const QString& path) {
 // 启动播放：依次启动解复用、解码、渲染定时器和位置定时器。
 // playing_ 防重入，避免重复调用导致线程重复 start。
 void PlayerController::play() {
-    if (playing_) return;
+    if (playing_ || !demux_.formatContext()) return;
     playing_ = true;
     demux_.start();
     videoDec_.start();

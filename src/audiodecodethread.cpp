@@ -5,17 +5,21 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 }
 
+// sink_ 正常在 run() 退出时销毁；若线程未启动则 sink_ 为 nullptr 无需清理。
 AudioDecodeThread::~AudioDecodeThread() {
     stop(); wait();
-    if (sink_)     { sink_->stop(); delete sink_; }
+    if (sink_) { sink_->stop(); delete sink_; sink_ = nullptr; }
     if (swrCtx_)   swr_free(&swrCtx_);
     if (codecCtx_) avcodec_free_context(&codecCtx_);
 }
 
-// 打开解码器 + 初始化 SwrContext（→ S16 Stereo 44100）+ 创建 QAudioOutput
+// 打开解码器 + 初始化 SwrContext（→ S16 Stereo 44100）。
+// QAudioOutput 延迟到 run() 中创建，保证线程亲和性（创建和使用在同一线程）。
 bool AudioDecodeThread::init(AVCodecParameters* params,
                               AVRational timeBase,
                               AVSync* sync) {
+    abort_.store(false, std::memory_order_relaxed);
+
     timeBase_ = timeBase;
     sync_ = sync;
 
@@ -35,14 +39,6 @@ bool AudioDecodeThread::init(AVCodecParameters* params,
     av_opt_set_sample_fmt(swrCtx_, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
     if (swr_init(swrCtx_) < 0) return false;
 
-    QAudioFormat fmt;
-    fmt.setSampleRate(44100);
-    fmt.setChannelCount(2);
-    fmt.setSampleSize(16);
-    fmt.setSampleType(QAudioFormat::SignedInt);
-    fmt.setByteOrder(QAudioFormat::LittleEndian);
-    fmt.setCodec("audio/pcm");
-    sink_ = new QAudioOutput(fmt);
     return true;
 }
 
@@ -58,9 +54,19 @@ void AudioDecodeThread::flush() { flush_ = true; }
 // 线程安全设置音量，run() 循环中检测并应用
 void AudioDecodeThread::setVolume(float v) { pendingVolume_.store(v); }
 
-// 主循环：取包 → 解码 → swr_convert → QAudioOutput::write → 更新音频时钟
+// 主循环：取包 → 解码 → swr_convert → QAudioOutput::write → 更新音频时钟。
+// QAudioOutput 在此处创建，保证创建/start/write/stop 都在同一线程，满足 Qt 线程亲和性。
 void AudioDecodeThread::run() {
+    QAudioFormat fmt;
+    fmt.setSampleRate(44100);
+    fmt.setChannelCount(2);
+    fmt.setSampleSize(16);
+    fmt.setSampleType(QAudioFormat::SignedInt);
+    fmt.setByteOrder(QAudioFormat::LittleEndian);
+    fmt.setCodec("audio/pcm");
+    sink_ = new QAudioOutput(fmt);
     device_ = sink_->start();
+
     AVPacket* pkt = nullptr;
     AVFrame* frame = av_frame_alloc();
     uint8_t* outBuf = nullptr;
@@ -110,5 +116,8 @@ void AudioDecodeThread::run() {
     av_frame_free(&frame);
     av_free(outBuf);
     sink_->stop();
+    delete sink_;
+    sink_ = nullptr;
+    device_ = nullptr;
     emit finished();
 }

@@ -15,7 +15,7 @@ VideoRenderer::VideoRenderer(QWidget* parent) : QWidget(parent) {
     connect(timer_, &QTimer::timeout, this, &VideoRenderer::onTimer);
 }
 
-// 析构函数：停止定时器，释放 sws 上下文。
+// 析构函数：停止定时器，释放暂存帧和 sws 上下文。
 VideoRenderer::~VideoRenderer() {
     stopRendering();
     if (swsCtx_) sws_freeContext(swsCtx_);
@@ -23,8 +23,10 @@ VideoRenderer::~VideoRenderer() {
 
 // 初始化渲染参数：记录视频宽高和时间基，绑定 AVSync 与帧队列，
 // 创建 sws 上下文（YUV420P → RGB32）并分配 QImage 缓冲区。
+// 重新打开文件时会再次调用，需释放上一轮暂存的帧。
 void VideoRenderer::init(int width, int height, AVRational timeBase,
                           AVSync* sync, FrameQueue<AVFrame*>* frameQueue) {
+    if (pendingFrame_) av_frame_free(&pendingFrame_);
     srcW_ = width; srcH_ = height;
     timeBase_ = timeBase;
     sync_ = sync;
@@ -36,36 +38,43 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
 }
 
 // 启动/停止 1ms 定时器，控制帧拉取循环的运行状态。
+// stopRendering 同时释放暂存帧，防止残留帧跨文件泄漏。
 void VideoRenderer::startRendering() { timer_->start(); }
-void VideoRenderer::stopRendering()  { timer_->stop(); }
+void VideoRenderer::stopRendering()  {
+    timer_->stop();
+    if (pendingFrame_) av_frame_free(&pendingFrame_);
+}
 
 // 定时回调：音视频同步的核心决策点。
+// 优先检查暂存帧，再从队列取帧；帧到得太早时暂存而非阻塞主线程。
 void VideoRenderer::onTimer() {
-    AVFrame* frame = nullptr;
-    if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) return;  // 非阻塞取帧，队列空则直接返回，避免阻塞 GUI 线程
+    AVFrame* frame = pendingFrame_;
+    pendingFrame_ = nullptr;
+
+    if (!frame) {
+        if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) return;
+    }
 
     double pts = (frame->pts != AV_NOPTS_VALUE)
-                 ? frame->pts * av_q2d(timeBase_) : 0.0;  // pts × 时间基 → 秒；无效 pts 按 0 处理
-    double delay = sync_ ? sync_->videoDelay(pts) : 0.0;  // 查询视频帧相对音频时钟的延迟（秒），负值表示视频落后
+                 ? frame->pts * av_q2d(timeBase_) : 0.0;
+    double delay = sync_ ? sync_->videoDelay(pts) : 0.0;
 
-    if (delay > 2.0) {          // 视频大幅领先（音频未追上，常见于 seek 后）
-        frameQueue_->push(frame);   // 放回队列，等音频时钟追上后再渲染，不丢帧
+    // 帧还没到渲染时间，暂存等下次 timer 再检查，不阻塞主线程
+    if (delay > 0.0) {
+        pendingFrame_ = frame;
         return;
     }
-    if (delay > 0.0) {
-        QThread::msleep((unsigned long)delay);  // 视频轻微超前，等待音频追上；delay ≤ 0 则跳过，立即渲染追赶
-    }
 
-    uint8_t* dst[1]  = { currentFrame_.bits() };           // 拿到 QImage 像素缓冲区的裸指针，供 sws_scale 直接写入
-    int dstStride[1] = { currentFrame_.bytesPerLine() };   // 每行字节数（stride），RGB32 = width × 4
+    uint8_t* dst[1]  = { currentFrame_.bits() };
+    int dstStride[1] = { currentFrame_.bytesPerLine() };
     {
-        QMutexLocker lk(&frameMutex_);              // 加锁防止 paintEvent() 在写入过程中读取撕裂的半帧
+        QMutexLocker lk(&frameMutex_);
         sws_scale(swsCtx_,
                   (const uint8_t* const*)frame->data, frame->linesize,
-                  0, srcH_, dst, dstStride);        // YUV420P → RGB32，结果原地写入 currentFrame_ 缓冲区
+                  0, srcH_, dst, dstStride);
     }
-    av_frame_free(&frame);  // 释放解码帧（AVFrame 及其数据缓冲区）
-    update();               // 通知 Qt 调度 paintEvent()，将 currentFrame_ 绘制到屏幕
+    av_frame_free(&frame);
+    update();
 }
 
 // Qt 绘制回调：用 QPainter 将 currentFrame_ 保持宽高比居中绘制到 widget，无帧时填黑。

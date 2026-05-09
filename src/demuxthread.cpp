@@ -21,6 +21,8 @@ DemuxThread::~DemuxThread() {
 bool DemuxThread::open(const QString& path,
                         FrameQueue<AVPacket*>* videoQueue,
                         FrameQueue<AVPacket*>* audioQueue) {
+    abort_.store(false, std::memory_order_relaxed);
+
     if (avformat_open_input(&fmtCtx_,
                             path.toUtf8().constData(),
                             nullptr, nullptr) < 0)
@@ -77,6 +79,8 @@ void DemuxThread::handleSeek() {
 // 每轮循环先处理 seek 请求，再读一个包，clone 后 push 进队列（clone 使所有权独立）。
 // 遇到 EOF 或读取错误时退出；stop() 设置 abort_ 后下次循环检查时也会退出。
 void DemuxThread::run() {
+    if (!fmtCtx_) return;
+
     AVPacket* pkt = av_packet_alloc();
 
     while (!abort_.load(std::memory_order_relaxed)) {

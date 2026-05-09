@@ -42,4 +42,5 @@ private:
     SwsContext* swsCtx_ = nullptr;      // sws 上下文，YUV420P → RGB32
     int srcW_ = 0, srcH_ = 0;          // 视频原始宽高，用于宽高比计算
     AVRational timeBase_{1, 1};         // 视频流时间基，用于 pts → 秒换算
+    AVFrame* pendingFrame_ = nullptr;   // 未到渲染时间的帧，暂存避免推回队列阻塞主线程
 };

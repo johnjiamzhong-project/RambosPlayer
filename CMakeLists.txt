@@ -23,6 +23,7 @@ add_executable(RambosPlayer
     src/audiodecodethread.cpp
     src/videorenderer.cpp
     src/playercontroller.cpp
+    src/mainwindow.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE
