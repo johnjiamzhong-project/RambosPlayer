@@ -99,23 +99,23 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 ### VideoDecodeThread
 
-- [ ] 创建 `src/videodecodethread.h` / `src/videodecodethread.cpp`
+- [x] 创建 `src/videodecodethread.h` / `src/videodecodethread.cpp`
   - `init(AVCodecParameters*)` 打开解码器
   - `run()` 循环：从输入包队列取包 → `avcodec_send_packet` / `avcodec_receive_frame` → clone 后推入帧队列
   - `flush()` 在 seek 后调用，清空解码器缓冲和输出队列
   - `stop()` abort 两侧队列
-- [ ] 编译通过（集成测试在 Phase 6 覆盖）
+- [x] 编译通过（集成测试在 Phase 6 覆盖）
 - [ ] `git commit -m "feat: VideoDecodeThread 视频解码线程"`
 
 ### AudioDecodeThread
 
-- [ ] 创建 `src/audiodecodethread.h` / `src/audiodecodethread.cpp`
-  - `init(AVCodecParameters*, AVRational timeBase, AVSync*)` 打开解码器 + 初始化 `SwrContext`（目标：S16 Stereo 44100）+ 创建 `QAudioSink`
+- [x] 创建 `src/audiodecodethread.h` / `src/audiodecodethread.cpp`
+  - `init(AVCodecParameters*, AVRational timeBase, AVSync*)` 打开解码器 + 初始化 `SwrContext`（目标：S16 Stereo 44100）+ 创建 `QAudioOutput`
   - `run()` 循环：解码 → `swr_convert` → `QIODevice::write(PCM)` → 更新 `sync_->setAudioClock(pts)`
   - `setVolume(float)` 线程安全（原子量暂存，`run()` 循环中应用）
   - `flush()` 清空解码器和 swr 缓冲
-- [ ] 编译通过
-- [ ] `git commit -m "feat: AudioDecodeThread 音频解码与 QAudioSink 推流"`
+- [x] 编译通过
+- [ ] `git commit -m "feat: AudioDecodeThread 音频解码与 QAudioOutput 推流"`
 
 **验收：** 两个类编译无警告；接口签名与 Phase 5/6 使用一致。
 
@@ -253,7 +253,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 - [x] Phase 1 — 项目骨架
 - [x] Phase 2 — 基础组件（FrameQueue ✅，AVSync ✅）
 - [x] Phase 3 — 解复用线程（DemuxThread ✅）
-- [ ] Phase 4 — 解码层
+- [x] Phase 4 — 解码层
 - [ ] Phase 5 — 渲染与同步
 - [ ] Phase 6 — 完整播放器 UI
 - [ ] Phase 7 — 硬件加速

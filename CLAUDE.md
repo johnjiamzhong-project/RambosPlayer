@@ -12,10 +12,11 @@ RambosPlayer is a multithreaded multimedia player built with C++17, Qt 5.14.2, a
 ## Rules
 
 - **Git commit 信息必须用中文描述**
-- **模块完成后同步更新文档**：每个 Task/Phase 完成时，在 commit 前同步更新以下三个文件的进度状态：
-  - `readme.md` — 功能1进度表中对应任务改为 ✅ 完成
-  - `docs/DEVPLAN.md` — 对应 Phase 的 checkbox 全部勾选，"当前进度"末尾标记完成
-  - `docs/superpowers/README.md` — 若产出了新的 plan 或 spec 文件，补充到对应表格
+- **commit 时机与内容**：代码由用户自行测试验收后手动触发 commit，Claude 不主动提交。每个模块只提交一次，Claude 的职责是在用户说"提交"之前准备好所有内容：
+  1. 代码 + 测试实现完成（用户自行运行测试验收）
+  2. 更新进度文档：`readme.md`、`docs/DEVPLAN.md`、`docs/superpowers/README.md`
+  3. 更新面试文档：`docs/interview-claude-code-workflow.md`（补充该模块的设计决策、TDD 案例、Q&A）
+  4. 用户确认后说"提交"，Claude 执行**一次性统一 commit**，不拆分
 
 ## Environment
 
@@ -57,7 +58,7 @@ DemuxThread
         │
         ▼
 VideoDecodeThread          AudioDecodeThread
-  └─ videoFrameQueue         ├─ QAudioSink (PCM out)
+  └─ videoFrameQueue         ├─ QAudioOutput (PCM out)
        (cap 15)              └─ updates AVSync::audioClock()
         │                          │
         └──────── VideoRenderer ◄──┘
@@ -82,7 +83,7 @@ src/
   avsync.h / .cpp           # atomic audio clock, videoDelay()
   demuxthread.h / .cpp      # av_read_frame loop, dispatches by stream index
   videodecodethread.h / .cpp
-  audiodecodethread.h / .cpp  # swr_convert → S16 stereo 44100 → QAudioSink
+  audiodecodethread.h / .cpp  # swr_convert → S16 stereo 44100 → QAudioOutput
   videorenderer.h / .cpp    # QWidget, sws_scale YUV420P→RGB32, QPainter
   playercontroller.h / .cpp
   mainwindow.h / .cpp / .ui

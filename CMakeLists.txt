@@ -19,6 +19,8 @@ add_executable(RambosPlayer
     src/main.cpp
     src/avsync.cpp
     src/demuxthread.cpp
+    src/videodecodethread.cpp
+    src/audiodecodethread.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE

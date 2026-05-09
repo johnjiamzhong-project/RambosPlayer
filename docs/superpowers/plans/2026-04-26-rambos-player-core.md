@@ -4,7 +4,7 @@
 
 **Goal:** 构建可用的多媒体播放器，支持本地视频/音频文件播放、进度条拖拽 Seek、音量控制和全屏切换。
 
-**Architecture:** 解复用线程将包推入两条包队列，视频/音频解码线程分别消费包队列并产出帧；音频解码线程以 QAudioSink 推送 PCM 并维护音频时钟，视频渲染器依据音频时钟计算延迟后 QPainter 绘帧，PlayerController 串联全部组件并向 MainWindow 暴露简单控制接口。
+**Architecture:** 解复用线程将包推入两条包队列，视频/音频解码线程分别消费包队列并产出帧；音频解码线程以 QAudioOutput 推送 PCM 并维护音频时钟，视频渲染器依据音频时钟计算延迟后 QPainter 绘帧，PlayerController 串联全部组件并向 MainWindow 暴露简单控制接口。
 
 | 阶段 | 组件 | 作用 |
 |------|------|------|
@@ -15,7 +15,7 @@
 
 **核心设计**：音频是主时钟，视频跟音频同步。
 
-**Tech Stack:** C++17, VS2017, Qt 5.14.2 (QThread / QAudioSink / QPainter / QSlider), FFmpeg 4.x via vcpkg (libavformat / libavcodec / libswresample / libswscale)
+**Tech Stack:** C++17, VS2017, Qt 5.14.2 (QThread / QAudioOutput / QPainter / QSlider), FFmpeg 4.x via vcpkg (libavformat / libavcodec / libswresample / libswscale)
 
 ---
 
@@ -37,7 +37,7 @@ RambosPlayer/
 │   ├── avsync.h/.cpp         # 音频时钟 + 视频延迟计算
 │   ├── demuxthread.h/.cpp    # 解复用线程
 │   ├── videodecodethread.h/.cpp  # 视频解码线程
-│   ├── audiodecodethread.h/.cpp  # 音频解码 + QAudioSink 推流
+│   ├── audiodecodethread.h/.cpp  # 音频解码 + QAudioOutput 推流
 │   ├── videorenderer.h/.cpp  # QPainter 渲染部件 + 帧定时
 │   ├── playercontroller.h/.cpp  # 组合以上所有组件
 │   ├── mainwindow.h/.cpp     # Qt UI：进度条 / 音量 / 全屏
@@ -57,7 +57,7 @@ RambosPlayer/
 | `avsync.h/.cpp` | 原子量存储音频时钟 PTS，`videoDelay()` 返回视频应等待的毫秒数 |
 | `demuxthread.h/.cpp` | `av_read_frame` 循环，按流索引分发包到两条 `FrameQueue<AVPacket*>` |
 | `videodecodethread.h/.cpp` | `avcodec_send_packet` / `avcodec_receive_frame` 循环，产出 `AVFrame*` |
-| `audiodecodethread.h/.cpp` | 解码 + `swr_convert` 重采样为 S16 → `QAudioSink::write`，更新音频时钟 |
+| `audiodecodethread.h/.cpp` | 解码 + `swr_convert` 重采样为 S16 → `QAudioOutput::write`，更新音频时钟 |
 | `videorenderer.h/.cpp` | 持有帧队列，`QTimer` 每 1 ms 检查是否到渲染时间，`paintEvent` 用 QPainter 绘图 |
 | `playercontroller.h/.cpp` | 持有并生命周期管理全部组件；对外暴露 open/play/pause/stop/seek/setVolume |
 | `mainwindow.h/.cpp` | Qt MainWindow，`QSlider` 进度 + 音量，播放/暂停按钮，双击全屏 |
@@ -653,7 +653,7 @@ git commit -m "feat: DemuxThread 解复用线程"
 此组件依赖真实 FFmpeg 解码，集成测试在 Task 8（PlayerController）中覆盖。
 此处仅做编译验证。
 
-- [ ] **Step 1: 实现头文件**
+- [x] **Step 1: 实现头文件**
 
 ```cpp
 // src/videodecodethread.h
@@ -699,7 +699,7 @@ private:
 };
 ```
 
-- [ ] **Step 2: 实现源文件**
+- [x] **Step 2: 实现源文件**
 
 ```cpp
 // src/videodecodethread.cpp
@@ -759,7 +759,7 @@ void VideoDecodeThread::run() {
 }
 ```
 
-- [ ] **Step 3: 编译确认无错**
+- [x] **Step 3: 编译确认无错**
 
 - [ ] **Step 4: Commit**
 
@@ -770,19 +770,19 @@ git commit -m "feat: VideoDecodeThread 视频解码线程"
 
 ---
 
-## Task 6: AudioDecodeThread（音频解码 + QAudioSink 推流）
+## Task 6: AudioDecodeThread（音频解码 + QAudioOutput 推流）
 
 **Files:**
 - Create: `src/audiodecodethread.h`
 - Create: `src/audiodecodethread.cpp`
 
-- [ ] **Step 1: 实现头文件**
+- [x] **Step 1: 实现头文件**
 
 ```cpp
 // src/audiodecodethread.h
 #pragma once
 #include <QThread>
-#include <QAudioSink>
+#include <QAudioOutput>
 #include <QAudioFormat>
 #include <atomic>
 #include "framequeue.h"
@@ -814,7 +814,7 @@ protected:
 private:
     AVCodecContext* codecCtx_ = nullptr;
     SwrContext* swrCtx_ = nullptr;
-    QAudioSink* sink_ = nullptr;
+    QAudioOutput* sink_ = nullptr;
     QIODevice* device_ = nullptr;
     AVSync* sync_ = nullptr;
     AVRational timeBase_{1, 1};
@@ -825,7 +825,7 @@ private:
 };
 ```
 
-- [ ] **Step 2: 实现源文件**
+- [x] **Step 2: 实现源文件**
 
 ```cpp
 // src/audiodecodethread.cpp
@@ -857,19 +857,23 @@ bool AudioDecodeThread::init(AVCodecParameters* params,
 
     // 重采样到 S16 Stereo 44100
     swrCtx_ = swr_alloc();
-    av_opt_set_int(swrCtx_, "in_channel_layout",  codecCtx_->channel_layout, 0);
-    av_opt_set_int(swrCtx_, "in_sample_rate",     codecCtx_->sample_rate, 0);
+    AVChannelLayout outChLayout = AV_CHANNEL_LAYOUT_STEREO;
+    av_opt_set_chlayout(swrCtx_, "in_chlayout", &codecCtx_->ch_layout, 0);
+    av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
     av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
-    av_opt_set_int(swrCtx_, "out_channel_layout", AV_CH_LAYOUT_STEREO, 0);
-    av_opt_set_int(swrCtx_, "out_sample_rate",    44100, 0);
+    av_opt_set_chlayout(swrCtx_, "out_chlayout", &outChLayout, 0);
+    av_opt_set_int(swrCtx_, "out_sample_rate", 44100, 0);
     av_opt_set_sample_fmt(swrCtx_, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
     if (swr_init(swrCtx_) < 0) return false;
 
     QAudioFormat fmt;
     fmt.setSampleRate(44100);
     fmt.setChannelCount(2);
-    fmt.setSampleFormat(QAudioFormat::Int16);
-    sink_ = new QAudioSink(fmt);
+    fmt.setSampleSize(16);
+    fmt.setSampleType(QAudioFormat::SignedInt);
+    fmt.setByteOrder(QAudioFormat::LittleEndian);
+    fmt.setCodec("audio/pcm");
+    sink_ = new QAudioOutput(fmt);
     return true;
 }
 
@@ -938,7 +942,7 @@ void AudioDecodeThread::run() {
 }
 ```
 
-- [ ] **Step 3: 编译确认无错**
+- [x] **Step 3: 编译确认无错**
 
 - [ ] **Step 4: Commit**
 
@@ -1089,7 +1093,7 @@ void VideoRenderer::paintEvent(QPaintEvent*) {
 }
 ```
 
-- [ ] **Step 3: 编译确认无错**
+- [x] **Step 3: 编译确认无错**
 
 - [ ] **Step 4: Commit**
 
@@ -1274,7 +1278,7 @@ void PlayerController::updatePosition() {
 }
 ```
 
-- [ ] **Step 3: 编译确认无错**
+- [x] **Step 3: 编译确认无错**
 
 - [ ] **Step 4: Commit**
 
