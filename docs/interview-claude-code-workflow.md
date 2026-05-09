@@ -258,6 +258,43 @@ update()  →  触发 paintEvent()
 
 **验证**：编译通过 0 error；逻辑集成测试待 Task 8（PlayerController）串联完整流水线后执行。
 
+---
+
+#### 7. 总控制器：PlayerController
+
+**问题**：谁来持有所有组件，协调它们的启动、停止、seek 和生命周期？
+
+**核心设计**：
+
+```cpp
+class PlayerController : public QObject {
+    bool open(const QString& path);  // 打开文件，初始化所有组件
+    void play();                     // 启动三个线程 + 渲染定时器
+    void pause();                    // 停止渲染（线程继续）
+    void stop();                     // 停止并等待所有线程退出
+    void seek(double seconds);       // seek + flush 解码缓冲
+    void setVolume(float v);
+signals:
+    void durationChanged(int64_t ms);
+    void positionChanged(int64_t ms);   // 100ms QTimer 轮询
+    void playbackFinished();
+};
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **组件所有权** | PlayerController 按值持有线程，按指针持有 VideoRenderer | 线程生命周期与 Controller 绑定；VideoRenderer 是 QWidget 由 UI 层创建，不能在 QObject 树外析构 |
+| **open() 先 stop()** | 每次 open 先调用 stop() + reset() 队列 | 支持重复打开文件，保证状态干净，不会出现旧包混入新队列 |
+| **stopAllThreads 顺序** | 先停 DemuxThread，再停解码线程 | 解复用是生产方，先停生产防止继续推包；解码线程阻塞在 tryPop，abort 队列后自然退出 |
+| **pause 简化实现** | 仅停渲染定时器，线程不暂停 | 生产级暂停需在各线程加原子标志，此阶段简化为 stop/seek/play 组合实现继续播放 |
+| **onDemuxFinished 延迟 500ms** | `QTimer::singleShot(500, ...)` 后发 playbackFinished | 解复用结束时队列中可能还有未消费的包，延迟给解码线程留时间耗尽，避免音视频截断 |
+| **positionChanged 驱动方式** | 100ms QTimer 轮询 `sync_.audioClock()` | 音频时钟是连续更新的原子量，定时轮询比信号回调简单且足够精确（UI 刷新不需要毫秒级精度） |
+| **QTimer 前向声明** | 头文件用 `class QTimer;`，源文件 include | 避免头文件隐式传递 Qt include，减少编译依赖 |
+
+**验证**：编译通过 0 error；集成测试（实际播放 sample.mp4）在 Task 9 MainWindow 完成后进行端对端验证。
+
 #### Red 阶段
 ```cpp
 // tests/tst_demuxthread.cpp - 3 个测试用例
@@ -381,3 +418,15 @@ A: `QImage::bits()` 返回该对象内部像素缓冲区的裸指针。`sws_scal
 
 **Q16: frameMutex_ 保护的是什么竞争？**  
 A: `onTimer()` 在 GUI 线程写 `currentFrame_`（`sws_scale` 写入像素缓冲），`paintEvent()` 也在 GUI 线程读 `currentFrame_`（`QPainter::drawImage`）。两者都在主线程，正常情况下不会并发，但 `update()` 触发的 `paintEvent()` 可能在 `sws_scale` 写完之前被调度（Qt 的事件循环是协作式的）。mutex 确保写完整帧后再读，防止撕裂。
+
+**Q17: PlayerController 为什么按值持有线程，却按指针持有 VideoRenderer？**  
+A: DemuxThread / VideoDecodeThread / AudioDecodeThread 的生命周期完全由 PlayerController 管理，析构时随之销毁，按值持有最简洁。VideoRenderer 继承 QWidget，是 UI 组件，由 MainWindow 创建并放入 Qt 的 Widget 树中，由 Qt 负责析构；PlayerController 只是借用它，按指针持有明确表达"不拥有所有权"的语义。
+
+**Q18: stopAllThreads 为什么要先停 DemuxThread，再停解码线程？**  
+A: DemuxThread 是生产方，持续往包队列推包。如果先停解码线程（消费方），DemuxThread 继续推包，包队列满后 DemuxThread 阻塞在 push()，永远等不到消费者，导致 wait() 超时。先停 DemuxThread，包队列不再有新包，再 abort 包队列唤醒阻塞在 tryPop 的解码线程，线程自然退出。
+
+**Q19: open() 为什么每次都先调用 stop()？**  
+A: 支持重复打开文件（播放中切换视频）。不先 stop，旧线程还在运行、旧包还在队列，新文件打开后两套数据混在一起必然花屏或崩溃。先 stop 保证所有线程退出、队列清空，再 reset 队列恢复可用状态，然后用新文件参数初始化，状态完全干净。
+
+**Q20: onDemuxFinished 为什么延迟 500ms 才发 playbackFinished？**  
+A: DemuxThread 的 finished 信号在解复用循环结束时发出，但此时包队列里可能还有几十个未消费的包。如果立即发 playbackFinished，UI 会停掉播放，而解码线程还有数据没播完，最后几秒画面和声音会被截断。延迟 500ms 给解码线程留时间耗尽剩余包，是一种简化的"排水"策略。

@@ -141,7 +141,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 **目标：** 带进度条、音量滑块、全屏的完整播放器交付。
 
-- [ ] 创建 `src/playercontroller.h` / `src/playercontroller.cpp`
+- [x] 创建 `src/playercontroller.h` / `src/playercontroller.cpp`
   - 持有并管理全部组件的生命周期：`DemuxThread`、`VideoDecodeThread`、`AudioDecodeThread`、三条队列、`AVSync`
   - 对外接口：`open(path)` / `play()` / `pause()` / `stop()` / `seek(seconds)` / `setVolume(float)`
   - 信号：`durationChanged(int64_t ms)` / `positionChanged(int64_t ms)`（100 ms `QTimer` 轮询音频时钟）/ `playbackFinished()`

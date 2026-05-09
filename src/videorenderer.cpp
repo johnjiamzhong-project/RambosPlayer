@@ -40,46 +40,32 @@ void VideoRenderer::startRendering() { timer_->start(); }
 void VideoRenderer::stopRendering()  { timer_->stop(); }
 
 // 定时回调：音视频同步的核心决策点。
-//
-// 为什么用 tryPop(timeout=0) 而不是阻塞等待？
-//   onTimer 运行在 GUI 主线程，阻塞会卡死整个 UI（拖动进度条、响应鼠标等全部失效）。
-//   用非阻塞 tryPop：队列空时直接返回，等下一个 1ms tick 再试，主线程保持响应。
-//
-// 为什么 delay > 2.0 时把帧放回而不是丢弃？
-//   视频帧 pts 远超音频时钟，说明音频还没追上（seek 后或缓冲积压）。
-//   此时丢帧会造成画面永久缺失；放回队列让帧在下一 tick 重新参与判断，
-//   等音频时钟追上后自然进入正常渲染路径。
-//
-// 为什么 delay > 0 时用 msleep 而不是直接跳过？
-//   视频帧轻微超前（< 2s）属于正常情况（解码比播放快）。
-//   msleep 让视频等音频，避免画面跑太快；delay < 0（视频落后）则跳过 sleep 立即渲染，
-//   相当于用"不等待"来追赶音频，实现软性丢帧补偿。
 void VideoRenderer::onTimer() {
     AVFrame* frame = nullptr;
-    if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) return;
+    if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) return;  // 非阻塞取帧，队列空则直接返回，避免阻塞 GUI 线程
 
     double pts = (frame->pts != AV_NOPTS_VALUE)
-                 ? frame->pts * av_q2d(timeBase_) : 0.0;
-    double delay = sync_ ? sync_->videoDelay(pts) : 0.0;
+                 ? frame->pts * av_q2d(timeBase_) : 0.0;  // pts × 时间基 → 秒；无效 pts 按 0 处理
+    double delay = sync_ ? sync_->videoDelay(pts) : 0.0;  // 查询视频帧相对音频时钟的延迟（秒），负值表示视频落后
 
-    if (delay > 2.0) {
-        frameQueue_->push(frame);
+    if (delay > 2.0) {          // 视频大幅领先（音频未追上，常见于 seek 后）
+        frameQueue_->push(frame);   // 放回队列，等音频时钟追上后再渲染，不丢帧
         return;
     }
     if (delay > 0.0) {
-        QThread::msleep((unsigned long)delay);
+        QThread::msleep((unsigned long)delay);  // 视频轻微超前，等待音频追上；delay ≤ 0 则跳过，立即渲染追赶
     }
 
-    uint8_t* dst[1]  = { currentFrame_.bits() };
-    int dstStride[1] = { currentFrame_.bytesPerLine() };
+    uint8_t* dst[1]  = { currentFrame_.bits() };           // 拿到 QImage 像素缓冲区的裸指针，供 sws_scale 直接写入
+    int dstStride[1] = { currentFrame_.bytesPerLine() };   // 每行字节数（stride），RGB32 = width × 4
     {
-        QMutexLocker lk(&frameMutex_);
+        QMutexLocker lk(&frameMutex_);              // 加锁防止 paintEvent() 在写入过程中读取撕裂的半帧
         sws_scale(swsCtx_,
                   (const uint8_t* const*)frame->data, frame->linesize,
-                  0, srcH_, dst, dstStride);
+                  0, srcH_, dst, dstStride);        // YUV420P → RGB32，结果原地写入 currentFrame_ 缓冲区
     }
-    av_frame_free(&frame);
-    update();
+    av_frame_free(&frame);  // 释放解码帧（AVFrame 及其数据缓冲区）
+    update();               // 通知 Qt 调度 paintEvent()，将 currentFrame_ 绘制到屏幕
 }
 
 // Qt 绘制回调：用 QPainter 将 currentFrame_ 保持宽高比居中绘制到 widget，无帧时填黑。

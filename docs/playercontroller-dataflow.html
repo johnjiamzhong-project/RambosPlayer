@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>PlayerController 数据流向图</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', 'PingFang SC', sans-serif; background: #0f1117; color: #e0e0e0; padding: 32px; }
+h1 { text-align: center; font-size: 22px; color: #7dd3fc; margin-bottom: 8px; letter-spacing: 2px; }
+.subtitle { text-align: center; color: #64748b; font-size: 13px; margin-bottom: 40px; }
+
+/* ── 主流水线 ── */
+.pipeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 48px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.node {
+  border-radius: 10px;
+  padding: 14px 16px;
+  min-width: 130px;
+  text-align: center;
+  position: relative;
+  flex-shrink: 0;
+}
+.node-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.node-sub   { font-size: 11px; color: #94a3b8; line-height: 1.5; }
+.node-badge { font-size: 10px; border-radius: 4px; padding: 2px 6px; display: inline-block; margin-top: 4px; }
+
+/* 颜色系 */
+.c-blue   { background: #1e3a5f; border: 1.5px solid #3b82f6; }
+.c-purple { background: #2d1b5e; border: 1.5px solid #8b5cf6; }
+.c-green  { background: #14402a; border: 1.5px solid #22c55e; }
+.c-orange { background: #42250a; border: 1.5px solid #f97316; }
+.c-rose   { background: #3d1020; border: 1.5px solid #f43f5e; }
+.c-teal   { background: #0a3040; border: 1.5px solid #14b8a6; }
+.c-gray   { background: #1e2430; border: 1.5px solid #475569; }
+.c-yellow { background: #3a2c00; border: 1.5px solid #eab308; }
+
+.badge-blue   { background:#1d4ed8; color:#fff; }
+.badge-purple { background:#6d28d9; color:#fff; }
+.badge-green  { background:#15803d; color:#fff; }
+.badge-orange { background:#c2410c; color:#fff; }
+.badge-teal   { background:#0f766e; color:#fff; }
+.badge-gray   { background:#374151; color:#ccc; }
+
+/* 箭头 */
+.arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.arrow-line {
+  height: 2px;
+  width: 60px;
+  position: relative;
+}
+.arrow-line::after {
+  content: '';
+  position: absolute;
+  right: -1px; top: -5px;
+  border: 6px solid transparent;
+}
+.arrow-label { font-size: 10px; white-space: nowrap; text-align: center; }
+
+.arrow-pkt .arrow-line { background: #3b82f6; }
+.arrow-pkt .arrow-line::after { border-left-color: #3b82f6; }
+.arrow-pkt .arrow-label { color: #93c5fd; }
+
+.arrow-frame .arrow-line { background: #22c55e; }
+.arrow-frame .arrow-line::after { border-left-color: #22c55e; }
+.arrow-frame .arrow-label { color: #86efac; }
+
+.arrow-pcm .arrow-line { background: #f97316; }
+.arrow-pcm .arrow-line::after { border-left-color: #f97316; }
+.arrow-pcm .arrow-label { color: #fdba74; }
+
+.arrow-sig .arrow-line { background: #8b5cf6; border-top: 2px dashed #8b5cf6; background: transparent; }
+.arrow-sig .arrow-line::after { border-left-color: #8b5cf6; }
+.arrow-sig .arrow-label { color: #c4b5fd; }
+
+/* ── 队列详情行 ── */
+.queues-row {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-bottom: 48px;
+  flex-wrap: wrap;
+}
+.queue-card {
+  border-radius: 10px;
+  padding: 16px 20px;
+  width: 240px;
+}
+.queue-card h3 { font-size: 13px; margin-bottom: 10px; }
+.queue-bar-wrap { background: #1e2430; border-radius: 4px; height: 16px; margin-bottom: 8px; overflow: hidden; }
+.queue-bar { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 6px; font-size: 10px; color: #fff; font-weight: 600; }
+.queue-meta { font-size: 11px; color: #94a3b8; line-height: 1.7; }
+
+/* ── open() 流程 ── */
+.flow-section { margin-bottom: 48px; }
+.flow-section h2 { font-size: 15px; color: #7dd3fc; margin-bottom: 16px; border-left: 3px solid #3b82f6; padding-left: 10px; }
+.steps { display: flex; flex-direction: column; gap: 0; }
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 0;
+  border-left: 2px solid #1e3a5f;
+  margin-left: 20px;
+  padding-left: 20px;
+  position: relative;
+}
+.step::before {
+  content: attr(data-n);
+  position: absolute;
+  left: -14px;
+  top: 14px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0;
+}
+.step.s-blue::before   { background: #1d4ed8; color:#fff; }
+.step.s-green::before  { background: #15803d; color:#fff; }
+.step.s-purple::before { background: #6d28d9; color:#fff; }
+.step.s-orange::before { background: #c2410c; color:#fff; }
+.step.s-teal::before   { background: #0f766e; color:#fff; }
+.step.s-rose::before   { background: #be123c; color:#fff; }
+.step-body { flex: 1; }
+.step-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.step-detail { font-size: 12px; color: #94a3b8; line-height: 1.7; }
+.step-code {
+  margin-top: 6px;
+  background: #0d1117;
+  border: 1px solid #1e2430;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #a5f3fc;
+  line-height: 1.6;
+}
+.hl-fn   { color: #7dd3fc; }
+.hl-var  { color: #86efac; }
+.hl-str  { color: #fda4af; }
+.hl-kw   { color: #c4b5fd; }
+.hl-cm   { color: #475569; }
+
+/* ── AVSync 时钟区 ── */
+.clock-section {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 48px;
+  flex-wrap: wrap;
+}
+.clock-card {
+  flex: 1;
+  min-width: 280px;
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+.clock-card h3 { font-size: 13px; margin-bottom: 12px; }
+.clock-dial {
+  width: 100px; height: 100px;
+  border-radius: 50%;
+  border: 3px solid #14b8a6;
+  margin: 0 auto 12px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: #0a1a1f;
+}
+.clock-dial .pts { font-size: 13px; color: #14b8a6; font-weight: 700; }
+.clock-dial .label { font-size: 10px; color: #64748b; }
+.clock-timeline { position: relative; height: 36px; margin: 8px 0; }
+.tl-bar { height: 6px; border-radius: 3px; background: #1e2430; margin-top: 15px; }
+.tl-audio { position: absolute; left: 0; top: 15px; height: 6px; border-radius: 3px; background: #f97316; width: 55%; }
+.tl-video { position: absolute; left: 0; top: 15px; height: 6px; border-radius: 3px 0 0 3px; background: transparent; border-bottom: 3px dashed #22c55e; width: 70%; }
+.tl-label { position: absolute; font-size: 10px; top: -2px; }
+.tl-label.audio { left: 57%; color: #fdba74; }
+.tl-label.video { left: 72%; color: #86efac; }
+.delay-box { background: #0d1117; border-radius: 6px; padding: 8px 12px; font-size: 11px; color: #94a3b8; line-height: 1.8; margin-top: 8px; }
+
+/* ── 信号表 ── */
+.signals-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 48px; }
+.signals-table th { background: #1e2430; padding: 10px 14px; text-align: left; color: #7dd3fc; font-weight: 600; }
+.signals-table td { padding: 10px 14px; border-bottom: 1px solid #1e2430; vertical-align: top; }
+.signals-table tr:hover td { background: #131a24; }
+.sig-name { color: #c4b5fd; font-family: monospace; font-size: 11px; }
+.sig-src  { color: #86efac; font-size: 11px; }
+.sig-dest { color: #fdba74; font-size: 11px; }
+
+/* ── seek 流程 ── */
+.seek-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 48px;
+}
+.seek-node {
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  text-align: center;
+  min-width: 110px;
+}
+.seek-arrow {
+  font-size: 18px;
+  color: #475569;
+  padding: 0 6px;
+}
+
+/* ── stop 顺序 ── */
+.stop-seq {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 48px;
+  justify-content: center;
+}
+.stop-box {
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 12px;
+  min-width: 120px;
+}
+.stop-arrow { font-size: 22px; color: #f43f5e; }
+
+/* legend */
+.legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 32px; align-items: center; justify-content: center; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #94a3b8; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<h1>PlayerController — 数据获取与处理走向</h1>
+<p class="subtitle">RambosPlayer · Task 8 · FFmpeg + Qt 多线程播放器</p>
+
+<!-- 图例 -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>AVPacket* 视频包</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div>AVPacket* 音频包</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>AVFrame* 解码帧</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e879f9"></div>PCM 音频数据</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6; border-radius:0"></div>Qt Signal（虚线）</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>时钟同步</div>
+</div>
+
+<!-- ① 主流水线 -->
+<div class="flow-section">
+  <h2>① 主播放流水线（play() 后数据走向）</h2>
+</div>
+
+<div class="pipeline">
+  <!-- 文件 -->
+  <div class="node c-gray">
+    <div class="node-title">📄 媒体文件</div>
+    <div class="node-sub">sample.mp4<br>H.264 + AAC</div>
+  </div>
+
+  <div class="arrow arrow-pkt">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">av_read_frame<br>读包</div>
+  </div>
+
+  <!-- DemuxThread -->
+  <div class="node c-blue">
+    <div class="node-title">🔀 DemuxThread</div>
+    <div class="node-sub">解复用线程<br>按 stream_index<br>分发到两队列</div>
+    <div class="node-badge badge-blue">QThread</div>
+  </div>
+
+  <!-- 两路箭头 -->
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:center;flex-shrink:0">
+    <div class="arrow arrow-pkt" style="min-width:80px">
+      <div class="arrow-line"></div>
+      <div class="arrow-label" style="color:#93c5fd">videoPacketQ<br>cap=100</div>
+    </div>
+    <div class="arrow arrow-pcm" style="min-width:80px">
+      <div class="arrow-line"></div>
+      <div class="arrow-label" style="color:#fdba74">audioPacketQ<br>cap=400</div>
+    </div>
+  </div>
+
+  <!-- 解码层 -->
+  <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0">
+    <div class="node c-green" style="min-width:140px">
+      <div class="node-title">🎬 VideoDecodeThread</div>
+      <div class="node-sub">avcodec_send_packet<br>avcodec_receive_frame<br>av_frame_clone → 推帧</div>
+      <div class="node-badge badge-green">QThread</div>
+    </div>
+    <div class="node c-orange" style="min-width:140px">
+      <div class="node-title">🔊 AudioDecodeThread</div>
+      <div class="node-sub">解码 → swr_convert<br>S16 Stereo 44100<br>→ QAudioOutput</div>
+      <div class="node-badge badge-orange">QThread</div>
+    </div>
+  </div>
+
+  <!-- 帧队列 + PCM -->
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:center;flex-shrink:0">
+    <div class="arrow arrow-frame" style="min-width:80px">
+      <div class="arrow-line"></div>
+      <div class="arrow-label">videoFrameQ<br>cap=15</div>
+    </div>
+    <div class="arrow arrow-pcm" style="min-width:80px">
+      <div class="arrow-line" style="background:#e879f9"></div>
+      <div class="arrow-label" style="color:#f0abfc">PCM write<br>QIODevice</div>
+    </div>
+  </div>
+
+  <!-- 渲染 + 音频输出 -->
+  <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0">
+    <div class="node c-green" style="min-width:130px">
+      <div class="node-title">🖼 VideoRenderer</div>
+      <div class="node-sub">1ms QTimer<br>sws_scale YUV→RGB<br>QPainter 绘帧</div>
+      <div class="node-badge badge-green">QWidget</div>
+    </div>
+    <div class="node c-orange" style="min-width:130px">
+      <div class="node-title">🔈 QAudioOutput</div>
+      <div class="node-sub">PCM → 硬件<br>驱动音频时钟<br>setAudioClock(pts)</div>
+      <div class="node-badge badge-orange">Qt</div>
+    </div>
+  </div>
+
+  <div class="arrow arrow-frame" style="min-width:60px">
+    <div class="arrow-line"></div>
+    <div class="arrow-label" style="color:#14b8a6">AVSync<br>时钟同步</div>
+  </div>
+
+  <!-- 屏幕 -->
+  <div class="node c-teal">
+    <div class="node-title">🖥 屏幕</div>
+    <div class="node-sub">视频画面<br>音频输出<br>音画同步</div>
+  </div>
+</div>
+
+<!-- ② 三条队列详情 -->
+<div class="flow-section">
+  <h2>② 三条 FrameQueue 的参数与角色</h2>
+</div>
+<div class="queues-row">
+  <div class="queue-card c-blue">
+    <h3 style="color:#93c5fd">📦 videoPacketQ_  <small style="color:#475569">cap=100</small></h3>
+    <div class="queue-bar-wrap">
+      <div class="queue-bar" style="width:60%;background:#1d4ed8">60 pkts</div>
+    </div>
+    <div class="queue-meta">
+      类型：<code>FrameQueue&lt;AVPacket*&gt;</code><br>
+      生产：DemuxThread（av_packet_clone 推入）<br>
+      消费：VideoDecodeThread（tryPop 取包）<br>
+      满时：DemuxThread 阻塞，产生背压<br>
+      容量选择：100 帧 × 平均包大小 ≈ 缓冲 ~4s
+    </div>
+  </div>
+  <div class="queue-card c-orange">
+    <h3 style="color:#fdba74">📦 audioPacketQ_  <small style="color:#475569">cap=400</small></h3>
+    <div class="queue-bar-wrap">
+      <div class="queue-bar" style="width:75%;background:#c2410c">300 pkts</div>
+    </div>
+    <div class="queue-meta">
+      类型：<code>FrameQueue&lt;AVPacket*&gt;</code><br>
+      生产：DemuxThread（音频包更小、更密）<br>
+      消费：AudioDecodeThread<br>
+      容量更大：音频帧约 23ms/帧，400帧≈9s 缓冲<br>
+      保证音频连续性，防止爆音
+    </div>
+  </div>
+  <div class="queue-card c-green">
+    <h3 style="color:#86efac">🖼 videoFrameQ_  <small style="color:#475569">cap=15</small></h3>
+    <div class="queue-bar-wrap">
+      <div class="queue-bar" style="width:33%;background:#15803d">5 frames</div>
+    </div>
+    <div class="queue-meta">
+      类型：<code>FrameQueue&lt;AVFrame*&gt;</code><br>
+      生产：VideoDecodeThread（av_frame_clone 推入）<br>
+      消费：VideoRenderer::onTimer()（tryPop 非阻塞）<br>
+      容量小：解码帧体积大（YUV420P 1080p≈3MB/帧）<br>
+      15帧 × 3MB = 约 45MB 内存上限
+    </div>
+  </div>
+</div>
+
+<!-- ③ open() 逐步流程 -->
+<div class="flow-section">
+  <h2>③ open() 初始化流程——数据从文件流向各组件</h2>
+  <div class="steps">
+    <div class="step s-blue" data-n="1">
+      <div class="step-body">
+        <div class="step-title">stop() + reset() — 清除旧状态</div>
+        <div class="step-detail">重复打开文件时保证状态干净。stopAllThreads() 等待所有线程退出，三条队列 reset() 恢复可用。</div>
+        <div class="step-code">
+          <span class="hl-fn">stop</span>();<br>
+          <span class="hl-var">videoPacketQ_</span>.<span class="hl-fn">reset</span>(); <span class="hl-var">audioPacketQ_</span>.<span class="hl-fn">reset</span>(); <span class="hl-var">videoFrameQ_</span>.<span class="hl-fn">reset</span>();
+        </div>
+      </div>
+    </div>
+    <div class="step s-blue" data-n="2">
+      <div class="step-body">
+        <div class="step-title">demux_.open() — 打开文件，绑定包队列</div>
+        <div class="step-detail">DemuxThread 调用 avformat_open_input + avformat_find_stream_info，识别视频/音频流索引，绑定两条包队列（但还未 start()）。</div>
+        <div class="step-code">
+          <span class="hl-kw">if</span> (!<span class="hl-var">demux_</span>.<span class="hl-fn">open</span>(path, &amp;<span class="hl-var">videoPacketQ_</span>, &amp;<span class="hl-var">audioPacketQ_</span>)) <span class="hl-kw">return false</span>;
+        </div>
+      </div>
+    </div>
+    <div class="step s-green" data-n="3">
+      <div class="step-body">
+        <div class="step-title">读取流参数 — AVFormatContext → codecpar + time_base</div>
+        <div class="step-detail">从已打开的 AVFormatContext 取视频/音频流，获得分辨率、codec id、时间基等参数，这些将传给解码器和渲染器。</div>
+        <div class="step-code">
+          <span class="hl-var">AVFormatContext</span>* fmt = <span class="hl-var">demux_</span>.<span class="hl-fn">formatContext</span>(); <span class="hl-cm">// 已打开的格式上下文</span><br>
+          <span class="hl-kw">int</span> vi = <span class="hl-var">demux_</span>.<span class="hl-fn">videoStreamIdx</span>();  <span class="hl-cm">// 视频流索引，-1=无视频</span><br>
+          <span class="hl-kw">int</span> ai = <span class="hl-var">demux_</span>.<span class="hl-fn">audioStreamIdx</span>();  <span class="hl-cm">// 音频流索引，-1=无音频</span><br>
+          <span class="hl-var">AVCodecParameters</span>* vp = fmt->streams[vi]-><span class="hl-var">codecpar</span>; <span class="hl-cm">// 含 width/height/codec_id</span><br>
+          <span class="hl-var">AVRational</span> vtb = fmt->streams[vi]-><span class="hl-var">time_base</span>;   <span class="hl-cm">// pts 单位换算用</span>
+        </div>
+      </div>
+    </div>
+    <div class="step s-purple" data-n="4">
+      <div class="step-body">
+        <div class="step-title">videoDec_.init() — 打开视频解码器，绑定队列</div>
+        <div class="step-detail">avcodec_find_decoder + avcodec_open2，输入队列绑 videoPacketQ_，输出队列绑 videoFrameQ_。</div>
+        <div class="step-code">
+          <span class="hl-var">videoDec_</span>.<span class="hl-fn">init</span>(vp); <span class="hl-cm">// 打开 H.264 解码器</span><br>
+          <span class="hl-var">videoDec_</span>.<span class="hl-fn">setInputQueue</span>(&amp;<span class="hl-var">videoPacketQ_</span>);<br>
+          <span class="hl-var">videoDec_</span>.<span class="hl-fn">setOutputQueue</span>(&amp;<span class="hl-var">videoFrameQ_</span>);
+        </div>
+      </div>
+    </div>
+    <div class="step s-green" data-n="5">
+      <div class="step-body">
+        <div class="step-title">renderer_->init() — 渲染器绑定分辨率 + 时钟 + 帧队列</div>
+        <div class="step-detail">此时才知道视频实际分辨率（来自 codecpar），创建 SwsContext（YUV420P→RGB32）和 QImage 缓冲区。</div>
+        <div class="step-code">
+          <span class="hl-var">renderer_</span>-><span class="hl-fn">init</span>(vp->width, vp->height, vtb, &amp;<span class="hl-var">sync_</span>, &amp;<span class="hl-var">videoFrameQ_</span>);<br>
+          <span class="hl-cm">// → sws_getContext(w,h,YUV420P → w,h,RGB32)</span><br>
+          <span class="hl-cm">// → currentFrame_ = QImage(w, h, Format_RGB32)</span>
+        </div>
+      </div>
+    </div>
+    <div class="step s-orange" data-n="6">
+      <div class="step-body">
+        <div class="step-title">audioDec_.init() — 打开音频解码器 + swr + QAudioOutput</div>
+        <div class="step-detail">初始化 SwrContext（任意格式 → S16 Stereo 44100），创建 QAudioOutput 并获取 QIODevice*，绑定 AVSync 用于更新音频时钟。</div>
+        <div class="step-code">
+          <span class="hl-var">audioDec_</span>.<span class="hl-fn">init</span>(ap, atb, &amp;<span class="hl-var">sync_</span>);<br>
+          <span class="hl-cm">// → swr_alloc + swr_init（→ S16 Stereo 44100）</span><br>
+          <span class="hl-cm">// → QAudioOutput::start() 获取 QIODevice*</span><br>
+          <span class="hl-var">audioDec_</span>.<span class="hl-fn">setInputQueue</span>(&amp;<span class="hl-var">audioPacketQ_</span>);
+        </div>
+      </div>
+    </div>
+    <div class="step s-teal" data-n="7">
+      <div class="step-body">
+        <div class="step-title">emit durationChanged() — 通知 UI 文件时长</div>
+        <div class="step-detail">demux_.duration() 返回微秒，除以 1000 转毫秒，MainWindow 用此值设置进度条最大值。</div>
+        <div class="step-code">
+          <span class="hl-kw">emit</span> <span class="hl-fn">durationChanged</span>(<span class="hl-fn">duration</span>()); <span class="hl-cm">// us → ms</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ④ AVSync 时钟机制 -->
+<div class="flow-section">
+  <h2>④ AVSync 音频主时钟——视频如何跟随音频</h2>
+</div>
+<div class="clock-section">
+  <div class="clock-card c-teal">
+    <h3 style="color:#5eead4">🕐 AVSync 内部结构</h3>
+    <div class="clock-dial">
+      <div class="pts">12.340s</div>
+      <div class="label">audioClock</div>
+    </div>
+    <div style="font-size:11px;color:#94a3b8;line-height:1.8;text-align:center">
+      atomic&lt;double&gt; audioClock_<br>
+      AudioDecodeThread 每解码一帧更新<br>
+      读取无锁，视频随时可查
+    </div>
+    <div class="delay-box">
+      <b style="color:#5eead4">videoDelay(pts) 计算：</b><br>
+      delay = pts − audioClock()<br>
+      delay &gt; 2.0s → 放回队列（音频未追上）<br>
+      delay &gt; 0   → msleep(delay×1000ms)<br>
+      delay ≤ 0   → 立即渲染（视频落后追赶）<br>
+      delay &lt; -0.4s → 丢帧阈值（AVSync内部）
+    </div>
+  </div>
+  <div class="clock-card c-orange">
+    <h3 style="color:#fdba74">🎵 音频时钟更新路径</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      <div style="background:#1e2430;border-radius:6px;padding:10px;font-size:11px;color:#94a3b8">
+        <b style="color:#fdba74">AudioDecodeThread::run()</b><br>
+        取包 → avcodec_receive_frame<br>
+        pts × av_q2d(timeBase) → 秒<br>
+        <b style="color:#14b8a6">sync_-&gt;setAudioClock(pts)</b>  ← 更新主时钟<br>
+        swr_convert → PCM → QIODevice::write
+      </div>
+      <div style="background:#1e2430;border-radius:6px;padding:10px;font-size:11px;color:#94a3b8">
+        <b style="color:#22c55e">VideoRenderer::onTimer()</b><br>
+        tryPop(frame, 0)  ← 非阻塞<br>
+        pts = frame-&gt;pts × av_q2d(timeBase_)<br>
+        delay = <b style="color:#14b8a6">sync_-&gt;videoDelay(pts)</b><br>
+        → 等待 / 放回 / 立即渲染
+      </div>
+    </div>
+    <div class="clock-timeline">
+      <div class="tl-bar"></div>
+      <div class="tl-audio"></div>
+      <div class="tl-video"></div>
+      <div class="tl-label audio">音频时钟 12.34s</div>
+      <div class="tl-label video">视频帧 12.48s</div>
+    </div>
+    <div style="font-size:10px;color:#64748b;text-align:center">视频超前 0.14s → msleep(140ms) 等待</div>
+  </div>
+</div>
+
+<!-- ⑤ seek 流程 -->
+<div class="flow-section">
+  <h2>⑤ seek() 流程——拖拽进度条时数据如何重置</h2>
+</div>
+<div class="seek-flow">
+  <div class="seek-node c-yellow" style="min-width:100px">
+    <div style="font-size:16px">🖱</div>
+    <div style="font-size:12px;font-weight:600">用户拖拽<br>进度条</div>
+    <div style="font-size:10px;color:#94a3b8">MainWindow</div>
+  </div>
+  <div class="seek-arrow">→</div>
+  <div class="seek-node c-blue">
+    <div style="font-size:12px;font-weight:600">seek(seconds)</div>
+    <div style="font-size:10px;color:#94a3b8">PlayerController</div>
+  </div>
+  <div class="seek-arrow">→</div>
+  <div class="seek-node c-blue">
+    <div style="font-size:12px;font-weight:600">demux_.seek()<br>存原子量</div>
+    <div style="font-size:10px;color:#94a3b8">DemuxThread<br>run()下一帧检测</div>
+  </div>
+  <div class="seek-arrow">→</div>
+  <div class="seek-node c-blue">
+    <div style="font-size:12px;font-weight:600">av_seek_frame<br>清空两队列</div>
+    <div style="font-size:10px;color:#94a3b8">定位到关键帧<br>旧包全部丢弃</div>
+  </div>
+  <div class="seek-arrow">→</div>
+  <div class="seek-node c-green">
+    <div style="font-size:12px;font-weight:600">videoDec_.flush()<br>audioDec_.flush()</div>
+    <div style="font-size:10px;color:#94a3b8">avcodec_flush_buffers<br>清除 DPB 缓冲</div>
+  </div>
+  <div class="seek-arrow">→</div>
+  <div class="seek-node c-teal">
+    <div style="font-size:12px;font-weight:600">重新解码<br>AVSync 重同步</div>
+    <div style="font-size:10px;color:#94a3b8">新位置的帧<br>进入队列</div>
+  </div>
+</div>
+
+<!-- ⑥ stop 顺序 -->
+<div class="flow-section">
+  <h2>⑥ stopAllThreads() 停止顺序——为什么先停生产方</h2>
+</div>
+<div class="stop-seq">
+  <div class="stop-box c-blue">
+    <div style="font-size:20px">🔀</div>
+    <div style="font-weight:600;margin:4px 0">demux_.stop()</div>
+    <div style="font-size:10px;color:#94a3b8">abort 两条包队列<br>生产方停止推包</div>
+  </div>
+  <div class="stop-arrow">①→</div>
+  <div class="stop-box c-blue">
+    <div style="font-size:20px">⏳</div>
+    <div style="font-weight:600;margin:4px 0">demux_.wait(3s)</div>
+    <div style="font-size:10px;color:#94a3b8">等待线程退出<br>超时 3000ms</div>
+  </div>
+  <div class="stop-arrow">②→</div>
+  <div class="stop-box c-green">
+    <div style="font-size:20px">🎬</div>
+    <div style="font-weight:600;margin:4px 0">videoDec_.stop()</div>
+    <div style="font-size:10px;color:#94a3b8">abort 帧队列<br>解码线程退出</div>
+  </div>
+  <div class="stop-arrow">③→</div>
+  <div class="stop-box c-orange">
+    <div style="font-size:20px">🔊</div>
+    <div style="font-weight:600;margin:4px 0">audioDec_.stop()</div>
+    <div style="font-size:10px;color:#94a3b8">停止 QAudioOutput<br>音频线程退出</div>
+  </div>
+  <div class="stop-arrow">④→</div>
+  <div class="stop-box c-gray">
+    <div style="font-size:20px">🗑</div>
+    <div style="font-weight:600;margin:4px 0">clear() × 3</div>
+    <div style="font-size:10px;color:#94a3b8">清空三条队列<br>释放残留内存</div>
+  </div>
+</div>
+<div style="background:#1e2430;border-radius:8px;padding:14px 20px;font-size:12px;color:#94a3b8;max-width:600px;margin:0 auto 48px;line-height:1.8">
+  <b style="color:#f43f5e">⚠ 为什么必须先停 DemuxThread？</b><br>
+  若先停解码线程（消费方），DemuxThread 仍在 push 包，包队列满后 DemuxThread 阻塞在 push()，
+  永远等不到消费者，导致 wait() 超时、线程泄漏。<br>
+  先停 DemuxThread → 包队列 abort → 解码线程 tryPop 返回 false → 自然退出。
+</div>
+
+<!-- ⑦ 信号表 -->
+<div class="flow-section">
+  <h2>⑦ PlayerController 发出的 Qt 信号</h2>
+</div>
+<table class="signals-table">
+  <tr>
+    <th>信号</th><th>触发时机</th><th>来源</th><th>接收方（预期）</th><th>用途</th>
+  </tr>
+  <tr>
+    <td><span class="sig-name">durationChanged(int64_t ms)</span></td>
+    <td>open() 成功返回前</td>
+    <td><span class="sig-src">PlayerController::open()</span></td>
+    <td><span class="sig-dest">MainWindow</span></td>
+    <td>设置进度条最大值、时长标签</td>
+  </tr>
+  <tr>
+    <td><span class="sig-name">positionChanged(int64_t ms)</span></td>
+    <td>每 100ms（posTimer_ 触发）</td>
+    <td><span class="sig-src">updatePosition() ← QTimer</span></td>
+    <td><span class="sig-dest">MainWindow</span></td>
+    <td>更新进度条位置、时间标签</td>
+  </tr>
+  <tr>
+    <td><span class="sig-name">playbackFinished()</span></td>
+    <td>DemuxThread::finished 后 500ms</td>
+    <td><span class="sig-src">onDemuxFinished() → singleShot</span></td>
+    <td><span class="sig-dest">MainWindow</span></td>
+    <td>播放按钮变 ▶，进度条归零</td>
+  </tr>
+</table>
+
+<!-- 底部说明 -->
+<div style="text-align:center;color:#334155;font-size:11px;margin-top:16px">
+  RambosPlayer · Task 8 PlayerController · 2026-05-09
+</div>
+
+</body>
+</html>

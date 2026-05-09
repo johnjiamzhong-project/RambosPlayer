@@ -27,7 +27,7 @@
 | Task 5 — VideoDecodeThread | ✅ 完成 |
 | Task 6 — AudioDecodeThread | ✅ 完成 |
 | Task 7 — VideoRenderer | ✅ 完成 |
-| Task 8 — PlayerController | 📋 |
+| Task 8 — PlayerController | ✅ 完成 |
 | Task 9 — MainWindow UI | 📋 |
 | Task 10 — 集成验证 | 📋 |
 
