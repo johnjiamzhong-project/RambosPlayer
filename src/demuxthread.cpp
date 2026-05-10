@@ -21,24 +21,32 @@ DemuxThread::~DemuxThread() {
 bool DemuxThread::open(const QString& path,
                         FrameQueue<AVPacket*>* videoQueue,
                         FrameQueue<AVPacket*>* audioQueue) {
+    // 重置 abort_ 标志，允许 run() 在下次 start() 后正常循环
     abort_.store(false, std::memory_order_relaxed);
 
+    // 步骤1：打开容器文件，分配并填充 AVFormatContext（包含封装格式、I/O 缓冲等）
+    // path 转 UTF-8 是为了兼容中文路径；nullptr 表示自动探测格式和使用默认选项
     if (avformat_open_input(&fmtCtx_,
                             path.toUtf8().constData(),
                             nullptr, nullptr) < 0)
         return false;
 
+    // 步骤2：读取若干帧数据，推断每条流的编解码参数（帧率、采样率等）
+    // 部分格式（如 MPEG-TS）无法从文件头直接得到完整参数，必须靠此步骤补全
     if (avformat_find_stream_info(fmtCtx_, nullptr) < 0) {
         avformat_close_input(&fmtCtx_);  // 防止 fmtCtx_ 泄漏
         return false;
     }
 
+    // 步骤3：遍历所有流，记录第一条视频流和第一条音频流的索引
+    // 只取第一条是因为播放器不支持多视角/多音轨切换；videoIdx_/audioIdx_ 初值为 -1
     for (unsigned i = 0; i < fmtCtx_->nb_streams; ++i) {
         auto type = fmtCtx_->streams[i]->codecpar->codec_type;
         if (type == AVMEDIA_TYPE_VIDEO && videoIdx_ < 0) videoIdx_ = (int)i;
         if (type == AVMEDIA_TYPE_AUDIO && audioIdx_ < 0) audioIdx_ = (int)i;
     }
 
+    // 步骤4：保存总时长（单位 AV_TIME_BASE=1e6 微秒）和队列指针，供 run() 和外部查询使用
     duration_   = fmtCtx_->duration;
     videoQueue_ = videoQueue;
     audioQueue_ = audioQueue;

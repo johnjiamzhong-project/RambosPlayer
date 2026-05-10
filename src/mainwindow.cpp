@@ -80,35 +80,26 @@ void MainWindow::updateRecentFiles(const QString& path) {
     rebuildRecentMenu();
 }
 
-// 重建最近文件子菜单：先删除分隔线之前的动态条目，再按列表顺序插入新条目。
+// 重建最近文件子菜单：先删除 actionClearRecent 之前的动态条目，再按列表顺序插入新条目。
 void MainWindow::rebuildRecentMenu() {
     QSettings s("RambosPlayer", "RambosPlayer");
     QStringList files = s.value("recentFiles").toStringList();
 
-    // 找到菜单中的固定分隔线（动态条目与"清除记录"之间的边界）
-    QAction* sep = nullptr;
+    // 删除所有动态文件条目（跳过静态的 actionClearRecent）
     for (QAction* a : ui->menuRecentFiles->actions()) {
-        if (a->isSeparator()) { sep = a; break; }
-    }
-
-    // 删除分隔线之前所有旧的动态文件条目
-    for (QAction* a : ui->menuRecentFiles->actions()) {
-        if (a == sep) break;
+        if (a == ui->actionClearRecent) continue;
         ui->menuRecentFiles->removeAction(a);
         delete a;
     }
 
-    // 在分隔线之前按顺序插入新条目
+    // 在 actionClearRecent 之前按顺序插入新条目
     for (int i = 0; i < files.size(); ++i) {
         QString label = QString("&%1  %2").arg(i + 1)
                             .arg(QFileInfo(files[i]).fileName());
         QAction* a = new QAction(label, ui->menuRecentFiles);
         a->setToolTip(files[i]);   // 悬停时显示完整路径
         connect(a, &QAction::triggered, this, [this, path = files[i]]{ openFile(path); });
-        if (sep)
-            ui->menuRecentFiles->insertAction(sep, a);
-        else
-            ui->menuRecentFiles->addAction(a);
+        ui->menuRecentFiles->insertAction(ui->actionClearRecent, a);
     }
 
     bool hasFiles = !files.isEmpty();
