@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RambosPlayer 架构流程图</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  line-height: 1.6;
+}
+header {
+  text-align: center;
+  padding: 32px 16px 16px;
+  background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+  border-bottom: 3px solid #e94560;
+}
+header h1 { font-size: 28px; color: #fff; }
+header p  { font-size: 14px; color: #a0a0c0; margin-top: 6px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+/* ---- 图例 ---- */
+.legend {
+  display: flex; gap: 24px; justify-content: center; flex-wrap: wrap;
+  margin-bottom: 32px; font-size: 13px;
+}
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend .dot { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+.legend .dot.thread   { background: #e94560; }
+.legend .dot.queue    { background: #f5c542; }
+.legend .dot.sync     { background: #7b2ff7; }
+.legend .dot.widget   { background: #0f9b8e; }
+.legend .dot.ctrl     { background: #3b82f6; }
+
+/* ---- 流程图 ---- */
+.pipeline {
+  display: flex; flex-direction: column; gap: 0; align-items: center;
+  margin-bottom: 40px;
+}
+
+/* 模块行 */
+.stage {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 0;
+}
+.stage-block {
+  border-radius: 10px; padding: 14px 20px; min-width: 160px;
+  text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  transition: transform 0.2s;
+}
+.stage-block:hover { transform: scale(1.04); }
+
+.stage-block.thread  { background: linear-gradient(135deg, #e94560 0%, #c23152 100%); }
+.stage-block.queue   { background: linear-gradient(135deg, #c79100 0%, #a37500 100%); }
+.stage-block.sync    { background: linear-gradient(135deg, #7b2ff7 0%, #5a1db5 100%); }
+.stage-block.widget  { background: linear-gradient(135deg, #0f9b8e 0%, #0a7268 100%); }
+.stage-block.ctrl    { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
+
+.stage-block .title { font-weight: bold; font-size: 15px; color: #fff; }
+.stage-block .desc  { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 4px; }
+
+/* 箭头 */
+.arrow-down {
+  display: flex; flex-direction: column; align-items: center;
+  color: #888; font-size: 20px; line-height: 1; padding: 2px 0;
+}
+.arrow-label {
+  font-size: 11px; color: #f5c542; background: #1e1e3a; padding: 2px 10px;
+  border-radius: 10px; margin: 2px 0;
+}
+
+/* 分支 */
+.branches {
+  display: flex; gap: 60px; justify-content: center; align-items: flex-start;
+}
+.branch { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.branch-label {
+  font-size: 12px; font-weight: bold; color: #f5c542; padding: 4px 14px;
+  border-radius: 12px; background: #2a2a4a; margin: 6px 0;
+}
+
+/* 水平箭头 */
+.h-arrow {
+  display: flex; align-items: center; gap: 4px; color: #888; font-size: 13px;
+}
+
+/* ---- 详情表格 ---- */
+.section-title {
+  font-size: 20px; color: #e94560; border-left: 4px solid #e94560;
+  padding-left: 12px; margin: 36px 0 16px;
+}
+
+.detail-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+}
+@media (max-width: 700px) { .detail-grid { grid-template-columns: 1fr; } }
+
+.detail-card {
+  background: #16213e; border-radius: 10px; padding: 18px;
+  border: 1px solid #2a2a5a;
+}
+.detail-card h3 { font-size: 15px; color: #e94560; margin-bottom: 8px; }
+.detail-card p  { font-size: 13px; color: #c0c0d0; }
+.detail-card .tag {
+  display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  margin-right: 6px; margin-top: 6px;
+}
+.tag.thread { background: #e9456033; color: #e94560; }
+.tag.queue  { background: #f5c54233; color: #f5c542; }
+.tag.sync   { background: #7b2ff733; color: #be9eff; }
+.tag.widget { background: #0f9b8e33; color: #0f9b8e; }
+
+/* 数据流步骤 */
+.flow-steps {
+  counter-reset: step;
+  list-style: none; padding: 0;
+}
+.flow-steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 10px 10px 10px 44px;
+  margin: 6px 0;
+  background: #1e1e3a;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.flow-steps li::before {
+  content: counter(step);
+  position: absolute; left: 10px; top: 10px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #e94560; color: #fff;
+  font-size: 12px; font-weight: bold;
+  text-align: center; line-height: 24px;
+}
+
+/* 关键数据流路径 */
+.dataflow-path {
+  background: linear-gradient(90deg, #e9456022, #3b82f622);
+  border: 1px solid #e9456066;
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+}
+.dataflow-path h3 { color: #e94560; margin-bottom: 12px; }
+.dataflow-path .flow-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; font-family: "Consolas","Courier New",monospace;
+}
+.dataflow-path .flow-row .arrow { color: #f5c542; font-size: 18px; }
+.dataflow-path .flow-row .item {
+  background: #1e1e3a; border-radius: 6px; padding: 4px 10px;
+  white-space: nowrap;
+}
+
+footer {
+  text-align: center; color: #555; font-size: 12px;
+  padding: 24px; border-top: 1px solid #2a2a5a; margin-top: 40px;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RambosPlayer 架构流程图</h1>
+  <p>多线程音视频播放器 — 生产者-消费者管道架构</p>
+</header>
+
+<div class="container">
+
+<!-- 图例 -->
+<div class="legend">
+  <span><i class="dot thread"></i> QThread 工作线程</span>
+  <span><i class="dot queue"></i> FrameQueue 阻塞队列</span>
+  <span><i class="dot sync"></i> AVSync 时钟同步</span>
+  <span><i class="dot widget"></i> QWidget 渲染/UI</span>
+  <span><i class="dot ctrl"></i> PlayerController</span>
+</div>
+
+<!-- ========== 流程图 ========== -->
+<div class="pipeline">
+
+  <!-- 第1层：文件 -->
+  <div class="stage">
+    <div class="stage-block" style="background: linear-gradient(135deg, #555 0%, #333 100%); min-width: 200px;">
+      <div class="title">📁 媒体文件 (MP4/MKV/AVI...)</div>
+      <div class="desc">本地文件路径 → QString</div>
+    </div>
+  </div>
+
+  <div class="arrow-down">
+    <span style="font-size:32px;">⬇</span>
+    <span class="arrow-label">MainWindow::openFile() → PlayerController::open()</span>
+  </div>
+
+  <!-- 第2层：DemuxThread -->
+  <div class="stage">
+    <div class="stage-block thread" style="min-width: 440px;">
+      <div class="title">🔧 DemuxThread (解复用线程)</div>
+      <div class="desc">
+        ① avformat_open_input → ② avformat_find_stream_info<br>
+        ③ 遍历流, 记录 videoIdx / audioIdx<br>
+        ④ run() 循环: av_read_frame → 按 stream_index 分发
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down">
+    <span style="font-size:32px;">⬇</span>
+    <span class="arrow-label">AVPacket* push → FrameQueue (容量 100/400)</span>
+  </div>
+
+  <!-- 第3层：分支 -->
+  <div class="branches">
+    <!-- 视频分支 -->
+    <div class="branch">
+      <div class="branch-label">🎬 视频管线</div>
+      <div class="stage">
+        <div class="stage-block queue" style="min-width: 140px;">
+          <div class="title">videoPacketQ</div>
+          <div class="desc">容量 100</div>
+        </div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage">
+        <div class="stage-block thread" style="min-width: 140px;">
+          <div class="title">VideoDecodeThread</div>
+          <div class="desc">avcodec_send_packet<br>avcodec_receive_frame</div>
+        </div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage">
+        <div class="stage-block queue" style="min-width: 140px;">
+          <div class="title">videoFrameQ</div>
+          <div class="desc">容量 15</div>
+        </div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage">
+        <div class="stage-block widget" style="min-width: 140px;">
+          <div class="title">VideoRenderer</div>
+          <div class="desc">1ms QTimer<br>sws_scale YUV→RGB<br>QPainter 绘制</div>
+        </div>
+      </div>
+      <div class="arrow-down" style="font-size:11px; color:#7b2ff7;">
+        <span>↑ query videoDelay()</span>
+      </div>
+      <div class="stage">
+        <div class="stage-block sync" style="min-width: 100px;">
+          <div class="title">AVSync</div>
+          <div class="desc">音频主时钟</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 音频分支 -->
+    <div class="branch">
+      <div class="branch-label">🔊 音频管线</div>
+      <div class="stage">
+        <div class="stage-block queue" style="min-width: 140px;">
+          <div class="title">audioPacketQ</div>
+          <div class="desc">容量 400</div>
+        </div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage">
+        <div class="stage-block thread" style="min-width: 140px;">
+          <div class="title">AudioDecodeThread</div>
+          <div class="desc">avcodec_send_packet<br>avcodec_receive_frame<br>swr_convert (重采样)<br>→ S16 Stereo 44100</div>
+        </div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage">
+        <div class="stage-block" style="background:linear-gradient(135deg,#0f9b8e,#0a7268); min-width: 140px;">
+          <div class="title">QAudioOutput</div>
+          <div class="desc">PCM 音频输出<br>QIODevice::write()</div>
+        </div>
+      </div>
+      <div class="arrow-down" style="font-size:11px; color:#7b2ff7;">
+        <span>↑ setAudioClock(pts)</span>
+      </div>
+      <div class="stage">
+        <div class="stage-block sync" style="min-width: 100px;">
+          <div class="title">AVSync</div>
+          <div class="desc">音频主时钟</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第4层：播放器控制器 -->
+  <div style="margin-top: 12px;">
+    <div class="arrow-down"><span style="font-size:32px;">⬇</span></div>
+    <div class="stage">
+      <div class="stage-block ctrl" style="min-width: 500px;">
+        <div class="title">🎮 PlayerController (总控制器)</div>
+        <div class="desc">
+          持有所有组件生命周期 | open / play / pause / stop / seek / setVolume<br>
+          100ms QTimer → 轮询 AVSync → emit positionChanged
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第5层：主窗口 -->
+  <div class="arrow-down">
+    <span style="font-size:32px;">⬇</span>
+    <span class="arrow-label">signals → slots</span>
+  </div>
+  <div class="stage">
+    <div class="stage-block widget" style="min-width: 400px;">
+      <div class="title">🖥 MainWindow (QMainWindow + .ui)</div>
+      <div class="desc">
+        进度条 · 播放/暂停 · 音量 · 最近文件菜单 · 全屏切换<br>
+        键盘快捷键: Space(暂停) Esc(退出全屏) ←→(快退快进)<br>
+        双击 → 全屏 | eventFilter 拦截音量滑块点击
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ========== 完整数据流路径 ========== -->
+<h2 class="section-title">完整数据流路径</h2>
+
+<ol class="flow-steps">
+  <li><b>打开文件</b> — MainWindow 选择文件 → PlayerController::open(path) → 创建 DemuxThread → 传入 videoPacketQ / audioPacketQ 两个队列</li>
+  <li><b>DemuxThread::open()</b> — avformat_open_input 打开容器 → avformat_find_stream_info 探测流参数 → 遍历流找到 videoIdx / audioIdx → 保存 duration</li>
+  <li><b>启动流水线</b> — PlayerController::play() → 依次 start DemuxThread / VideoDecodeThread / AudioDecodeThread → VideoRenderer::startRendering() 启动 1ms Timer</li>
+  <li><b>解复用循环</b> — DemuxThread::run() → av_read_frame 读取一个 AVPacket → 判断 stream_index → push 到 videoPacketQ 或 audioPacketQ</li>
+  <li><b>视频解码</b> — VideoDecodeThread::run() → tryPop videoPacketQ → avcodec_send_packet → avcodec_receive_frame → push AVFrame* 到 videoFrameQ</li>
+  <li><b>音频解码</b> — AudioDecodeThread::run() → tryPop audioPacketQ → avcodec_send_packet → avcodec_receive_frame → swr_convert 重采样 → write 到 QAudioOutput → setAudioClock(pts) 更新主时钟</li>
+  <li><b>视频渲染</b> — VideoRenderer::onTimer() (1ms) → tryPop videoFrameQ → AVSync::videoDelay(pts) 判断等待/丢弃/渲染 → sws_scale YUV→RGB → update() → paintEvent() QPainter 居中绘制</li>
+  <li><b>位置同步</b> — PlayerController 100ms QTimer → 轮询 AVSync::audioClock() → emit positionChanged(ms) → MainWindow 更新进度条</li>
+  <li><b>Seek 跳转</b> — MainWindow 拖拽进度条 → PlayerController::seek(s) → DemuxThread::seek(s) 原子存储目标 → run() 检测后 av_seek_frame → 清空两个 packet 队列 → 解码线程 flush() 清空缓冲区</li>
+  <li><b>播放结束</b> — DemuxThread run() 读到 EOF → emit demuxFinished → PlayerController::onDemuxFinished() → 等待队列消费完 → emit playbackFinished → MainWindow 复位 UI</li>
+</ol>
+
+<!-- ========== 模块详情 ========== -->
+<h2 class="section-title">核心模块说明</h2>
+
+<div class="detail-grid">
+  <div class="detail-card">
+    <h3>FrameQueue&lt;T&gt; <span class="tag queue">有界阻塞队列</span></h3>
+    <p>线程安全的生产者-消费者队列。满时 push() 阻塞等待，空时 tryPop(timeout) 阻塞等待。<br>
+    <b>abort()</b> 立即唤醒所有等待线程（退出信号）。<b>clear()</b> 清空队列（seek 用）。<br>
+    三个实例：videoPacketQ(100) / audioPacketQ(400) / videoFrameQ(15)</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>AVSync <span class="tag sync">音频主时钟</span></h3>
+    <p>std::atomic&lt;double&gt; 存储音频 PTS（秒），无锁读写。<br>
+    AudioDecodeThread 写入 → VideoRenderer 通过 <b>videoDelay(pts)</b> 查询等待时间。<br>
+    视频落后超过 <b>400ms</b> 返回 0（直接丢帧），领先则返回延迟毫秒数。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>DemuxThread <span class="tag thread">QThread</span></h3>
+    <p>独立线程中循环 av_read_frame，按 stream_index 分发 AVPacket* 到视频/音频队列。<br>
+    <b>seek()</b> 原子存目标秒数，run() 下次循环检测并 av_seek_frame，然后清空双队列。<br>
+    abort 标志 + 队列 abort() 唤醒保证安全退出。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>VideoDecodeThread <span class="tag thread">QThread</span></h3>
+    <p>消费 videoPacketQ → avcodec_send_packet / receive_frame → push AVFrame* 到 videoFrameQ。<br>
+    <b>flush()</b> 在 seek 后清空解码器内部缓冲，避免残留旧帧导致画面错乱。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>AudioDecodeThread <span class="tag thread">QThread</span></h3>
+    <p>消费 audioPacketQ → 解码 → <b>swr_convert</b> 重采样为 S16 Stereo 44100Hz → QAudioOutput 输出。<br>
+    每次写入后调用 AVSync::setAudioClock(pts) 更新主时钟。<br>
+    支持 pause/resume (suspend QAudioOutput)、volume 调节。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>VideoRenderer <span class="tag widget">QWidget</span></h3>
+    <p>1ms QTimer 驱动 → tryPop videoFrameQ → AVSync::videoDelay() 决定等待/丢弃 →<br>
+    <b>sws_scale</b> YUV420P → RGB32 → QImage → update() → <b>paintEvent</b> 中 QPainter 保持宽高比居中绘制。<br>
+    未到渲染时间的帧暂存 pendingFrame_，避免推回队列阻塞解码线程。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>PlayerController <span class="tag ctrl">QObject</span></h3>
+    <p>播放器总控制器，持有所有组件（DemuxThread, VideoDecodeThread, AudioDecodeThread, VideoRenderer, AVSync, 三队列, posTimer）。<br>
+    对外暴露 open/play/pause/stop/seek/setVolume 统一接口。<br>
+    100ms QTimer 轮询 AVSync 发出 positionChanged 信号。</p>
+  </div>
+
+  <div class="detail-card">
+    <h3>MainWindow <span class="tag widget">QMainWindow</span></h3>
+    <p>主窗口，UI 全部在 .ui 文件中用 Qt Designer 绘制。包含 VideoRenderer (promoted widget)、进度条、播放/暂停按钮、音量滑块、最近文件菜单。<br>
+    键盘快捷键、双击全屏、eventFilter 处理音量滑块点击。</p>
+  </div>
+</div>
+
+<!-- 跨线程通信 -->
+<h2 class="section-title">跨线程通信：FrameQueue 是唯一通道</h2>
+
+<div class="dataflow-path">
+  <h3>设计原则</h3>
+  <p style="font-size:13px; color:#c0c0d0; margin-bottom:12px;">
+    解码线程之间<b>不使用</b> Qt signal/slot 直接通信，所有数据传递都通过 FrameQueue。
+    这样避免了跨线程信号连接的复杂性，队列自带背压和阻塞语义，天然匹配生产者-消费者模型。
+  </p>
+
+  <div style="display:flex; flex-direction:column; gap:10px;">
+    <div class="flow-row">
+      <span class="item" style="background:#e9456044;">DemuxThread</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#f5c54244;">videoPacketQ (100)</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#e9456044;">VideoDecodeThread</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#f5c54244;">videoFrameQ (15)</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#0f9b8e44;">VideoRenderer</span>
+    </div>
+    <div class="flow-row">
+      <span class="item" style="background:#e9456044;">DemuxThread</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#f5c54244;">audioPacketQ (400)</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#e9456044;">AudioDecodeThread</span>
+      <span class="arrow">→</span>
+      <span class="item" style="background:#7b2ff744;">QAudioOutput</span>
+      <span class="arrow" style="font-size:11px; color:#7b2ff7;">→ setAudioClock</span>
+      <span class="item" style="background:#7b2ff744;">AVSync</span>
+      <span class="arrow" style="font-size:11px; color:#3b82f6;">← query</span>
+      <span class="item" style="background:#0f9b8e44;">VideoRenderer</span>
+    </div>
+  </div>
+</div>
+
+<!-- 典型场景 -->
+<h2 class="section-title">关键场景时序</h2>
+
+<div class="detail-grid">
+  <div class="detail-card">
+    <h3>▶ 播放</h3>
+    <p style="font-size:12px; color:#c0c0d0;">
+      1. PlayerController::play() 检查 playing_ 标志<br>
+      2. start DemuxThread → start VideoDecodeThread → start AudioDecodeThread<br>
+      3. VideoRenderer::startRendering() 启动 1ms QTimer<br>
+      4. AudioDecodeThread 启动 QAudioOutput → 开始输出 PCM<br>
+      5. posTimer (100ms) 开始轮询 AVSync 发送位置更新
+    </p>
+  </div>
+  <div class="detail-card">
+    <h3>⏸ 暂停</h3>
+    <p style="font-size:12px; color:#c0c0d0;">
+      1. PlayerController::pause() 设置 playing_ = false<br>
+      2. AudioDecodeThread::setPaused(true) → QAudioOutput::suspend()<br>
+      3. DemuxThread / VideoDecodeThread 继续运行但队列积压<br>
+      4. posTimer 停止发送 positionChanged<br>
+      5. 恢复时 resume QAudioOutput → playing_ = true
+    </p>
+  </div>
+  <div class="detail-card">
+    <h3>⏩ Seek</h3>
+    <p style="font-size:12px; color:#c0c0d0;">
+      1. PlayerController::seek(s) → DemuxThread::seek(s) 原子存储<br>
+      2. DemuxThread::run() 检测 seekTarget_ ≥ 0 → av_seek_frame<br>
+      3. 清空 videoPacketQ + audioPacketQ<br>
+      4. VideoDecodeThread::flush() + AudioDecodeThread::flush() 清编码器缓冲<br>
+      5. VideoRenderer::flushPendingFrame() 丢弃暂存帧<br>
+      6. 恢复读取，从新位置开始分发
+    </p>
+  </div>
+  <div class="detail-card">
+    <h3>⏹ 停止</h3>
+    <p style="font-size:12px; color:#c0c0d0;">
+      1. PlayerController::stop() → stopAllThreads()<br>
+      2. DemuxThread::stop() + wait() → 队列 abort() 唤醒所有阻塞<br>
+      3. VideoDecodeThread::stop() + wait()<br>
+      4. AudioDecodeThread::stop() + wait() → QAudioOutput::stop()<br>
+      5. VideoRenderer::stopRendering()<br>
+      6. 三队列 reset() 恢复正常状态
+    </p>
+  </div>
+</div>
+
+</div>
+
+<footer>
+  RambosPlayer Architecture — 2026-05-10 — 基于 C++17 / Qt 5.14.2 / FFmpeg 4.x
+</footer>
+
+</body>
+</html>
