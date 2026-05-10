@@ -50,11 +50,12 @@ bool PlayerController::open(const QString& path) {
     return true;
 }
 
-// 启动播放：依次启动解复用、解码、渲染定时器和位置定时器。
-// playing_ 防重入，避免重复调用导致线程重复 start。
+// 启动播放：若线程已在运行（暂停状态），只需解除 paused_ 标志；
+// 若线程尚未启动（首次 play），调 start() 创建线程。
 void PlayerController::play() {
     if (playing_ || !demux_.formatContext()) return;
     playing_ = true;
+    audioDec_.setPaused(false);   // 先解除暂停，再 start（start 对已运行线程是 no-op）
     demux_.start();
     videoDec_.start();
     audioDec_.start();
@@ -62,12 +63,13 @@ void PlayerController::play() {
     posTimer_->start();
 }
 
-// 暂停：停止渲染定时器和位置定时器，解码线程继续运行以维持队列缓冲。
-// 简化实现：生产级需在各线程中加暂停标志，这里通过 stop/seek/play 实现继续。
+// 暂停：停止渲染定时器和位置定时器，同时挂起音频输出。
+// 解码线程继续持有资源，恢复时无需重新初始化。
 void PlayerController::pause() {
     playing_ = false;
     posTimer_->stop();
     renderer_->stopRendering();
+    audioDec_.setPaused(true);
 }
 
 // 停止：停止渲染，等待所有线程退出，清空三条队列。

@@ -54,6 +54,9 @@ void AudioDecodeThread::stop() {
 // 标记需要 flush，run() 检测后清空解码器缓冲和 swr 缓冲
 void AudioDecodeThread::flush() { flush_ = true; }
 
+// 暂停/恢复：run() 检测到 paused_==true 时挂起 QAudioOutput，避免声音继续输出
+void AudioDecodeThread::setPaused(bool p) { paused_ = p; }
+
 // 线程安全设置音量，run() 循环中检测并应用
 void AudioDecodeThread::setVolume(float v) { pendingVolume_.store(v); }
 
@@ -79,6 +82,16 @@ void AudioDecodeThread::run() {
     double lastLogClock = -1.0;  // 上次打印时钟的值，每推进 1s 打一次
 
     while (!abort_) {
+        // 暂停：挂起硬件输出并自旋等待，恢复时 resume sink
+        if (paused_.load()) {
+            if (sink_->state() == QAudio::ActiveState)
+                sink_->suspend();
+            QThread::msleep(10);
+            continue;
+        }
+        if (sink_->state() == QAudio::SuspendedState)
+            sink_->resume();
+
         float vol = pendingVolume_.exchange(-1.f);
         if (vol >= 0.f) sink_->setVolume(vol);
 

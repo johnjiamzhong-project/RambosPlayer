@@ -18,6 +18,7 @@ public:
     ~MainWindow() override;
 
 protected:
+    void keyPressEvent(QKeyEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 

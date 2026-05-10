@@ -44,23 +44,13 @@
 
 ---
 
-## #008 — Seek 后 UI 卡死、音频饿死：videoDelay() 不区分"丢帧"与"立即渲染"
+## #005 — QAudioOutput 线程亲和性违规
 
-- **日期**：2026-05-10
-- **现象**：点击进度条跳转后，音频先到达新位置，UI 立刻冻结，几秒后音频也断；进度条偶发不跳转
-- **根因**：`AVSync::videoDelay()` 对"严重落后"和"轻微落后/同步"都返回 0，调用方无法区分。`VideoRenderer::onTimer()` 拿 0 当作"立即渲染"处理，对 seek 后队列中所有过期旧帧（PTS 远落后于新音频钟）逐一执行 `sws_scale + update()`。1ms 定时器把主线程绘制事件淹没 → UI 冻结 → `videoFrameQ_` 来不及消费而塞满 → `VideoDecodeThread` 阻塞在 push → `videoPacketQ_` 堵满 → DemuxThread 无法读新包 → audioPacketQ_ 耗尽 → 音频饿死
-- **修复**：`onTimer()` 自行计算 `diff = pts - audioClock`，落后超过 0.4s 时直接 `av_frame_free` 不渲染、不 `update()`，避免主线程被过期帧的渲染流量淹没
-- **涉及文件**：`src/videorenderer.cpp`
-
----
-
-## #007 — 关闭窗口时 UAF 崩溃：FrameQueue 先于线程析构导致 abort() 访问已销毁 mutex_
-
-- **日期**：2026-05-10
-- **现象**：关闭窗口时崩溃于 `FrameQueue::abort()` 中的 `QMutexLocker lk(&mutex_)`（访问违规）
-- **根因**：`PlayerController` 中线程成员（`demux_`、`videoDec_`、`audioDec_`）声明在队列（`videoPacketQ_` 等）之前。C++ 成员析构为声明逆序，导致三条队列先被销毁，线程析构时 `stop()` 再次调用 `abort()`，访问已析构队列的 `mutex_` — UAF
-- **修复**：将三条 `FrameQueue` 成员移至线程成员声明之前，确保队列比线程活得更久
-- **涉及文件**：`src/playercontroller.h`
+- **日期**：2026-05-09
+- **现象**：打开文件后可能卡死或行为异常
+- **根因**：`QAudioOutput` 在主线程 `init()` 中创建，但在工作线程 `run()` 中调用 `start()` / `write()` / `stop()`，违反 Qt 线程亲和性规则（QObject 应在创建它的线程中使用）
+- **修复**：将 `QAudioOutput` 的创建从 `init()` 移至 `run()`，确保创建、start、write、stop 全部在同一工作线程内完成；`run()` 退出时 delete，析构函数做兜底清理
+- **涉及文件**：`src/audiodecodethread.cpp`
 
 ---
 
@@ -74,10 +64,50 @@
 
 ---
 
-## #005 — QAudioOutput 线程亲和性违规
+## #007 — 关闭窗口时 UAF 崩溃：FrameQueue 先于线程析构导致 abort() 访问已销毁 mutex_
 
-- **日期**：2026-05-09
-- **现象**：打开文件后可能卡死或行为异常
-- **根因**：`QAudioOutput` 在主线程 `init()` 中创建，但在工作线程 `run()` 中调用 `start()` / `write()` / `stop()`，违反 Qt 线程亲和性规则（QObject 应在创建它的线程中使用）
-- **修复**：将 `QAudioOutput` 的创建从 `init()` 移至 `run()`，确保创建、start、write、stop 全部在同一工作线程内完成；`run()` 退出时 delete，析构函数做兜底清理
-- **涉及文件**：`src/audiodecodethread.cpp`
+- **日期**：2026-05-10
+- **现象**：关闭窗口时崩溃于 `FrameQueue::abort()` 中的 `QMutexLocker lk(&mutex_)`（访问违规）
+- **根因**：`PlayerController` 中线程成员（`demux_`、`videoDec_`、`audioDec_`）声明在队列（`videoPacketQ_` 等）之前。C++ 成员析构为声明逆序，导致三条队列先被销毁，线程析构时 `stop()` 再次调用 `abort()`，访问已析构队列的 `mutex_` — UAF
+- **修复**：将三条 `FrameQueue` 成员移至线程成员声明之前，确保队列比线程活得更久
+- **涉及文件**：`src/playercontroller.h`
+
+---
+
+## #008 — Seek 后画面不同步、UI 冻结、音频饿死
+
+- **日期**：2026-05-10
+- **现象**：点击进度条跳转后，画面停在旧位置不动，UI 随即冻结；几秒后音频也断；进度条偶发点击无响应
+- **根因**：多个环节叠加导致死锁链：
+  1. `AVSync::videoDelay()` 对"严重落后"和"轻微落后/同步"都返回 0，`VideoRenderer::onTimer()` 拿 0 当"立即渲染"，对 seek 后队列中所有过期旧帧逐一执行 `sws_scale + update()`，1ms 定时器把主线程绘制事件淹没 → UI 冻结
+  2. `videoFrameQ_` 来不及消费而堵满 → `VideoDecodeThread` 阻塞在 push → `videoPacketQ_` 满 → `DemuxThread` 无法读新包 → `audioPacketQ_` 耗尽 → 音频饿死
+  3. `PlayerController::seek()` 先 flush 线程再更新音频钟，flush 执行期间 `videoFrameQ_` 里的旧帧 `diff ≈ 0` 不会被丢弃，进一步加剧堵塞
+  4. `AudioDecodeThread` flush 时未排空输入队列，seek 竞态下仍会解码到旧 PTS 的包，时钟回跳
+  5. 进度条点击只触发 `sliderMoved`（拖拽信号），鼠标单击不发信号，点击无响应
+- **修复**（多次迭代，最终方案）：
+  - **`VideoRenderer`**：弃用 `AVSync::videoDelay()`，改为直接计算 `diff = pts - audioClock`；`diff < -0.4s`（正向 seek 旧帧）或 `diff > 1.5s`（反向 seek 旧帧）时直接 `av_frame_free` 不渲染不 `update()`，彻底避免主线程被渲染洪流淹没
+  - **`VideoRenderer::flushPendingFrame()`**：新增接口，seek 时由 `PlayerController` 调用，清除暂存的旧帧，避免旧 PTS 卡住帧队列消费
+  - **`PlayerController::seek()`**：调整调用顺序为：先 `sync_.setAudioClock(seconds)` 让渲染器立刻看到新位置触发旧帧丢弃，再 `flushPendingFrame()`，最后 flush 各线程
+  - **`AudioDecodeThread`**：flush 时先 `tryPop` 排空输入队列残留旧包；时钟改为直接用帧 `PTS * timeBase` 而非 `processedUSecs` 推算（`processedUSecs` 在 `stop/start` 后重置为 0，seek 后时钟会瞬间归零再爬升，与视频严重不同步）；flush 后 `setBufferSize(16384)` 保持缓冲区大小稳定
+  - **`MainWindow`**：对进度条 `installEventFilter`，拦截 `MouseButtonPress`，用 `QStyle::sliderValueFromPosition` 计算精确点击值并手动调 `onSeekSliderMoved`
+- **涉及文件**：`src/videorenderer.h`、`src/videorenderer.cpp`、`src/playercontroller.cpp`、`src/audiodecodethread.cpp`、`src/mainwindow.h`、`src/mainwindow.cpp`
+
+---
+
+## #009 — 暂停键/空格键无法暂停声音
+
+- **日期**：2026-05-10
+- **现象**：点击暂停按钮或按空格键后，视频画面停止，但音频仍持续播放
+- **根因**：`PlayerController::pause()` 只调用了 `renderer_->stopRendering()`，`AudioDecodeThread` 继续运行并向 `QAudioOutput` 写 PCM；且 `MainWindow` 无 `keyPressEvent`，空格键未绑定任何动作
+- **修复**：`AudioDecodeThread` 增加 `paused_` 原子标志和 `setPaused(bool)` 方法；`run()` 循环检测到暂停时调 `sink_->suspend()`，恢复时调 `sink_->resume()`；`PlayerController::pause()` / `play()` 分别调 `setPaused(true/false)`；`MainWindow` 新增 `keyPressEvent`，空格键触发 `onPlayPause()`
+- **涉及文件**：`src/audiodecodethread.h`、`src/audiodecodethread.cpp`、`src/playercontroller.cpp`、`src/mainwindow.h`、`src/mainwindow.cpp`
+
+---
+
+## #010 — 音量滑块点击不跳转：QSlider 默认 pageStep 步进
+
+- **日期**：2026-05-10
+- **现象**：点击音量条轨道，滑块只向点击方向移动一个 pageStep（约 10），无法直接跳到点击位置
+- **根因**：Qt `QSlider` 默认鼠标点击行为是 `pageStep` 步进，不会跳到点击坐标对应的值；原 `eventFilter` 只处理了进度条，未覆盖音量滑块
+- **修复**：对 `volumeSlider` 也 `installEventFilter`，在 `eventFilter` 中用 `QStyle::sliderValueFromPosition` 计算点击坐标对应值并 `setValue`；同时将两个滑块的处理合并为统一的 `qobject_cast<QSlider*>` 逻辑，进度条额外手动调 `onSeekSliderMoved`（因其连接的是 `sliderMoved` 而非 `valueChanged`）
+- **涉及文件**：`src/mainwindow.cpp`

@@ -4,6 +4,7 @@
 #include "playercontroller.h"
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QStyle>
@@ -23,6 +24,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(ui->playPauseBtn,   &QPushButton::clicked,  this, &MainWindow::onPlayPause);
     connect(ui->progressSlider, &QSlider::sliderMoved, this, &MainWindow::onSeekSliderMoved);
     ui->progressSlider->installEventFilter(this);
+    ui->volumeSlider->installEventFilter(this);
     connect(ui->volumeSlider,   &QSlider::valueChanged, this, &MainWindow::onVolumeChanged);
 
     connect(player_, &PlayerController::durationChanged,  this, &MainWindow::onDurationChanged);
@@ -163,19 +165,33 @@ void MainWindow::onPlaybackFinished() {
 
 // 拦截进度条鼠标按下：用 sliderValueFromPosition 算出精确点击位置并立即 seek。
 // 不拦截其他控件，也不消费事件（返回 false），让 Qt 照常处理后续拖拽逻辑。
+// 拦截进度条和音量条的鼠标按下，点击任意位置直接跳转而非 pageStep 步进。
+// volumeSlider 连接 valueChanged，setValue 即可触发；
+// progressSlider 连接 sliderMoved（不响应 setValue），需额外手动调 onSeekSliderMoved。
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == ui->progressSlider && event->type() == QEvent::MouseButtonPress) {
-        auto* me = static_cast<QMouseEvent*>(event);
-        if (me->button() == Qt::LeftButton) {
-            int val = QStyle::sliderValueFromPosition(
-                ui->progressSlider->minimum(),
-                ui->progressSlider->maximum(),
-                me->x(), ui->progressSlider->width());
-            ui->progressSlider->setValue(val);
-            onSeekSliderMoved(val);
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* slider = qobject_cast<QSlider*>(obj);
+        if (slider) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton) {
+                int val = QStyle::sliderValueFromPosition(
+                    slider->minimum(), slider->maximum(),
+                    me->x(), slider->width());
+                slider->setValue(val);
+                if (slider == ui->progressSlider)
+                    onSeekSliderMoved(val);
+            }
         }
     }
     return QMainWindow::eventFilter(obj, event);
+}
+
+// 空格键暂停/恢复，其余按键交给父类处理。
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Space)
+        onPlayPause();
+    else
+        QMainWindow::keyPressEvent(event);
 }
 
 // 双击切换全屏/窗口模式。
