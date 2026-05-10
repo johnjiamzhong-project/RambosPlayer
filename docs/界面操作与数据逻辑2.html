@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>界面操作与数据逻辑</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: "Microsoft YaHei","PingFang SC",sans-serif;
+  background: #0f1117; color: #e0e0e0; line-height:1.6;
+}
+header {
+  text-align:center; padding:24px 16px;
+  background: linear-gradient(135deg, #16213e, #0f3460);
+  border-bottom:3px solid #e94560;
+}
+header h1 { font-size:22px; color:#fff; }
+header p  { font-size:12px; color:#888; margin-top:4px; }
+
+.main { max-width:860px; margin:0 auto; padding:20px 16px; }
+
+/* --- 每个操作 --- */
+.section {
+  margin-bottom:20px;
+  background:#16213e; border-radius:10px;
+  border:1px solid #2a2a5a; overflow:hidden;
+}
+.section-title {
+  padding:12px 18px; font-size:15px; font-weight:bold;
+  background:rgba(233,69,96,0.08);
+  border-bottom:1px solid #2a2a5a;
+  display:flex; align-items:center; gap:10px;
+}
+.section-title .num {
+  width:26px; height:26px; border-radius:50%;
+  background:#e94560; color:#fff;
+  font-size:13px; text-align:center; line-height:26px; flex-shrink:0;
+}
+.section-body { padding:14px 18px; }
+
+/* --- 流程图行 --- */
+.flow {
+  display:flex; align-items:center; gap:8px;
+  flex-wrap:wrap; font-size:12px; font-family:Consolas,"Courier New",monospace;
+  padding:10px 14px; background:#0f111a; border-radius:8px;
+  margin-bottom:12px;
+}
+.flow .node {
+  padding:4px 10px; border-radius:5px; white-space:nowrap;
+}
+.node.ui  { background:#e94560; color:#fff; }
+.node.mw  { background:#3b82f6; color:#fff; }
+.node.pc  { background:#8b5cf6; color:#fff; }
+.node.dt  { background:#f59e0b; color:#000; }
+.node.vd  { background:#10b981; color:#fff; }
+.node.ad  { background:#06b6d4; color:#fff; }
+.node.vr  { background:#f472b6; color:#fff; }
+.node.sync{ background:#6366f1; color:#fff; }
+.node.q   { background:#64748b; color:#fff; }
+.node.file{ background:#334155; color:#ccc; }
+.node.end { background:#22c55e; color:#000; }
+.flow .arr { color:#666; font-size:14px; }
+
+/* --- 关键点 --- */
+.tip {
+  font-size:12px; color:#f5c542; padding:6px 12px;
+  background:rgba(245,197,66,0.08); border-left:3px solid #f5c542;
+  border-radius:0 6px 6px 0; margin-top:10px;
+}
+
+/* --- 双列 --- */
+.row { display:flex; gap:14px; margin-top:10px; }
+@media(max-width:640px){ .row{flex-direction:column;} }
+.row > div { flex:1; background:#0f111a; border-radius:8px; padding:12px; }
+.row h4 { font-size:12px; color:#f5c542; margin-bottom:6px; }
+.row ul { list-style:none; font-size:12px; color:#a0a0c0; }
+.row ul li { padding:3px 0 3px 14px; position:relative; }
+.row ul li::before { content:"·"; position:absolute; left:2px; color:#e94560; font-weight:bold; }
+
+/* --- 总结区 --- */
+.summary {
+  background:#0f111a; border:1px solid #e9456044; border-radius:10px;
+  padding:18px; margin-top:20px;
+}
+.summary h3 { font-size:14px; color:#e94560; margin-bottom:12px; }
+.summary .kv { display:flex; gap:8px; flex-wrap:wrap; }
+.summary .kv span {
+  padding:3px 10px; border-radius:4px; font-size:12px;
+  font-family:Consolas,monospace;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>界面操作 → 数据逻辑</h1>
+  <p>四个核心操作：打开文件、播放暂停、拖拽进度、调节音量</p>
+</header>
+
+<div class="main">
+
+<!-- ====== 1. 打开文件 ====== -->
+<div class="section">
+  <div class="section-title"><span class="num">1</span> 打开文件</div>
+  <div class="section-body">
+
+    <!-- 流程图 -->
+    <div class="flow">
+      <span class="node ui">点击"打开"</span><span class="arr">→</span>
+      <span class="node mw">MainWindow</span><span class="arr">→</span>
+      <span class="node pc">PC::open(path)</span><span class="arr">→</span>
+      <span class="node dt">DemuxThread::open</span><span class="arr">→</span>
+      <span class="node file">avformat_open_input + find_stream_info</span>
+    </div>
+
+    <div class="row">
+      <div>
+        <h4>解复用线程做了什么</h4>
+        <ul>
+          <li>avformat_open_input — 打开容器文件</li>
+          <li>avformat_find_stream_info — 探测流参数</li>
+          <li>遍历流，找到 videoIdx / audioIdx</li>
+          <li>保存 duration（微秒）</li>
+        </ul>
+      </div>
+      <div>
+        <h4>控制器接着做了什么</h4>
+        <ul>
+          <li>读视频流参数 → videoDec_.init()</li>
+          <li>读音频流参数 → audioDec_.init()</li>
+          <li>renderer_->init(w, h, timeBase, &sync_, &queue)</li>
+          <li>emit durationChanged → UI 更新进度条范围</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tip">此时只初始化，线程尚未 start，不占 CPU</div>
+  </div>
+</div>
+
+<!-- ====== 2. 播放 / 暂停 ====== -->
+<div class="section">
+  <div class="section-title"><span class="num">2</span> 播放 / 暂停</div>
+  <div class="section-body">
+
+    <div class="flow">
+      <span class="node ui">▶ 播放</span><span class="arr">→</span>
+      <span class="node pc">PC::play()</span><span class="arr">→</span>
+      <span class="node dt">Demux</span><span class="arr">+</span>
+      <span class="node vd">VideoDec</span><span class="arr">+</span>
+      <span class="node ad">AudioDec</span><span class="arr">+</span>
+      <span class="node vr">Renderer</span><span class="arr">+</span>
+      <span class="node mw">posTimer</span>
+    </div>
+
+    <div class="flow">
+      <span class="node ui">⏸ 暂停</span><span class="arr">→</span>
+      <span class="node pc">PC::pause()</span><span class="arr">→</span>
+      <span class="node vr">停止渲染定时器</span><span class="arr">+</span>
+      <span class="node ad">音频 suspend</span><span class="arr">+</span>
+      <span class="node mw">posTimer 停</span>
+    </div>
+
+    <div class="row">
+      <div>
+        <h4>播放时启动了什么</h4>
+        <ul>
+          <li>DemuxThread 开始 av_read_frame 循环</li>
+          <li>VideoDecodeThread 开始解码</li>
+          <li>AudioDecodeThread 开始解码 + 输出 PCM</li>
+          <li>VideoRenderer 1ms 定时器开始拉帧</li>
+          <li>posTimer 100ms 开始发出位置更新</li>
+        </ul>
+      </div>
+      <div>
+        <h4>暂停 vs 停止</h4>
+        <ul>
+          <li>暂停：线程不退出，音频 suspend</li>
+          <li>停止：stop + wait 等待线程退出</li>
+          <li>暂停恢复快（no-op start + resume）</li>
+          <li>停止后重播需重新初始化线程</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tip">暂停不销毁线程，解码线程继续跑但队列积压；恢复时 resume QAudioOutput + 重启定时器</div>
+  </div>
+</div>
+
+<!-- ====== 3. 拖拽进度条 ====== -->
+<div class="section">
+  <div class="section-title"><span class="num">3</span> 拖拽进度条 (Seek)</div>
+  <div class="section-body">
+
+    <div class="flow">
+      <span class="node ui">拖拽滑块</span><span class="arr">→</span>
+      <span class="node mw">onSeekSliderMoved</span><span class="arr">→</span>
+      <span class="node pc">PC::seek(s)</span>
+    </div>
+
+    <!-- 四步 -->
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 10px;background:#0f111a;border-radius:6px;">
+        <span style="font-weight:bold;color:#e94560;min-width:22px;">①</span>
+        <span class="node sync">sync_.setAudioClock(s)</span>
+        <span style="color:#888;">先更新音频钟到目标位置，让 Renderer 丢弃旧帧</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 10px;background:#0f111a;border-radius:6px;">
+        <span style="font-weight:bold;color:#e94560;min-width:22px;">②</span>
+        <span class="node vr">renderer_ flushPendingFrame</span>
+        <span style="color:#888;">丢弃渲染器暂存的那一帧</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 10px;background:#0f111a;border-radius:6px;">
+        <span style="font-weight:bold;color:#e94560;min-width:22px;">③</span>
+        <span class="node dt">demux_.seek(s)</span>
+        <span style="color:#888;">原子写 seekTarget_ → run() 顶部 handleSeek() → av_seek_frame + 清空双队列</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 10px;background:#0f111a;border-radius:6px;">
+        <span style="font-weight:bold;color:#e94560;min-width:22px;">④</span>
+        <span class="node vd">videoDec_.flush()</span>
+        <span class="node ad">audioDec_.flush()</span>
+        <span style="color:#888;">清空解码器内部缓冲</span>
+      </div>
+    </div>
+
+    <div class="tip">① 必须在 ③ 之前执行：否则旧帧不被丢弃 → videoFrameQ 堵满 → DemuxThread push 阻塞 → seek 永远无法执行</div>
+  </div>
+</div>
+
+<!-- ====== 4. 音量控制 ====== -->
+<div class="section">
+  <div class="section-title"><span class="num">4</span> 音量控制</div>
+  <div class="section-body">
+
+    <div class="flow">
+      <span class="node ui">拖动音量滑块</span><span class="arr">→</span>
+      <span class="node mw">onVolumeChanged(0-100)</span><span class="arr">→</span>
+      <span class="node pc">setVolume(0.0-1.0)</span><span class="arr">→</span>
+      <span class="node ad">AudioDec::setVolume</span><span class="arr">→</span>
+      <span class="node end">QAudioOutput 音量改变</span>
+    </div>
+
+    <div class="row">
+      <div>
+        <h4>实现方式</h4>
+        <ul>
+          <li>滑块值 0–100 转为 0.0–1.0</li>
+          <li>写入 AudioDecodeThread 的原子量</li>
+          <li>音频线程下个循环检查到变化</li>
+          <li>调 QAudioOutput::setVolume()</li>
+        </ul>
+      </div>
+      <div>
+        <h4>界面细节</h4>
+        <ul>
+          <li>eventFilter 拦截点击直接跳转</li>
+          <li>滑块图标随静音/非静音切换</li>
+          <li>原子操作无锁，不阻塞音频</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tip">音量是最简单的操作 — 只改一个原子量，不涉及任何线程同步或队列操作</div>
+  </div>
+</div>
+
+<!-- ====== 总览 ====== -->
+<div class="summary">
+  <h3>四个操作执行顺序</h3>
+  <div class="kv">
+    <span class="node ui" style="color:#fff;">打开文件</span>
+    <span class="arr" style="color:#666;">init 全部组件</span>
+  </div>
+  <div style="margin:8px 0;color:#555;">↓ 必须先打开文件</div>
+  <div class="kv">
+    <span class="node ui" style="color:#fff;">播放</span>
+    <span class="arr" style="color:#666;">Demux start → VideoDec start → AudioDec start → Renderer start</span>
+  </div>
+  <div style="margin:8px 0;color:#555;">↓ 播放过程中</div>
+  <div class="kv">
+    <span class="node ui" style="color:#fff;">Seek</span>
+    <span class="arr" style="color:#666;">时钟 → flushPending → demux seek → 解码 flush</span>
+  </div>
+  <div class="kv" style="margin-top:6px;">
+    <span class="node ui" style="color:#fff;">音量</span>
+    <span class="arr" style="color:#666;">原子量 → QAudioOutput</span>
+  </div>
+</div>
+
+</div>
+
+<footer style="text-align:center;color:#555;font-size:12px;padding:24px;">
+  RambosPlayer — 四个核心界面操作的数据通路
+</footer>
+
+</body>
+</html>

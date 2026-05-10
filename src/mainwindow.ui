@@ -3,20 +3,35 @@
  <class>MainWindow</class>
  <widget class="QMainWindow" name="MainWindow">
   <property name="geometry">
-   <rect><x>0</x><y>0</y><width>960</width><height>600</height></rect>
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>960</width>
+    <height>600</height>
+   </rect>
   </property>
   <property name="windowTitle">
    <string>RambosPlayer</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="mainLayout">
-    <property name="spacing"><number>0</number></property>
-    <property name="leftMargin"><number>0</number></property>
-    <property name="topMargin"><number>0</number></property>
-    <property name="rightMargin"><number>0</number></property>
-    <property name="bottomMargin"><number>0</number></property>
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
     <item>
-     <widget class="VideoRenderer" name="videoWidget">
+     <widget class="VideoRenderer" name="videoWidget" native="true">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
         <horstretch>0</horstretch>
@@ -24,108 +39,162 @@
        </sizepolicy>
       </property>
       <property name="minimumSize">
-       <size><width>0</width><height>100</height></size>
+       <size>
+        <width>0</width>
+        <height>100</height>
+       </size>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QWidget" name="controlBar">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-        <horstretch>0</horstretch>
-        <verstretch>0</verstretch>
-       </sizepolicy>
+     <layout class="QVBoxLayout" name="controlLayout">
+      <property name="spacing">
+       <number>4</number>
       </property>
-      <property name="minimumSize">
-       <size><width>0</width><height>64</height></size>
+      <property name="leftMargin">
+       <number>8</number>
       </property>
-      <property name="maximumSize">
-       <size><width>16777215</width><height>64</height></size>
+      <property name="topMargin">
+       <number>4</number>
       </property>
-      <property name="styleSheet">
-       <string>background-color: #1a1a1a;</string>
+      <property name="rightMargin">
+       <number>8</number>
       </property>
-      <layout class="QVBoxLayout" name="controlLayout">
-       <property name="spacing"><number>4</number></property>
-       <property name="leftMargin"><number>8</number></property>
-       <property name="topMargin"><number>4</number></property>
-       <property name="rightMargin"><number>8</number></property>
-       <property name="bottomMargin"><number>4</number></property>
-       <item>
-        <layout class="QHBoxLayout" name="progressLayout">
-         <property name="spacing"><number>6</number></property>
-         <item>
-          <widget class="QPushButton" name="playPauseBtn">
-           <property name="text"><string>▶</string></property>
-           <property name="minimumSize"><size><width>32</width><height>28</height></size></property>
-           <property name="maximumSize"><size><width>36</width><height>32</height></size></property>
-           <property name="styleSheet">
-            <string>QPushButton { color: white; background: #333; border-radius: 4px; font-size: 14px; }
+      <property name="bottomMargin">
+       <number>4</number>
+      </property>
+      <item>
+       <layout class="QHBoxLayout" name="progressLayout">
+        <property name="spacing">
+         <number>6</number>
+        </property>
+        <item>
+         <widget class="QPushButton" name="playPauseBtn">
+          <property name="minimumSize">
+           <size>
+            <width>32</width>
+            <height>28</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>36</width>
+            <height>32</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string>QPushButton { color: white; background: #333; border-radius: 4px; font-size: 14px; }
 QPushButton:hover { background: #555; }</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QSlider" name="progressSlider">
-           <property name="maximum"><number>1000</number></property>
-           <property name="orientation"><enum>Qt::Horizontal</enum></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="timeLabel">
-           <property name="text"><string>00:00 / 00:00</string></property>
-           <property name="minimumSize"><size><width>100</width><height>0</height></size></property>
-           <property name="styleSheet"><string>color: #cccccc; font-size: 12px;</string></property>
-           <property name="alignment">
-            <set>Qt::AlignRight|Qt::AlignVCenter</set>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="volumeLayout">
-         <property name="spacing"><number>6</number></property>
-         <item>
-          <widget class="QLabel" name="volumeIcon">
-           <property name="text"><string>🔊</string></property>
-           <property name="styleSheet"><string>color: #cccccc; font-size: 13px;</string></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QSlider" name="volumeSlider">
-           <property name="maximum"><number>100</number></property>
-           <property name="value"><number>80</number></property>
-           <property name="orientation"><enum>Qt::Horizontal</enum></property>
-           <property name="maximumSize">
-            <size><width>150</width><height>16777215</height></size>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="volumeSpacer">
-           <property name="orientation"><enum>Qt::Horizontal</enum></property>
-           <property name="sizeHint" stdset="0">
-            <size><width>40</width><height>20</height></size>
-           </property>
-          </spacer>
-         </item>
-        </layout>
-       </item>
-      </layout>
-     </widget>
+          </property>
+          <property name="text">
+           <string>▶</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSlider" name="progressSlider">
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="timeLabel">
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string>color: #cccccc; font-size: 12px;</string>
+          </property>
+          <property name="text">
+           <string>00:00 / 00:00</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="volumeLayout">
+        <property name="spacing">
+         <number>6</number>
+        </property>
+        <item>
+         <widget class="QLabel" name="volumeIcon">
+          <property name="styleSheet">
+           <string>color: #cccccc; font-size: 13px;</string>
+          </property>
+          <property name="text">
+           <string>🔊</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSlider" name="volumeSlider">
+          <property name="maximumSize">
+           <size>
+            <width>150</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="maximum">
+           <number>100</number>
+          </property>
+          <property name="value">
+           <number>80</number>
+          </property>
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="volumeSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+     </layout>
     </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menuBar">
    <property name="geometry">
-    <rect><x>0</x><y>0</y><width>960</width><height>22</height></rect>
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>960</width>
+     <height>23</height>
+    </rect>
    </property>
    <widget class="QMenu" name="menuFile">
-    <property name="title"><string>文件(&amp;F)</string></property>
+    <property name="title">
+     <string>文件(&amp;F)</string>
+    </property>
     <widget class="QMenu" name="menuRecentFiles">
-     <property name="title"><string>最近文件(&amp;R)</string></property>
-     <property name="enabled"><bool>false</bool></property>
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="title">
+      <string>最近文件(&amp;R)</string>
+     </property>
      <addaction name="actionClearRecent"/>
     </widget>
     <addaction name="actionOpen"/>
@@ -134,12 +203,20 @@ QPushButton:hover { background: #555; }</string>
    <addaction name="menuFile"/>
   </widget>
   <action name="actionOpen">
-   <property name="text"><string>打开(&amp;O)...</string></property>
-   <property name="shortcut"><string>Ctrl+O</string></property>
+   <property name="text">
+    <string>打开(&amp;O)...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
+   </property>
   </action>
   <action name="actionClearRecent">
-   <property name="text"><string>清除记录</string></property>
-   <property name="enabled"><bool>false</bool></property>
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>清除记录</string>
+   </property>
   </action>
  </widget>
  <customwidgets>
@@ -147,7 +224,6 @@ QPushButton:hover { background: #555; }</string>
    <class>VideoRenderer</class>
    <extends>QWidget</extends>
    <header>videorenderer.h</header>
-   <container>0</container>
   </customwidget>
  </customwidgets>
  <resources/>

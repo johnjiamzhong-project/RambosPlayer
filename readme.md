@@ -10,27 +10,11 @@
 | 功能 | 状态 |
 |------|:----:|
 | 功能1 — 核心播放器 | ✅ 完成 |
-| 功能2 — 完整播放器 UI | ✅ 完成 |
-| 功能3 — 硬件加速解码 | 📋 待开始 |
+| 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | 📋 待开始 |
 | 功能4 — 视频滤镜编辑器 | 📋 待开始 |
 | 功能5 — 屏幕录制 / 推流 | 📋 待开始 |
 | 功能6 — 视频剪辑器 | 📋 待开始 |
-
-## 功能1 进度
-
-| 任务 | 状态 |
-|------|:----:|
-| Task 1 — 项目脚手架（CMake + Qt5 + FFmpeg） | ✅ 完成 |
-| Task 2 — FrameQueue 线程安全队列（TDD） | ✅ 完成 |
-| Task 3 — AVSync 音频时钟（TDD） | ✅ 完成 |
-| Task 4 — DemuxThread 解复用线程（TDD） | ✅ 完成 |
-| Task 5 — VideoDecodeThread | ✅ 完成 |
-| Task 6 — AudioDecodeThread | ✅ 完成 |
-| Task 7 — VideoRenderer | ✅ 完成 |
-| Task 8 — PlayerController | ✅ 完成 |
-| Task 9 — MainWindow UI | ✅ 完成 |
-| Task 10 — 集成验证 | ✅ 完成 |
 
 ---
 
@@ -79,7 +63,29 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 
 ---
 
-## 功能路线图
+## 目录结构
 
-详细任务清单（含逐阶段 checkbox）见 [docs/DEVPLAN.md](docs/DEVPLAN.md)。
+```
+RambosPlayer/
+├── src/                        # 全部源码（.h / .cpp / .ui）
+├── tests/                      # Qt Test 单元测试
+│   ├── tst_framequeue.cpp
+│   ├── tst_avsync.cpp
+│   ├── tst_demuxthread.cpp
+│   └── data/sample.mp4         # 测试用 2 秒视频（ffmpeg 生成）
+├── docs/
+│   ├── DEVPLAN.md              # 开发计划总览（Phase 1–10，含 Task 编号）
+│   ├── BUGFIX-LOG.md           # 计划外 Bug 修复记录
+│   ├── interview-claude-code-workflow.md  # Claude Code 工作流记录（需求→计划→执行全流程、架构决策与收益总结）
+│   ├── *.html                  # 架构流程图（可视化）
+│   └── superpowers/
+│       ├── plans/              # 逐步骤 TDD 执行计划（含完整代码）
+│       └── specs/              # 设计规格文档
+├── build/                      # CMake 构建输出（不纳入版本控制）
+├── logs/                       # 运行时日志（不纳入版本控制）
+├── CMakeLists.txt              # 主构建配置
+└── CMakePresets.json           # 构建预设（preset: default，VS2017 x64）
+```
+
+---
 

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>界面操作与数据逻辑</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #0f1117;
+  color: #e0e0e0;
+  line-height: 1.7;
+}
+header {
+  text-align: center; padding: 28px 16px;
+  background: linear-gradient(135deg, #16213e, #0f3460);
+  border-bottom: 3px solid #e94560;
+}
+header h1 { font-size: 24px; color: #fff; }
+header p  { font-size: 13px; color: #a0a0c0; margin-top: 4px; }
+
+.container { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+
+/* 操作卡片 */
+.card {
+  background: #16213e;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  overflow: hidden;
+  border: 1px solid #2a2a5a;
+}
+.card-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px;
+  font-size: 17px; font-weight: bold;
+  background: rgba(233,69,96,0.1);
+  border-bottom: 1px solid #2a2a5a;
+}
+.card-header .icon { font-size: 22px; }
+.card-header .badge {
+  margin-left: auto; font-size: 11px;
+  background: #e94560; padding: 2px 10px; border-radius: 10px;
+  color: #fff; font-weight: normal;
+}
+.card-body { padding: 16px 20px; }
+
+/* 触发链 */
+.chain {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 13px; font-family: "Consolas","Courier New", monospace;
+  padding: 10px 14px; background: #1a1a36; border-radius: 8px;
+  margin-bottom: 12px;
+}
+.chain .arrow { color: #f5c542; font-size: 16px; }
+.chain .step {
+  background: #2a2a5a; border-radius: 6px; padding: 3px 10px;
+  white-space: nowrap; color: #c0c0e0;
+}
+.chain .step.highlight { background: #e94560; color: #fff; }
+
+/* 说明列表 */
+.detail-list { list-style: none; font-size: 13px; color: #c0c0d0; }
+.detail-list li {
+  padding: 6px 0 6px 20px;
+  position: relative;
+}
+.detail-list li::before {
+  content: "•"; position: absolute; left: 4px; color: #f5c542;
+}
+
+/* 步骤流 */
+.steps { list-style: none; counter-reset: s; }
+.steps li {
+  counter-increment: s;
+  padding: 8px 8px 8px 40px;
+  position: relative;
+  font-size: 13px; color: #c0c0d0;
+  border-bottom: 1px solid #1e1e3a;
+}
+.steps li:last-child { border: none; }
+.steps li::before {
+  content: counter(s);
+  position: absolute; left: 8px; top: 8px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #3b82f6; color: #fff;
+  font-size: 11px; font-weight: bold;
+  text-align: center; line-height: 22px;
+}
+
+/* 双栏对比 */
+.two-col { display: flex; gap: 20px; margin-top: 12px; }
+@media (max-width: 640px) { .two-col { flex-direction: column; } }
+.col { flex: 1; }
+.col h4 {
+  font-size: 13px; color: #f5c542; margin-bottom: 6px;
+  padding-bottom: 4px; border-bottom: 1px solid #2a2a5a;
+}
+.col ul { list-style: none; font-size: 12px; color: #a0a0c0; }
+.col ul li { padding: 4px 0 4px 14px; position: relative; }
+.col ul li::before { content: ">"; position: absolute; left: 0; color: #e94560; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>界面操作 → 数据逻辑</h1>
+  <p>每个按钮背后发生了什么</p>
+</header>
+
+<div class="container">
+
+  <!-- ==================== 1. 打开文件 ==================== -->
+  <div class="card">
+    <div class="card-header">
+      <span class="icon">&#128196;</span> 打开文件
+      <span class="badge">用户操作</span>
+    </div>
+    <div class="card-body">
+      <div class="chain">
+        <span class="step highlight">点击"打开"</span>
+        <span class="arrow">→</span>
+        <span class="step">QFileDialog</span>
+        <span class="arrow">→</span>
+        <span class="step">MainWindow::openFile()</span>
+        <span class="arrow">→</span>
+        <span class="step">PlayerController::open(path)</span>
+      </div>
+
+      <ol class="steps">
+        <li>QFileDialog 弹出系统文件选择器，用户选一个媒体文件</li>
+        <li>PlayerController::open() 先调 stop() 停止一切旧播放，重置三条队列</li>
+        <li>DemuxThread::open() 执行 <b>avformat_open_input</b> 打开容器，<b>avformat_find_stream_info</b> 探测流，找到视频/音频流索引</li>
+        <li>读取流参数（分辨率、采样率、时间基），依次初始化 <b>VideoDecodeThread</b>、<b>AudioDecodeThread</b>、<b>VideoRenderer</b></li>
+        <li>发射 <b>durationChanged</b> 信号 → 界面更新进度条范围</li>
+      </ol>
+      <div class="detail-list" style="margin-top: 8px; font-size: 12px; color: #888;">
+        <li>此时只初始化，线程还没 start，不占用 CPU</li>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 2. 播放 / 暂停 ==================== -->
+  <div class="card">
+    <div class="card-header">
+      <span class="icon">&#9654;&#65039;</span> 播放 / 暂停
+      <span class="badge">用户操作</span>
+    </div>
+    <div class="card-body">
+
+      <h4 style="color: #4ade80; margin-bottom: 8px;">点击播放</h4>
+      <div class="chain">
+        <span class="step highlight">点击播放按钮</span>
+        <span class="arrow">→</span>
+        <span class="step">PlayerController::play()</span>
+        <span class="arrow">→</span>
+        <span class="step">start 四个组件</span>
+      </div>
+      <ol class="steps">
+        <li>检查 <b>playing_</b> 标志防止重复播放</li>
+        <li><b>DemuxThread::start()</b> → 线程开始 av_read_frame 循环，读包推入两条 packet 队列</li>
+        <li><b>VideoDecodeThread::start()</b> → 线程开始从 videoPacketQ 取包，解码后推入 videoFrameQ</li>
+        <li><b>AudioDecodeThread::start()</b> → 线程开始从 audioPacketQ 取包，解码重采样→QAudioOutput 出声，同时更新 AVSync 时钟</li>
+        <li><b>VideoRenderer::startRendering()</b> → 启动 1ms QTimer，逐帧取 videoFrameQ，sws_scale 转换后 QPainter 绘制</li>
+        <li><b>posTimer_</b> 启动（100ms）→ 轮询 AVSync 音频时钟 → positionChanged 信号 → 进度条走动</li>
+      </ol>
+
+      <div class="two-col">
+        <div class="col">
+          <h4>暂停时</h4>
+          <ul>
+            <li>posTimer_ 停止，进度条不动</li>
+            <li>QAudioOutput::suspend()，扬声器静音</li>
+            <li>渲染 1ms 定时器停止，画面不动</li>
+            <li>解码线程继续跑，队列逐渐积压</li>
+            <li>恢复播放时 resume QAudioOutput + 重启定时器</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h4>关键设计</h4>
+          <ul>
+            <li>暂停不销毁线程，避免重建开销</li>
+            <li>队列积压提供即时恢复的缓冲</li>
+            <li>音频钟停在暂停前位置，恢复后连续</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 3. 拖拽进度条 ==================== -->
+  <div class="card">
+    <div class="card-header">
+      <span class="icon">&#9201;&#65039;</span> 拖拽进度条
+      <span class="badge">用户操作</span>
+    </div>
+    <div class="card-body">
+      <div class="chain">
+        <span class="step highlight">拖拽滑块</span>
+        <span class="arrow">→</span>
+        <span class="step">onSeekSliderMoved</span>
+        <span class="arrow">→</span>
+        <span class="step">PlayerController::seek(s)</span>
+      </div>
+
+      <ol class="steps">
+        <li><b>sync_.setAudioClock(seconds)</b> — 先把时钟跳到目标位置，VideoRenderer 看到旧帧 pts 远小于时钟 → 判定落后 400ms → 丢弃旧帧，避免队列堵满</li>
+        <li><b>renderer_->flushPendingFrame()</b> — 丢弃渲染器暂存的那一帧</li>
+        <li><b>demux_.seek(seconds)</b> — 原子写入 seekTarget_，DemuxThread::run() 下次循环执行 av_seek_frame 跳到关键帧附近，然后清空两条 packet 队列（pop + free）</li>
+        <li><b>videoDec_.flush() / audioDec_.flush()</b> — 清空解码器内部缓冲（avcodec_flush_buffers），避免残留旧数据</li>
+        <li>解码线程从新位置开始解码 → 渲染新画面、输出新声音</li>
+      </ol>
+
+      <div class="detail-list" style="margin-top: 8px;">
+        <li>先更新音频钟是 <b>关键</b>：否则旧帧不会被丢弃，videoFrameQ 堵满 → DemuxThread 的 push 卡在队列上 → seek 无法执行</li>
+        <li>清队列用 pop+free（不是 clear()），因为 clear 不释放 AVPacket* 内存，会泄漏</li>
+        <li>av_seek_frame 使用 AVSEEK_FLAG_BACKWARD 跳到最近的关键帧，不是精确到秒</li>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 4. 音量控制 ==================== -->
+  <div class="card">
+    <div class="card-header">
+      <span class="icon">&#128266;</span> 音量控制
+      <span class="badge">用户操作</span>
+    </div>
+    <div class="card-body">
+      <div class="chain">
+        <span class="step highlight">拖拽音量滑块</span>
+        <span class="arrow">→</span>
+        <span class="step">onVolumeChanged(value)</span>
+        <span class="arrow">→</span>
+        <span class="step">PlayerController::setVolume(v)</span>
+        <span class="arrow">→</span>
+        <span class="step">AudioDecodeThread::setVolume(v)</span>
+      </div>
+
+      <div class="two-col">
+        <div class="col">
+          <h4>内部机制</h4>
+          <ul>
+            <li>音量值 0–100 → 转为 0.0–1.0 float</li>
+            <li>写入 AudioDecodeThread 的原子量 pendingVolume_</li>
+            <li>音频线程每次写入前检查 pendingVolume_，若改变则设置 QAudioOutput 音量</li>
+            <li>原子量无锁，不阻塞音频渲染</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h4>界面细节</h4>
+          <ul>
+            <li>音量滑块用 eventFilter 拦截 mousePressEvent + mouseMoveEvent</li>
+            <li>点击任意位置直接跳转，无需拖拽</li>
+            <li>滑块上方有静音/非静音图标切换</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 汇总图 ==================== -->
+  <div class="card" style="border-color: #e94560;">
+    <div class="card-header" style="background: rgba(233,69,96,0.2);">
+      <span class="icon">&#128736;</span> 总览：界面信号 → 数据层
+    </div>
+    <div class="card-body" style="padding: 20px;">
+      <div style="font-family: Consolas, monospace; font-size: 13px; line-height: 2.2;">
+        <div>点击播放  →  play()  → DemuxThread::start() + VideoDecodeThread::start() + AudioDecodeThread::start() + VideoRenderer::startRendering() + posTimer_</div>
+        <div>点击暂停  →  pause() → posTimer_.stop() + VideoRenderer::stopRendering() + AudioDecodeThread::setPaused(true)</div>
+        <div>拖拽进度  →  seek(s) → setAudioClock(s) + DemuxThread::seek(s) + VideoDecodeThread::flush() + AudioDecodeThread::flush()</div>
+        <div>调节音量  →  setVolume(v) → AudioDecodeThread::atomic store → QAudioOutput::setVolume()</div>
+        <div>播放结束  →  DemuxThread EOF → onDemuxFinished() → 500ms 延迟 → playbackFinished → 界面复位</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer style="text-align:center; color:#555; font-size:12px; padding:24px; border-top:1px solid #2a2a5a; margin-top: 24px;">
+  RambosPlayer — 2026-05-10 — 界面操作与数据逻辑对照
+</footer>
+
+</body>
+</html>
