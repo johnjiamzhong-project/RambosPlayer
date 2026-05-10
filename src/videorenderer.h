@@ -26,6 +26,7 @@ public:
               AVSync* sync, FrameQueue<AVFrame*>* frameQueue);
     void startRendering();
     void stopRendering();
+    void flushPendingFrame();   // seek 时清除残留的 pendingFrame_，防止旧帧卡住队列
 
 protected:
     void paintEvent(QPaintEvent* event) override;

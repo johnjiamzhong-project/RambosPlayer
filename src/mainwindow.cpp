@@ -4,7 +4,9 @@
 #include "playercontroller.h"
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QMouseEvent>
 #include <QSettings>
+#include <QStyle>
 
 // 构造函数：setupUi 完成所有控件创建和布局，此处只做指针绑定、初始值和信号连接。
 // renderer_ 直接取 ui->videoWidget（promoted VideoRenderer），无需手动 setCentralWidget。
@@ -19,7 +21,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(ui->actionOpen,     &QAction::triggered,    this, &MainWindow::onOpenFile);
     connect(ui->playPauseBtn,   &QPushButton::clicked,  this, &MainWindow::onPlayPause);
-    connect(ui->progressSlider, &QSlider::sliderMoved,  this, &MainWindow::onSeekSliderMoved);
+    connect(ui->progressSlider, &QSlider::sliderMoved, this, &MainWindow::onSeekSliderMoved);
+    ui->progressSlider->installEventFilter(this);
     connect(ui->volumeSlider,   &QSlider::valueChanged, this, &MainWindow::onVolumeChanged);
 
     connect(player_, &PlayerController::durationChanged,  this, &MainWindow::onDurationChanged);
@@ -156,6 +159,23 @@ void MainWindow::onPositionChanged(int64_t ms) {
 // 播放结束后复位按钮为播放状态。
 void MainWindow::onPlaybackFinished() {
     ui->playPauseBtn->setText("▶");
+}
+
+// 拦截进度条鼠标按下：用 sliderValueFromPosition 算出精确点击位置并立即 seek。
+// 不拦截其他控件，也不消费事件（返回 false），让 Qt 照常处理后续拖拽逻辑。
+bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == ui->progressSlider && event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            int val = QStyle::sliderValueFromPosition(
+                ui->progressSlider->minimum(),
+                ui->progressSlider->maximum(),
+                me->x(), ui->progressSlider->width());
+            ui->progressSlider->setValue(val);
+            onSeekSliderMoved(val);
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
 }
 
 // 双击切换全屏/窗口模式。

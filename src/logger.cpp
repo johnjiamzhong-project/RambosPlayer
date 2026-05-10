@@ -66,7 +66,7 @@ void Logger::install(const QString& logDir)
 {
     QString dir = logDir;
     if (dir.isEmpty())
-        dir = QCoreApplication::applicationDirPath() + "/logs";
+        dir = QDir::currentPath() + "/logs";  // cwd 由 launch.json 设为项目根，日志不随 build/ 清除
 
     QDir().mkpath(dir);
     s_logDir = dir;

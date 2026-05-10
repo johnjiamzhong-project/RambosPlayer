@@ -44,6 +44,16 @@
 
 ---
 
+## #008 — Seek 后 UI 卡死、音频饿死：videoDelay() 不区分"丢帧"与"立即渲染"
+
+- **日期**：2026-05-10
+- **现象**：点击进度条跳转后，音频先到达新位置，UI 立刻冻结，几秒后音频也断；进度条偶发不跳转
+- **根因**：`AVSync::videoDelay()` 对"严重落后"和"轻微落后/同步"都返回 0，调用方无法区分。`VideoRenderer::onTimer()` 拿 0 当作"立即渲染"处理，对 seek 后队列中所有过期旧帧（PTS 远落后于新音频钟）逐一执行 `sws_scale + update()`。1ms 定时器把主线程绘制事件淹没 → UI 冻结 → `videoFrameQ_` 来不及消费而塞满 → `VideoDecodeThread` 阻塞在 push → `videoPacketQ_` 堵满 → DemuxThread 无法读新包 → audioPacketQ_ 耗尽 → 音频饿死
+- **修复**：`onTimer()` 自行计算 `diff = pts - audioClock`，落后超过 0.4s 时直接 `av_frame_free` 不渲染、不 `update()`，避免主线程被过期帧的渲染流量淹没
+- **涉及文件**：`src/videorenderer.cpp`
+
+---
+
 ## #007 — 关闭窗口时 UAF 崩溃：FrameQueue 先于线程析构导致 abort() 访问已销毁 mutex_
 
 - **日期**：2026-05-10

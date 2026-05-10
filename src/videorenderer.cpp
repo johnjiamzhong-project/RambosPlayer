@@ -43,6 +43,12 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
 // 启动/停止 1ms 定时器，控制帧拉取循环的运行状态。
 // stopRendering 同时释放暂存帧，防止残留帧跨文件泄漏。
 void VideoRenderer::startRendering() { timer_->start(); }
+
+// seek 时由 PlayerController 调用，释放暂存的旧帧，避免旧 PTS 卡住帧队列消费。
+void VideoRenderer::flushPendingFrame() {
+    if (pendingFrame_) av_frame_free(&pendingFrame_);
+}
+
 void VideoRenderer::stopRendering()  {
     timer_->stop();
     if (pendingFrame_) av_frame_free(&pendingFrame_);
@@ -61,15 +67,27 @@ void VideoRenderer::onTimer() {
     double pts = (frame->pts != AV_NOPTS_VALUE)
                  ? frame->pts * av_q2d(timeBase_) : 0.0;
     double audioClock = sync_ ? sync_->audioClock() : -1.0;
-    double delay = sync_ ? sync_->videoDelay(pts) : 0.0;
+    double diff = (audioClock >= 0.0) ? pts - audioClock : 0.0;
 
     qCDebug(lcVideo) << "pts =" << pts
                      << "audioClock =" << audioClock
-                     << "delay =" << delay
-                     << (delay < -0.4 ? "DROP" : "");
+                     << "diff =" << diff;
 
-    // 帧还没到渲染时间，暂存等下次 timer 再检查，不阻塞主线程
-    if (delay > 0.0) {
+    // 视频严重落后（正向 seek 后旧帧）：丢弃不渲染，否则淹没主线程导致死锁。
+    if (audioClock >= 0.0 && diff < -0.4) {
+        av_frame_free(&frame);
+        return;
+    }
+
+    // 视频严重超前（反向 seek 后旧帧 PTS 远大于新 audioClock）：同样丢弃。
+    // 阈值 1.5s：正常播放 diff 不超过 0.5s，超过 1.5s 必为 seek 残留的旧帧。
+    if (audioClock >= 0.0 && diff > 1.5) {
+        av_frame_free(&frame);
+        return;
+    }
+
+    // 视频轻微超前：暂存等下次 timer 再检查，不阻塞主线程
+    if (diff > 0.0) {
         pendingFrame_ = frame;
         return;
     }

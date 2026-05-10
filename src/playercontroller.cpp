@@ -78,8 +78,12 @@ void PlayerController::stop() {
     stopAllThreads();
 }
 
-// Seek：通知解复用线程定位，然后 flush 两个解码线程的内部缓冲，防止旧数据污染。
+// Seek：立刻更新音频钟到目标位置，再通知各线程。
+// 必须先更新钟：VideoRenderer 用 audioClock 判断是否丢帧，若钟仍停在旧位置，
+// 旧帧 diff ≈ 0 不会被丢弃，videoFrameQ 堵满 → DemuxThread 无法执行 seek。
 void PlayerController::seek(double seconds) {
+    sync_.setAudioClock(seconds);   // 立刻让视频渲染器看到新位置，触发旧帧丢弃
+    renderer_->flushPendingFrame();
     demux_.seek(seconds);
     videoDec_.flush();
     audioDec_.flush();
