@@ -17,6 +17,7 @@ find_package(FFMPEG REQUIRED)
 
 add_executable(RambosPlayer
     src/main.cpp
+    src/logger.cpp
     src/avsync.cpp
     src/demuxthread.cpp
     src/videodecodethread.cpp
@@ -38,6 +39,10 @@ target_link_libraries(RambosPlayer PRIVATE
     Qt5::Multimedia
     ${FFMPEG_LIBRARIES}
 )
+
+if(WIN32)
+    target_link_libraries(RambosPlayer PRIVATE dbghelp)
+endif()
 
 enable_testing()
 add_subdirectory(tests)
