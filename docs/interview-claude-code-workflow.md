@@ -26,7 +26,7 @@
 
 ### 关键收益（可量化的部分）
 
-- Phase 1–4（项目脚手架、FrameQueue、AVSync、DemuxThread、VideoDecodeThread、AudioDecodeThread）通过这套流程完整实现，包括多线程架构、解码、音视频同步、seek 支持等核心模块
+- Phase 1–6（项目脚手架 → FrameQueue → AVSync → DemuxThread → VideoDecodeThread → AudioDecodeThread → VideoRenderer → PlayerController → MainWindow）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、进度条/音量/全屏等完整播放器功能，6 项端对端场景全部通过
 - 每个功能都有对应 spec 和 plan 文档，可追溯决策过程
 
 ---
@@ -37,7 +37,7 @@
 
 ---
 
-*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26*
+*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26 起草，2026-05-10 更新至 Phase 6 完成*
 
 ---
 
@@ -430,3 +430,49 @@ A: 支持重复打开文件（播放中切换视频）。不先 stop，旧线程
 
 **Q20: onDemuxFinished 为什么延迟 500ms 才发 playbackFinished？**  
 A: DemuxThread 的 finished 信号在解复用循环结束时发出，但此时包队列里可能还有几十个未消费的包。如果立即发 playbackFinished，UI 会停掉播放，而解码线程还有数据没播完，最后几秒画面和声音会被截断。延迟 500ms 给解码线程留时间耗尽剩余包，是一种简化的"排水"策略。
+
+---
+
+#### 8. 主窗口：MainWindow
+
+**问题**：如何组织播放器 UI，让进度条拖拽、音量调节、全屏切换协同工作？
+
+**核心设计**：
+
+```cpp
+class MainWindow : public QMainWindow {
+    void openFile(const QString& path);       // 打开文件 + 更新最近记录
+    void onPlayPause();                       // 播放/暂停切换
+    void onSeekSliderMoved(int value);        // 进度条拖拽 → seek
+    void onVolumeChanged(int value);          // 音量滑块 → setVolume
+    void onDurationChanged(int64_t ms);       // 更新时长标签
+    void onPositionChanged(int64_t ms);       // 100ms 更新进度条位置
+    void onPlaybackFinished();                // 播放结束复位按钮
+    bool eventFilter(QObject*, QEvent*);      // 拦截滑块点击直接跳转
+};
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **控件布局** | 全部在 `.ui` 文件中用 Qt Designer 绘制 | 布局可视化可调整，`.cpp` 只负责信号连接和逻辑，不动态创建控件 |
+| **VideoRenderer 集成** | 通过 Qt Designer promoted widget 放入 | 无需 `setCentralWidget` 代码，布局在 `.ui` 中完全可见 |
+| **进度条点击跳转** | `eventFilter` 拦截 `MouseButtonPress`，用 `QStyle::sliderValueFromPosition` 计算精确位置 | Qt 默认点击是 pageStep 步进，不符合视频播放器"点哪里跳哪里"的直觉 |
+| **拖拽时跳过进度更新** | `isSliderDown()` 检测，拖拽中忽略 `positionChanged` | 否则进度条会在用户的拖拽和 100ms 定时更新之间来回跳动 |
+| **析构顺序** | 先 `delete player_`（触发 stop），再 `delete ui` | `PlayerController::stop()` 通过 `renderer_->stopRendering()` 停止 QTimer；若先 `delete ui` 则 renderer_ 已销毁，再次访问会 UAF 崩溃 |
+| **最近文件列表** | `QSettings` 持久化，动态重建 `QMenu` 条目 | 分隔线前删除旧条目再按序插入，支持编号快捷键 `&1`–`&9` |
+| **全屏切换** | 双击 `mouseDoubleClickEvent` → `showFullScreen()` / `showNormal()` | Qt 原生全屏，无边框无任务栏，符合视频播放器预期 |
+
+**端对端验证结果（6/6 通过）**：
+
+| 场景 | 结果 |
+|------|:--:|
+| 打开 1080p H.264 mp4，正常播放，音画同步 | ✅ |
+| 拖进度条到中间，seek 后继续播放 | ✅ |
+| 音量设为 0，静音 | ✅ |
+| 播放到末尾，按钮变 ▶ | ✅ |
+| 双击全屏 → 双击退出，正常切换 | ✅ |
+| 播放中关闭窗口，无崩溃 | ✅ |
+
+**验证**：全部端对端场景通过；单元测试 0 failures（FrameQueue 7 passed, AVSync 7 passed, DemuxThread 3 passed）。

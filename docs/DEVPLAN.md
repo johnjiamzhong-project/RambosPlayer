@@ -121,7 +121,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 ---
 
-## Phase 5 — 渲染与同步
+## Phase 5 — 渲染与同步 ✅
 
 **目标：** `VideoRenderer` 以音频时钟为基准定时渲染帧，视频不撕裂不跳帧。
 
@@ -130,14 +130,14 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   - `init(width, height, timeBase, AVSync*, FrameQueue<AVFrame*>*)` 初始化 `SwsContext`（YUV420P → RGB32）和 `QImage`
   - `QTimer`（1 ms）触发 `onTimer()`：从队列 `tryPop`（超时 0）→ 调用 `sync_->videoDelay(pts)` → 领先则 `push` 回队列等下次，`msleep` 延迟后 `sws_scale` 写入 `QImage` → `update()`
   - `paintEvent` 用 `QPainter` 保持宽高比居中绘制，背景黑色
-- [ ] 手动集成测试：用 DemuxThread + VideoDecodeThread + AudioDecodeThread + VideoRenderer 搭出最小 demo，打开 sample.mp4，确认视频/音频同步播放（待 Task 8 PlayerController 完成后执行）
+- [x] 手动集成测试：用 DemuxThread + VideoDecodeThread + AudioDecodeThread + VideoRenderer 搭出最小 demo，打开 sample.mp4，确认视频/音频同步播放（Task 8 PlayerController 完成后执行）
 - [ ] `git commit -m "feat: VideoRenderer QPainter 帧渲染与音视频同步"`
 
 **验收：** 视频流畅，音画同步误差 < 100 ms（耳听目测）。
 
 ---
 
-## Phase 6 — 完整播放器 UI
+## Phase 6 — 完整播放器 UI ✅
 
 **目标：** 带进度条、音量滑块、全屏的完整播放器交付。
 
@@ -145,22 +145,22 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   - 持有并管理全部组件的生命周期：`DemuxThread`、`VideoDecodeThread`、`AudioDecodeThread`、三条队列、`AVSync`
   - 对外接口：`open(path)` / `play()` / `pause()` / `stop()` / `seek(seconds)` / `setVolume(float)`
   - 信号：`durationChanged(int64_t ms)` / `positionChanged(int64_t ms)`（100 ms `QTimer` 轮询音频时钟）/ `playbackFinished()`
-- [ ] 创建 `src/mainwindow.h` / `src/mainwindow.cpp` / `src/mainwindow.ui`
+- [x] 创建 `src/mainwindow.h` / `src/mainwindow.cpp` / `src/mainwindow.ui`
   - `VideoRenderer` 作为 `centralWidget`
   - 底部控制栏：`playPauseBtn`、`progressSlider`（range 0–1000）、`volumeSlider`（0–100）、`timeLabel`
   - 菜单：文件 → 打开（`QFileDialog`）
   - 双击 `VideoRenderer` 切换全屏
   - `onSeekSliderMoved` → `player_->seek(value/1000.0 * duration_ms/1000.0)`
-- [ ] 端对端测试清单（手动）：
+- [x] 端对端测试清单（手动）：
 
   | 场景 | 预期 |
   |------|------|
-  | 打开 1080p H.264 mp4 | 正常播放，音画同步 |
-  | 拖进度条到中间 | seek 后继续播放 |
-  | 音量设为 0 | 静音 |
-  | 播放到末尾 | 按钮变 ▶ |
-  | 双击全屏 → 双击退出 | 正常切换 |
-  | 播放中关闭窗口 | 无崩溃 |
+  | 打开 1080p H.264 mp4 | 正常播放，音画同步 ✅ |
+  | 拖进度条到中间 | seek 后继续播放 ✅ |
+  | 音量设为 0 | 静音 ✅ |
+  | 播放到末尾 | 按钮变 ▶ ✅ |
+  | 双击全屏 → 双击退出 | 正常切换 ✅ |
+  | 播放中关闭窗口 | 无崩溃 ✅ |
 
 - [ ] `git commit -m "feat: 完整播放器 UI 初级功能完成"`
 
@@ -254,8 +254,8 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 - [x] Phase 2 — 基础组件（FrameQueue ✅，AVSync ✅）
 - [x] Phase 3 — 解复用线程（DemuxThread ✅）
 - [x] Phase 4 — 解码层
-- [ ] Phase 5 — 渲染与同步
-- [ ] Phase 6 — 完整播放器 UI
+- [x] Phase 5 — 渲染与同步 ✅
+- [x] Phase 6 — 完整播放器 UI ✅
 - [ ] Phase 7 — 硬件加速
 - [ ] Phase 8 — 视频滤镜
 - [ ] Phase 9 — 屏幕录制/推流
