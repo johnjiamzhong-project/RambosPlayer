@@ -15,7 +15,7 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
 find_package(FFMPEG REQUIRED)
 
-add_executable(RambosPlayer
+add_executable(RambosPlayer WIN32
     src/main.cpp
     src/logger.cpp
     src/avsync.cpp
@@ -45,4 +45,4 @@ if(WIN32)
 endif()
 
 enable_testing()
-add_subdirectory(tests)
+add_subdirectory(tests EXCLUDE_FROM_ALL)

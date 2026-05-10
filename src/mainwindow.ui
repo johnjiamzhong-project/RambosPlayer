@@ -124,12 +124,23 @@ QPushButton:hover { background: #555; }</string>
    <widget class="QMenu" name="menuFile">
     <property name="title"><string>文件(&amp;F)</string></property>
     <addaction name="actionOpen"/>
+    <addaction name="menuRecentFiles"/>
+   </widget>
+   <widget class="QMenu" name="menuRecentFiles">
+    <property name="title"><string>最近文件(&amp;R)</string></property>
+    <property name="enabled"><bool>false</bool></property>
+    <addaction name="separator"/>
+    <addaction name="actionClearRecent"/>
    </widget>
    <addaction name="menuFile"/>
   </widget>
   <action name="actionOpen">
    <property name="text"><string>打开(&amp;O)...</string></property>
    <property name="shortcut"><string>Ctrl+O</string></property>
+  </action>
+  <action name="actionClearRecent">
+   <property name="text"><string>清除记录</string></property>
+   <property name="enabled"><bool>false</bool></property>
   </action>
  </widget>
  <customwidgets>

@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QLoggingCategory>
 #include <QMutex>
 #include <QTextStream>
 
@@ -82,6 +83,14 @@ void Logger::install(const QString& logDir)
 
     qInstallMessageHandler(messageHandler);
 
+    // 日志级别规则（优先级：环境变量 > 此处代码）：
+    //   默认：*.debug=false        — 只保留 Info/Warning/Critical，日志文件安静
+    //   调试音视频同步：$env:QT_LOGGING_RULES="rambos.*=true"
+    //   查看所有 debug：$env:QT_LOGGING_RULES="*.debug=true"
+    //   只看音频时钟：  $env:QT_LOGGING_RULES="rambos.audio=true"
+    //   只看视频帧：    $env:QT_LOGGING_RULES="rambos.video=true"
+    QLoggingCategory::setFilterRules("*.debug=false");
+
 #ifdef Q_OS_WIN
     SetUnhandledExceptionFilter(crashHandler);
 #endif
@@ -128,9 +137,6 @@ void Logger::messageHandler(QtMsgType type,
         .arg(level)
         .arg(location)
         .arg(msg);
-
-    // 同步写到 stderr，Qt Creator 输出窗口可见
-    fprintf(stderr, "%s\n", entry.toLocal8Bit().constData());
 
     {
         QMutexLocker lk(&s_mutex);

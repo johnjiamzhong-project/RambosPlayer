@@ -1,4 +1,7 @@
 #include "audiodecodethread.h"
+#include <QLoggingCategory>
+
+Q_LOGGING_CATEGORY(lcAudio, "rambos.audio", QtWarningMsg)
 
 extern "C" {
 #include <libavutil/opt.h>
@@ -56,6 +59,7 @@ void AudioDecodeThread::setVolume(float v) { pendingVolume_.store(v); }
 
 // 主循环：取包 → 解码 → swr_convert → QAudioOutput::write → 更新音频时钟。
 // QAudioOutput 在此处创建，保证创建/start/write/stop 都在同一线程，满足 Qt 线程亲和性。
+// 时钟用 processedUSecs()（硬件实际播放量）而非解码位置，避免缓冲区超前导致视频跑飞。
 void AudioDecodeThread::run() {
     QAudioFormat fmt;
     fmt.setSampleRate(44100);
@@ -65,12 +69,15 @@ void AudioDecodeThread::run() {
     fmt.setByteOrder(QAudioFormat::LittleEndian);
     fmt.setCodec("audio/pcm");
     sink_ = new QAudioOutput(fmt);
+    sink_->setBufferSize(16384);  // ~93ms；缓冲区过大会让时钟超前实际播放
     device_ = sink_->start();
 
     AVPacket* pkt = nullptr;
     AVFrame* frame = av_frame_alloc();
     uint8_t* outBuf = nullptr;
     int outBufSize = 0;
+    double audioStartPts = -1.0;  // 当前播放段第一帧的 PTS，用于对齐 processedUSecs
+    double lastLogClock  = -1.0;  // 上次打印时钟的值，每推进 1s 打一次日志
 
     while (!abort_) {
         float vol = pendingVolume_.exchange(-1.f);
@@ -79,6 +86,11 @@ void AudioDecodeThread::run() {
         if (flush_.exchange(false)) {
             avcodec_flush_buffers(codecCtx_);
             swr_convert(swrCtx_, nullptr, 0, nullptr, 0);
+            // 重启音频输出：清空缓冲区中的旧数据，并将 processedUSecs 重置为 0，
+            // 保证 seek 后时钟从新位置重新计算
+            sink_->stop();
+            device_ = sink_->start();
+            audioStartPts = -1.0;
         }
 
         if (!inputQueue_->tryPop(pkt, 20)) continue;
@@ -102,13 +114,32 @@ void AudioDecodeThread::run() {
             uint8_t* out[1] = { outBuf };
             int n = swr_convert(swrCtx_, out, outSamples,
                                 (const uint8_t**)frame->data, frame->nb_samples);
-            if (n > 0 && device_)
-                device_->write((const char*)outBuf, n * 4);
+
+            if (n > 0 && device_) {
+                // 限速：等待硬件消耗出足够空间再写，防止解码线程跑飞导致时钟严重超前
+                while (!abort_ && sink_->bytesFree() < n * 4)
+                    QThread::msleep(2);
+                if (!abort_)
+                    device_->write((const char*)outBuf, n * 4);
+            }
 
             if (frame->pts != AV_NOPTS_VALUE) {
-                double pts = frame->pts * av_q2d(timeBase_)
-                           + (double)frame->nb_samples / codecCtx_->sample_rate;
-                sync_->setAudioClock(pts);
+                // 记录本段第一帧 PTS，此后以 processedUSecs 推算实际播放位置
+                if (audioStartPts < 0.0) {
+                    audioStartPts = frame->pts * av_q2d(timeBase_);
+                    qCDebug(lcAudio) << "首帧 PTS =" << audioStartPts
+                                     << "bytesFree =" << sink_->bytesFree()
+                                     << "bufSize =" << sink_->bufferSize();
+                }
+                double clock = audioStartPts + sink_->processedUSecs() / 1.0e6;
+                sync_->setAudioClock(clock);
+                // 每推进 1s 打一次日志，监控时钟是否与真实时间对齐
+                if (clock - lastLogClock >= 1.0) {
+                    lastLogClock = clock;
+                    qCDebug(lcAudio) << "clock =" << clock
+                                     << "processedUSecs =" << sink_->processedUSecs()
+                                     << "bytesFree =" << sink_->bytesFree();
+                }
             }
             av_frame_unref(frame);
         }

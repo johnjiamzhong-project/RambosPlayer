@@ -1,6 +1,9 @@
 #include "videorenderer.h"
+#include <QLoggingCategory>
 #include <QPainter>
 #include <QThread>
+
+Q_LOGGING_CATEGORY(lcVideo, "rambos.video", QtWarningMsg)
 
 extern "C" {
 #include <libavutil/imgutils.h>
@@ -57,7 +60,13 @@ void VideoRenderer::onTimer() {
 
     double pts = (frame->pts != AV_NOPTS_VALUE)
                  ? frame->pts * av_q2d(timeBase_) : 0.0;
+    double audioClock = sync_ ? sync_->audioClock() : -1.0;
     double delay = sync_ ? sync_->videoDelay(pts) : 0.0;
+
+    qCDebug(lcVideo) << "pts =" << pts
+                     << "audioClock =" << audioClock
+                     << "delay =" << delay
+                     << (delay < -0.4 ? "DROP" : "");
 
     // 帧还没到渲染时间，暂存等下次 timer 再检查，不阻塞主线程
     if (delay > 0.0) {

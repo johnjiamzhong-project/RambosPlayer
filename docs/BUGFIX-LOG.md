@@ -44,6 +44,26 @@
 
 ---
 
+## #007 — 关闭窗口时 UAF 崩溃：FrameQueue 先于线程析构导致 abort() 访问已销毁 mutex_
+
+- **日期**：2026-05-10
+- **现象**：关闭窗口时崩溃于 `FrameQueue::abort()` 中的 `QMutexLocker lk(&mutex_)`（访问违规）
+- **根因**：`PlayerController` 中线程成员（`demux_`、`videoDec_`、`audioDec_`）声明在队列（`videoPacketQ_` 等）之前。C++ 成员析构为声明逆序，导致三条队列先被销毁，线程析构时 `stop()` 再次调用 `abort()`，访问已析构队列的 `mutex_` — UAF
+- **修复**：将三条 `FrameQueue` 成员移至线程成员声明之前，确保队列比线程活得更久
+- **涉及文件**：`src/playercontroller.h`
+
+---
+
+## #006 — 关闭窗口时 UAF 崩溃：renderer_ 先于 player_ 析构
+
+- **日期**：2026-05-10
+- **现象**：加载视频后直接关闭窗口，崩溃于 `VideoRenderer::stopRendering()` 中的 `av_frame_free(&pendingFrame_)`（访问违规）
+- **根因**：`player_` 以 MainWindow 为 Qt parent，析构顺序为：`delete ui`（含 `renderer_`）→ Qt 自动删除 `player_`。`~PlayerController()` 调 `stop()` → `renderer_->stopRendering()`，此时 `renderer_` 已随 `ui` 销毁，造成 Use-After-Free
+- **修复**：`player_` 构造时不传 `this` parent，改由 `~MainWindow()` 手动按顺序 `delete player_; delete ui;`，保证 `stop()` 在 `renderer_` 仍存活时执行
+- **涉及文件**：`src/mainwindow.cpp`
+
+---
+
 ## #005 — QAudioOutput 线程亲和性违规
 
 - **日期**：2026-05-09

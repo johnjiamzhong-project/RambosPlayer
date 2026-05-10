@@ -28,13 +28,19 @@ private slots:
     void onDurationChanged(int64_t ms);
     void onPositionChanged(int64_t ms);
     void onPlaybackFinished();
+    void onClearRecent();
 
 private:
+    void openFile(const QString& path);         // 打开文件并更新最近记录
+    void updateRecentFiles(const QString& path); // 写入 QSettings，刷新菜单
+    void rebuildRecentMenu();                    // 用 QSettings 重建最近文件菜单条目
+
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权
     PlayerController* player_;      // 持有并控制完整播放流水线
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     bool isFullscreen_ = false;     // 全屏状态标志
 
-    static QString formatTime(int64_t ms);  // 毫秒 → "MM:SS" 字符串
+    static constexpr int MaxRecentFiles = 10;   // 最近文件列表最大条数
+    static QString formatTime(int64_t ms);      // 毫秒 → "MM:SS" 字符串
 };

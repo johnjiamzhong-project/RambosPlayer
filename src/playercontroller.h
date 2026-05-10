@@ -47,12 +47,15 @@ private slots:
 private:
     VideoRenderer* renderer_;                       // 视频渲染组件，由外部传入，不拥有所有权
     AVSync sync_;                                   // 音频主时钟
-    DemuxThread demux_;                             // 解复用线程
-    VideoDecodeThread videoDec_;                    // 视频解码线程
-    AudioDecodeThread audioDec_;                    // 音频解码线程
+    // 队列必须在线程成员之前声明，保证析构时队列比线程活得更久。
+    // C++ 成员析构顺序为声明逆序：若队列在线程之后声明，
+    // 队列先被销毁，线程析构时调 stop()->abort() 会访问已析构的队列（UAF 崩溃）。
     FrameQueue<AVPacket*> videoPacketQ_{100};       // 视频包队列
     FrameQueue<AVPacket*> audioPacketQ_{400};       // 音频包队列（更大以应对音频帧小而密）
     FrameQueue<AVFrame*>  videoFrameQ_{15};         // 解码后视频帧队列
+    DemuxThread demux_;                             // 解复用线程
+    VideoDecodeThread videoDec_;                    // 视频解码线程
+    AudioDecodeThread audioDec_;                    // 音频解码线程
     QTimer* posTimer_ = nullptr;                    // 100ms 定时器，驱动 positionChanged 信号
     std::atomic<bool> playing_{false};              // 播放状态，防止重复 play()
 
