@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RambosPlayer 软解 vs 硬解 对比</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  line-height: 1.6;
+}
+header {
+  text-align: center;
+  padding: 32px 16px 16px;
+  background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+  border-bottom: 3px solid #e94560;
+}
+header h1 { font-size: 28px; color: #fff; }
+header p  { font-size: 14px; color: #a0a0c0; margin-top: 6px; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+
+/* ---- 图例 ---- */
+.legend {
+  display: flex; gap: 24px; justify-content: center; flex-wrap: wrap;
+  margin-bottom: 32px; font-size: 13px;
+}
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend .dot { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+.legend .dot.soft   { background: #3b82f6; }
+.legend .dot.hard   { background: #e94560; }
+.legend .dot.cpu    { background: #f5c542; }
+.legend .dot.gpu    { background: #0f9b8e; }
+.legend .dot.branch { background: #7b2ff7; }
+
+.section-title {
+  font-size: 20px; color: #e94560; border-left: 4px solid #e94560;
+  padding-left: 12px; margin: 40px 0 20px;
+}
+
+/* ====== 双列对比管道 ====== */
+.compare-row {
+  display: flex; gap: 40px; justify-content: center; align-items: flex-start;
+  flex-wrap: wrap;
+}
+.pipeline-col {
+  flex: 1; min-width: 380px; max-width: 520px;
+  border-radius: 14px; padding: 20px;
+}
+.pipeline-col.soft { background: #16213e; border: 2px solid #3b82f666; }
+.pipeline-col.hard { background: #16213e; border: 2px solid #e9456066; }
+
+.pipeline-col h2 {
+  text-align: center; font-size: 18px; margin-bottom: 16px;
+  padding-bottom: 10px; border-bottom: 1px solid #2a2a5a;
+}
+.pipeline-col.soft h2 { color: #3b82f6; }
+.pipeline-col.hard h2 { color: #e94560; }
+
+.stage {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+}
+
+.stage-block {
+  border-radius: 10px; padding: 12px 18px; min-width: 200px;
+  text-align: center; box-shadow: 0 3px 12px rgba(0,0,0,0.3);
+  transition: transform 0.2s;
+}
+.stage-block:hover { transform: scale(1.03); }
+
+.stage-block.cpu    { background: linear-gradient(135deg, #c79100 0%, #8f6a00 100%); }
+.stage-block.gpu    { background: linear-gradient(135deg, #0f9b8e 0%, #0a7268 100%); }
+.stage-block.neutral { background: linear-gradient(135deg, #555 0%, #333 100%); }
+.stage-block.branch { background: linear-gradient(135deg, #7b2ff7 0%, #5a1db5 100%); }
+.stage-block.hwdev  { background: linear-gradient(135deg, #e94560 0%, #c23152 100%); }
+
+.stage-block .title { font-weight: bold; font-size: 14px; color: #fff; }
+.stage-block .desc  { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 4px; }
+
+.arrow-down {
+  display: flex; flex-direction: column; align-items: center;
+  color: #888; font-size: 22px; line-height: 1; padding: 2px 0;
+}
+.arrow-label {
+  font-size: 11px; color: #f5c542; background: #1e1e3a; padding: 2px 10px;
+  border-radius: 10px; margin: 2px 0;
+}
+
+/* ====== 分支可视化 ====== */
+.split-branch {
+  display: flex; gap: 20px; justify-content: center; align-items: flex-start;
+  margin: 8px 0;
+}
+.split-col {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+  flex: 1;
+}
+.split-label {
+  font-size: 11px; font-weight: bold; color: #7b2ff7; padding: 3px 12px;
+  border-radius: 10px; background: #2a2a4a; margin-bottom: 6px;
+}
+
+/* ====== 对比表格 ====== */
+.compare-table {
+  width: 100%; border-collapse: collapse; margin: 16px 0;
+  font-size: 13px;
+}
+.compare-table th {
+  background: #16213e; color: #e94560; padding: 10px 14px;
+  text-align: left; border-bottom: 2px solid #e9456066;
+}
+.compare-table td {
+  padding: 10px 14px; border-bottom: 1px solid #2a2a5a;
+}
+.compare-table tr:hover td { background: #1e1e3a; }
+
+/* ====== 步骤列表 ====== */
+.flow-steps {
+  counter-reset: step;
+  list-style: none; padding: 0;
+}
+.flow-steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 10px 10px 10px 44px;
+  margin: 6px 0;
+  background: #1e1e3a;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.flow-steps li::before {
+  content: counter(step);
+  position: absolute; left: 10px; top: 10px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #e94560; color: #fff;
+  font-size: 12px; font-weight: bold;
+  text-align: center; line-height: 24px;
+}
+
+/* ====== 标牌 ====== */
+.badge {
+  display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  margin-right: 4px;
+}
+.badge.soft  { background: #3b82f633; color: #3b82f6; }
+.badge.hard  { background: #e9456033; color: #e94560; }
+.badge.gpu   { background: #0f9b8e33; color: #0f9b8e; }
+.badge.cpu   { background: #f5c54233; color: #f5c542; }
+
+/* ====== 决策流程图 ====== */
+.decision-flow {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+  margin: 20px 0;
+}
+.decision-node {
+  border-radius: 10px; padding: 12px 22px; text-align: center;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.3);
+  min-width: 240px;
+}
+.decision-node.diamond {
+  background: linear-gradient(135deg, #7b2ff7 0%, #5a1db5 100%);
+  transform: rotate(0deg); /* keep readable */
+  border-radius: 10px;
+}
+.decision-label {
+  display: flex; gap: 40px; margin: 8px 0; font-size: 12px;
+}
+.decision-label .yes { color: #0f9b8e; }
+.decision-label .no  { color: #e94560; }
+
+footer {
+  text-align: center; color: #555; font-size: 12px;
+  padding: 24px; border-top: 1px solid #2a2a5a; margin-top: 40px;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RambosPlayer — 软解 vs 硬解 对比</h1>
+  <p>CPU 软解（现状）与 D3D11VA 硬解（Phase 7 目标）的架构差异与性能对比</p>
+</header>
+
+<div class="container">
+
+<!-- 图例 -->
+<div class="legend">
+  <span><i class="dot soft"></i> 软解路径</span>
+  <span><i class="dot hard"></i> 硬解路径</span>
+  <span><i class="dot cpu"></i> CPU 执行</span>
+  <span><i class="dot gpu"></i> GPU 执行</span>
+  <span><i class="dot branch"></i> 决策分支</span>
+</div>
+
+<!-- ========== 双列并排管道对比 ========== -->
+<div class="compare-row">
+
+  <!-- 软解列 -->
+  <div class="pipeline-col soft">
+    <h2>🖥 软解路径（现状）</h2>
+
+    <div class="stage">
+      <div class="stage-block neutral" style="min-width: 280px;">
+        <div class="title">📦 输入：videoPacketQ → AVPacket*</div>
+        <div class="desc">DemuxThread 解复用后的 H.264 压缩包</div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block cpu" style="min-width: 280px;">
+        <div class="title">avcodec_send_packet()</div>
+        <div class="desc">发送压缩包到解码器</div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block cpu" style="min-width: 280px;">
+        <div class="title">avcodec_receive_frame()</div>
+        <div class="desc">
+          <b>CPU 通用核心</b> 执行全部解码运算<br>
+          (熵解码 + 反量化 + 反变换 + 运动补偿 + 去块滤波)
+        </div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); min-width: 280px;">
+        <div class="title">AVFrame* → 系统内存</div>
+        <div class="desc">帧格式: AV_PIX_FMT_YUV420P<br>数据已在 CPU 可读的内存中，直接可用</div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block neutral" style="min-width: 280px;">
+        <div class="title">push → videoFrameQ</div>
+        <div class="desc">推入帧队列，等待 VideoRenderer 消费</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 16px; padding: 12px; background: #3b82f611; border-radius: 8px; font-size: 12px; color: #a0a0c0;">
+      ⚡ <b>特点：</b>帧直接在系统内存中，无额外拷贝。<br>
+      🔴 <b>代价：</b>1080p H.264 解码约占用 <b>40–60% CPU</b>（取决于码率和帧率）。
+    </div>
+  </div>
+
+  <!-- 硬解列 -->
+  <div class="pipeline-col hard">
+    <h2>⚡ 硬解路径（Phase 7 目标）</h2>
+
+    <div class="stage">
+      <div class="stage-block neutral" style="min-width: 280px;">
+        <div class="title">📦 输入：videoPacketQ → AVPacket*</div>
+        <div class="desc">DemuxThread 解复用后的 H.264 压缩包（同软解）</div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block hwdev" style="min-width: 280px;">
+        <div class="title">🔧 init 阶段：创建 D3D11VA 设备</div>
+        <div class="desc">
+          av_hwdevice_ctx_create(AV_HWDEVICE_TYPE_D3D11VA)<br>
+          → 绑定到 AVCodecContext.hw_device_ctx
+        </div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block cpu" style="min-width: 280px; opacity: 0.7;">
+        <div class="title">avcodec_send_packet()</div>
+        <div class="desc">发送压缩包（CPU 侧，开销极小）</div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block gpu" style="min-width: 280px;">
+        <div class="title">avcodec_receive_frame()</div>
+        <div class="desc">
+          <b>GPU 专用硅电路</b> 执行解码<br>
+          (NVDEC 固定功能单元，1650S 支持 H.264/HEVC 完全硬解)
+        </div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block gpu" style="min-width: 280px;">
+        <div class="title">AVFrame* → 显存 (VRAM)</div>
+        <div class="desc">帧格式: AV_PIX_FMT_D3D11<br>⚠ 帧在 GPU 显存中，CPU 无法直接读写</div>
+      </div>
+
+      <div class="arrow-down">
+        <span style="font-size:32px;">⬇</span>
+        <span class="arrow-label">关键步骤：显存 → 系统内存</span>
+      </div>
+
+      <div class="stage-block" style="background: linear-gradient(135deg, #333 0%, #1a1a2e 100%); min-width: 280px; border: 2px dashed #f5c542;">
+        <div class="title"><span style="color:#f5c542;">⚠ av_hwframe_transfer_data()</span></div>
+        <div class="desc">
+          将帧从 GPU 显存拷贝到 CPU 系统内存<br>
+          格式变换: D3D11 → NV12/YUV420P<br>
+          这是硬解路径唯一新增的开销
+        </div>
+      </div>
+
+      <div class="arrow-down"><span>⬇</span></div>
+
+      <div class="stage-block neutral" style="min-width: 280px;">
+        <div class="title">push → videoFrameQ</div>
+        <div class="desc">推入帧队列，后续流程与软解完全一致</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 16px; padding: 12px; background: #e9456011; border-radius: 8px; font-size: 12px; color: #a0a0c0;">
+      ⚡ <b>特点：</b>解码本身几乎不占 CPU，由 GPU NVDEC 完成。<br>
+      💛 <b>额外开销：</b>av_hwframe_transfer_data() 显存→内存拷贝 (~1–3ms/帧)。<br>
+      🟢 <b>收益：</b>1080p H.264 解码 CPU 占用降至 <b>5–15%</b>，降幅 ≥ 30%。
+    </div>
+  </div>
+
+</div>
+
+<!-- ========== 关键对比 ========== -->
+<h2 class="section-title">核心差异对比</h2>
+
+<table class="compare-table">
+  <thead>
+    <tr>
+      <th>维度</th>
+      <th><span class="badge soft">软解</span> CPU 软解</th>
+      <th><span class="badge hard">硬解</span> D3D11VA 硬解</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>解码执行单元</td>
+      <td>CPU 通用核心（x86 SIMD）</td>
+      <td>GPU NVDEC 专用硅电路</td>
+    </tr>
+    <tr>
+      <td>帧输出位置</td>
+      <td>系统内存（CPU 可直接读写）</td>
+      <td>显存 VRAM（需 copy 回系统内存）</td>
+    </tr>
+    <tr>
+      <td>帧格式</td>
+      <td>AV_PIX_FMT_YUV420P</td>
+      <td>AV_PIX_FMT_D3D11 → transfer → YUV420P</td>
+    </tr>
+    <tr>
+      <td>初始化</td>
+      <td>avcodec_find_decoder + avcodec_open2</td>
+      <td>+ av_hwdevice_ctx_create + 绑定 hw_device_ctx</td>
+    </tr>
+    <tr>
+      <td>CPU 占用 (1080p)</td>
+      <td>~40–60%</td>
+      <td>~5–15% ✅</td>
+    </tr>
+    <tr>
+      <td>兼容性</td>
+      <td>所有编码格式 ✅</td>
+      <td>H.264 / H.265 主流格式；不支持的编码自动回退软解</td>
+    </tr>
+    <tr>
+      <td>驱动依赖</td>
+      <td>无</td>
+      <td>NVIDIA 驱动 (1650S 支持 D3D11VA)</td>
+    </tr>
+    <tr>
+      <td>后续管线</td>
+      <td>sws_scale → QPainter</td>
+      <td>同软解（transfer 之后完全一致）</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ========== 决策流程 ========== -->
+<h2 class="section-title">VideoDecodeThread 初始化 & 解码决策流程</h2>
+
+<div class="decision-flow">
+
+  <!-- 入口 -->
+  <div class="stage-block neutral" style="min-width: 380px;">
+    <div class="title">VideoDecodeThread::init(AVCodecParameters*, bool hwEnabled)</div>
+    <div class="desc">hierarchy 接收 PlayerController 传入的硬件加速开关状态</div>
+  </div>
+
+  <div class="arrow-down"><span style="font-size:32px;">⬇</span></div>
+
+  <!-- 决策点1 -->
+  <div class="stage-block branch" style="min-width: 380px;">
+    <div class="title">🔀 开关是否启用 &amp;&amp; 驱动是否可用？</div>
+    <div class="desc">av_hwdevice_ctx_create(AV_HWDEVICE_TYPE_D3D11VA)</div>
+  </div>
+
+  <div class="decision-label">
+    <span class="yes">✅ 是 → 硬解路径</span>
+    <span class="no">❌ 否 / 创建失败 → 软解路径</span>
+  </div>
+
+  <div style="display: flex; gap: 80px; margin-top: 8px;">
+    <!-- 右分支：硬解 -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
+      <div class="stage-block gpu" style="min-width: 260px;">
+        <div class="title">绑定 hw_device_ctx 到 codecCtx</div>
+        <div class="desc">创建硬件解码器上下文</div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage-block gpu" style="min-width: 260px;">
+        <div class="title">avcodec_open2(codecCtx, hwCodec, nullptr)</div>
+        <div class="desc">打开 D3D11VA 解码器</div>
+      </div>
+      <div class="arrow-down">
+        <span style="font-size:32px;">⬇</span>
+        <span class="arrow-label">run() 解码循环</span>
+      </div>
+      <div class="stage-block gpu" style="min-width: 260px;">
+        <div class="title">avcodec_receive_frame() → GPU 帧</div>
+        <div class="desc">frame->format == AV_PIX_FMT_D3D11</div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage-block" style="background:#333; min-width:260px; border:2px dashed #f5c542;">
+        <div class="title"><span style="color:#f5c542;">av_hwframe_transfer_data()</span></div>
+        <div class="desc">显存 → 系统内存</div>
+      </div>
+    </div>
+
+    <!-- 左分支：软解 -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
+      <div class="stage-block cpu" style="min-width: 260px;">
+        <div class="title">avcodec_find_decoder(codec_id)</div>
+        <div class="desc">标准软解码器</div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage-block cpu" style="min-width: 260px;">
+        <div class="title">avcodec_open2(codecCtx, swCodec, nullptr)</div>
+        <div class="desc">打开软解码器（现状）</div>
+      </div>
+      <div class="arrow-down">
+        <span style="font-size:32px;">⬇</span>
+        <span class="arrow-label">run() 解码循环</span>
+      </div>
+      <div class="stage-block cpu" style="min-width: 260px;">
+        <div class="title">avcodec_receive_frame() → CPU 帧</div>
+        <div class="desc">frame->format == AV_PIX_FMT_YUV420P</div>
+      </div>
+      <div class="arrow-down"><span>⬇</span></div>
+      <div class="stage-block" style="background:#333; min-width:260px; opacity:0.4;">
+        <div class="title">无需 transfer</div>
+        <div class="desc">帧已在系统内存中</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 汇合 -->
+  <div style="margin-top: 12px;">
+    <div class="arrow-down"><span style="font-size:32px;">⬇</span></div>
+    <div class="stage-block neutral" style="min-width: 400px;">
+      <div class="title">汇合 → av_frame_clone → push → videoFrameQ</div>
+      <div class="desc">从此处起，后续管线（VideoRenderer / AVSync）完全不感知是软解还是硬解</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ========== 开关逻辑 ========== -->
+<h2 class="section-title">UI 开关与回退策略</h2>
+
+<ol class="flow-steps">
+  <li><b>MainWindow 菜单栏</b> — 添加「硬件加速 (D3D11VA)」勾选菜单项，默认 ✅ 勾上</li>
+  <li><b>PlayerController</b> — 持有 bool hwAccelEnabled_ 属性，开关切换时更新</li>
+  <li><b>VideoDecodeThread::init()</b> — 接收 bool hwEnabled 参数 → 若为 true 则尝试 D3D11VA 设备创建 → 成功则走硬解，失败则静默回退软解</li>
+  <li><b>回退不报错</b> — 硬解创建失败时输出日志 <code>LOG_WARN</code>，不弹窗不打断用户，正常软解播放</li>
+  <li><b>运行时切换</b> — 切换开关仅在下次 open() 文件时生效，正在播放中不执行热切换（避免重新初始化解码器）</li>
+</ol>
+
+<!-- ========== 涉及范围 ========== -->
+<h2 class="section-title">变更范围</h2>
+
+<table class="compare-table">
+  <thead>
+    <tr><th>文件</th><th>变更类型</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>src/hwaccel.h / src/hwaccel.cpp</td>
+      <td><span class="badge hard">新增</span></td>
+      <td>封装 D3D11VA 设备创建/销毁</td>
+    </tr>
+    <tr>
+      <td>src/videodecodethread.h</td>
+      <td><span class="badge hard">修改</span></td>
+      <td>init() 新增 hwEnabled 参数 + hwDeviceCtx_ 成员</td>
+    </tr>
+    <tr>
+      <td>src/videodecodethread.cpp</td>
+      <td><span class="badge hard">修改</span></td>
+      <td>硬解初始化 + run() 中 frame->format 判断 + transfer</td>
+    </tr>
+    <tr>
+      <td>src/playercontroller.h / .cpp</td>
+      <td><span class="badge hard">修改</span></td>
+      <td>新增 setHwAccelEnabled() / hwAccelEnabled()，传给 VideoDecodeThread</td>
+    </tr>
+    <tr>
+      <td>src/mainwindow.ui</td>
+      <td><span class="badge hard">修改</span></td>
+      <td>菜单加「硬件加速」勾选项</td>
+    </tr>
+    <tr>
+      <td>src/mainwindow.h / .cpp</td>
+      <td><span class="badge hard">修改</span></td>
+      <td>开关信号连接</td>
+    </tr>
+    <tr>
+      <td>tests/tst_hwaccel.cpp</td>
+      <td><span class="badge hard">新增</span></td>
+      <td>打开 sample.mp4，硬解 10+ 帧，验证 frame->width > 0</td>
+    </tr>
+    <tr>
+      <td>CMakeLists.txt / tests/CMakeLists.txt</td>
+      <td><span class="badge soft">修改</span></td>
+      <td>新增 hwaccel 源文件 + 测试目标</td>
+    </tr>
+  </tbody>
+</table>
+
+</div>
+
+<footer>
+  RambosPlayer — 软解 vs 硬解对比 — 2026-05-11 — GTX 1650S · D3D11VA · FFmpeg 4.x
+</footer>
+
+</body>
+</html>

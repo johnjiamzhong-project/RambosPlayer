@@ -1,4 +1,5 @@
 #include "audiodecodethread.h"
+#include "logger.h"
 #include <QLoggingCategory>
 
 Q_LOGGING_CATEGORY(lcAudio, "rambos.audio", QtWarningMsg)
@@ -96,17 +97,23 @@ void AudioDecodeThread::run() {
         if (vol >= 0.f) sink_->setVolume(vol);
 
         if (flush_.exchange(false)) {
-            // 先排空输入队列中残留的旧包，防止 seek 竞态下解码到错误 PTS
-            // （DemuxThread 异步清队列，flush 处理时队列里可能仍有 seek 前的包）
+            // 第一轮清空：刷掉队列中已有的旧包
             AVPacket* stale;
             while (inputQueue_->tryPop(stale, 0)) av_packet_free(&stale);
 
             avcodec_flush_buffers(codecCtx_);
             swr_convert(swrCtx_, nullptr, 0, nullptr, 0);
-            // setBufferSize 必须在 start() 前调用，stop/start 会重置为系统默认值
             sink_->stop();
             sink_->setBufferSize(16384);
             device_ = sink_->start();
+
+            // 第二轮清空：处理 flush 期间新推入的包
+            //（DemuxThread 可能在 handleSeek 前还在推旧位置的包）
+            while (inputQueue_->tryPop(stale, 0)) av_packet_free(&stale);
+
+            // gen 在最后递增——确保两轮清空之后收到的帧才允许更新时钟
+            int64_t gen = flushGen_.fetch_add(1, std::memory_order_relaxed) + 1;
+            qInfo() << "AudioDecodeThread: flush gen" << gen << "done";
         }
 
         if (!inputQueue_->tryPop(pkt, 20)) continue;
@@ -117,6 +124,9 @@ void AudioDecodeThread::run() {
         av_packet_free(&pkt);
 
         while (avcodec_receive_frame(codecCtx_, frame) == 0) {
+            // 记下收帧时的世代，后续只在该世代未变时更新时钟
+            int64_t gen = flushGen_.load(std::memory_order_relaxed);
+
             int outSamples = av_rescale_rnd(
                 swr_get_delay(swrCtx_, codecCtx_->sample_rate) + frame->nb_samples,
                 44100, codecCtx_->sample_rate, AV_ROUND_UP);
@@ -132,23 +142,21 @@ void AudioDecodeThread::run() {
                                 (const uint8_t**)frame->data, frame->nb_samples);
 
             if (n > 0 && device_) {
-                // 限速：等待硬件消耗出足够空间再写，防止解码线程跑飞导致时钟超前
                 while (!abort_ && sink_->bytesFree() < n * 4)
                     QThread::msleep(2);
                 if (!abort_)
                     device_->write((const char*)outBuf, n * 4);
             }
 
-            if (frame->pts != AV_NOPTS_VALUE) {
-                // 直接用帧 PTS 作音频主时钟；写前限速保证线程不会跑超一个缓冲区的距离
+            // 只有世代未变时才更新时钟，防止旧帧将时钟拉回 seek 前的位置
+            if (frame->pts != AV_NOPTS_VALUE &&
+                gen == flushGen_.load(std::memory_order_relaxed)) {
                 double clock = frame->pts * av_q2d(timeBase_);
                 sync_->setAudioClock(clock);
-                if (clock - lastLogClock >= 1.0) {
-                    lastLogClock = clock;
-                    qCDebug(lcAudio) << "clock =" << clock
-                                     << "bytesFree =" << sink_->bytesFree()
-                                     << "bufSize =" << sink_->bufferSize();
-                }
+            } else if (frame->pts != AV_NOPTS_VALUE) {
+                qInfo() << "AudioDecodeThread: clock update BLOCKED gen" << gen
+                                 << "current flushGen" << flushGen_.load()
+                                 << "pts" << frame->pts;
             }
             av_frame_unref(frame);
         }

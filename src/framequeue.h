@@ -20,6 +20,17 @@ public:
         notEmpty_.wakeOne();
     }
 
+    // 非阻塞 push，队列满时立即返回 false，避免生产者因队列满而阻塞。
+    // 用于视频包队列：丢视频帧可接受，但不能因视频队列满而阻塞音频包生产。
+    bool tryPush(T item) {
+        QMutexLocker lk(&mutex_);
+        if (aborted_) return false;
+        if ((int)q_.size() >= maxSize_) return false;
+        q_.push(std::move(item));
+        notEmpty_.wakeOne();
+        return true;
+    }
+
     bool tryPop(T& out, int timeoutMs) {
         QMutexLocker lk(&mutex_);
         if (q_.empty() && !aborted_)

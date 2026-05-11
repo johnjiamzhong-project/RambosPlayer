@@ -19,7 +19,10 @@
       "PowerShell(Stop-Process *)",
       "PowerShell([System.IO.File]::GetAttributes\\(\"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\RambosPlayer.exe\"\\))",
       "PowerShell(try { $stream = [System.IO.File]::Open\\(\"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\RambosPlayer.exe\", [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None\\); $stream.Close\\(\\); \"File is NOT locked\" } catch { \"File IS locked: $\\($_.Exception.Message\\)\" })",
-      "Bash(move *)"
+      "Bash(move *)",
+      "Bash(Get-Content \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\src\\\\playercontroller.cpp\" -Encoding UTF8)",
+      "Bash(Select-Object -Index 36)",
+      "Bash(Format-Hex)"
     ]
   }
 }

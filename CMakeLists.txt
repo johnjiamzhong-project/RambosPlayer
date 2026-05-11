@@ -20,6 +20,7 @@ add_executable(RambosPlayer WIN32
     src/logger.cpp
     src/avsync.cpp
     src/demuxthread.cpp
+    src/hwaccel.cpp
     src/videodecodethread.cpp
     src/audiodecodethread.cpp
     src/videorenderer.cpp

@@ -43,6 +43,7 @@ private:
     FrameQueue<AVPacket*>* inputQueue_ = nullptr; // 输入：音频包队列
     std::atomic<bool> abort_{false};       // 停止标志
     std::atomic<bool> flush_{false};       // Seek 后清空缓冲
+    std::atomic<int64_t> flushGen_{0};     // flush 世代计数器，防止旧帧在 seek 后更新时钟
     std::atomic<bool> paused_{false};      // 暂停标志，run() 检测后 suspend/resume QAudioOutput
     std::atomic<float> pendingVolume_{-1.f}; // 待应用的音量（-1 表示无）
 };

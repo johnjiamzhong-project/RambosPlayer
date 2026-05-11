@@ -40,7 +40,8 @@ private:
     QTimer* timer_ = nullptr;           // 1ms 定时器，驱动帧拉取
     AVSync* sync_ = nullptr;            // 音频主时钟，用于计算视频延迟
     FrameQueue<AVFrame*>* frameQueue_ = nullptr; // 来自 VideoDecodeThread 的帧队列
-    SwsContext* swsCtx_ = nullptr;      // sws 上下文，YUV420P → RGB32
+    SwsContext* swsCtx_ = nullptr;      // sws 上下文，srcFormat_ → RGB32
+    AVPixelFormat srcFormat_ = AV_PIX_FMT_YUV420P; // 当前源帧格式，硬解时自动切换 NV12
     int srcW_ = 0, srcH_ = 0;          // 视频原始宽高，用于宽高比计算
     AVRational timeBase_{1, 1};         // 视频流时间基，用于 pts → 秒换算
     AVFrame* pendingFrame_ = nullptr;   // 未到渲染时间的帧，暂存避免推回队列阻塞主线程

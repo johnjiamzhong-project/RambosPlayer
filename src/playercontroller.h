@@ -31,6 +31,8 @@ public:
     void stop();
     void seek(double seconds);
     void setVolume(float v);    // 0.0–1.0
+    void setHwAccelEnabled(bool on);
+    bool hwAccelEnabled() const { return hwAccelEnabled_; }
 
     int64_t duration() const;   // 毫秒
     bool isPlaying() const { return playing_; }
@@ -50,14 +52,16 @@ private:
     // 队列必须在线程成员之前声明，保证析构时队列比线程活得更久。
     // C++ 成员析构顺序为声明逆序：若队列在线程之后声明，
     // 队列先被销毁，线程析构时调 stop()->abort() 会访问已析构的队列（UAF 崩溃）。
-    FrameQueue<AVPacket*> videoPacketQ_{100};       // 视频包队列
+    FrameQueue<AVPacket*> videoPacketQ_{500};       // 视频包队列（硬解瞬间大量帧，需大容量防堵）
     FrameQueue<AVPacket*> audioPacketQ_{400};       // 音频包队列（更大以应对音频帧小而密）
-    FrameQueue<AVFrame*>  videoFrameQ_{15};         // 解码后视频帧队列
+    FrameQueue<AVFrame*>  videoFrameQ_{50};         // 解码后视频帧队列（硬解 GOP 突发 ~30 帧）
     DemuxThread demux_;                             // 解复用线程
     VideoDecodeThread videoDec_;                    // 视频解码线程
     AudioDecodeThread audioDec_;                    // 音频解码线程
     QTimer* posTimer_ = nullptr;                    // 100ms 定时器，驱动 positionChanged 信号
     std::atomic<bool> playing_{false};              // 播放状态，防止重复 play()
+    bool hwAccelEnabled_ = true;                    // 硬件加速开关，默认启用
+    double lastPositionSec_ = -1.0;                 // 上次位置（秒），用于检测跳变
 
     void stopAllThreads();
 };

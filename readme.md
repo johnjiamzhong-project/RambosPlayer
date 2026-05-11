@@ -6,12 +6,14 @@
 
 - 开发计划总览：[docs/DEVPLAN.md](docs/DEVPLAN.md)（Phase 1–10）
 - 详细 TDD 计划：[docs/superpowers/plans/2026-04-26-rambos-player-core.md](docs/superpowers/plans/2026-04-26-rambos-player-core.md)
+- 架构流程图：[docs/架构流程图.html](docs/架构流程图.html)
+- 软解 vs 硬解对比：[docs/软解与硬解对比.html](docs/软解与硬解对比.html)
 
 | 功能 | 状态 |
 |------|:----:|
 | 功能1 — 核心播放器 | ✅ 完成 |
 | 功能2 — 完整播放器集成 | ✅ 完成 |
-| 功能3 — 硬件加速解码 | 📋 待开始 |
+| 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | 📋 待开始 |
 | 功能5 — 屏幕录制 / 推流 | 📋 待开始 |
 | 功能6 — 视频剪辑器 | 📋 待开始 |

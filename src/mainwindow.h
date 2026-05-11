@@ -31,6 +31,7 @@ private slots:
     void onPositionChanged(int64_t ms);
     void onPlaybackFinished();
     void onClearRecent();
+    void onHwAccelToggled(bool checked);
 
 private:
     void openFile(const QString& path);         // 打开文件并更新最近记录

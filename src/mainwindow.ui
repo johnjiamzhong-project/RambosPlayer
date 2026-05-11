@@ -199,6 +199,8 @@ QPushButton:hover { background: #555; }</string>
     </widget>
     <addaction name="actionOpen"/>
     <addaction name="menuRecentFiles"/>
+    <addaction name="separator"/>
+    <addaction name="actionHwAccel"/>
    </widget>
    <addaction name="menuFile"/>
   </widget>
@@ -216,6 +218,17 @@ QPushButton:hover { background: #555; }</string>
    </property>
    <property name="text">
     <string>清除记录</string>
+   </property>
+  </action>
+  <action name="actionHwAccel">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>硬件加速 (D3D11VA)</string>
    </property>
   </action>
  </widget>

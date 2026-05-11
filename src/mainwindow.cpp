@@ -18,7 +18,17 @@ MainWindow::MainWindow(QWidget* parent)
     renderer_ = ui->videoWidget;
     player_   = new PlayerController(renderer_);  // 不挂 parent，由析构函数手动控制销毁顺序
 
-    player_->setVolume(ui->volumeSlider->value() / 100.0f);  // 与滑块初始值 80 保持一致
+    // 读取持久化配置，应用到菜单和播放器
+    {
+        QSettings s("RambosPlayer", "RambosPlayer");
+        bool hwOn = s.value("hwAccelEnabled", true).toBool();
+        ui->actionHwAccel->setChecked(hwOn);
+        player_->setHwAccelEnabled(hwOn);
+
+        int vol = s.value("volume", 80).toInt();
+        ui->volumeSlider->setValue(vol);
+        player_->setVolume(vol / 100.0f);
+    }
 
     connect(ui->actionOpen,     &QAction::triggered,    this, &MainWindow::onOpenFile);
     connect(ui->playPauseBtn,   &QPushButton::clicked,  this, &MainWindow::onPlayPause);
@@ -31,6 +41,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(player_, &PlayerController::positionChanged,  this, &MainWindow::onPositionChanged);
     connect(player_, &PlayerController::playbackFinished, this, &MainWindow::onPlaybackFinished);
     connect(ui->actionClearRecent, &QAction::triggered,   this, &MainWindow::onClearRecent);
+    connect(ui->actionHwAccel,     &QAction::toggled,     this, &MainWindow::onHwAccelToggled);
 
     rebuildRecentMenu();
 }
@@ -107,6 +118,12 @@ void MainWindow::rebuildRecentMenu() {
     ui->actionClearRecent->setEnabled(hasFiles);
 }
 
+// 硬件加速开关：传递到 PlayerController，持久化到 QSettings，下次 open() 时生效。
+void MainWindow::onHwAccelToggled(bool checked) {
+    player_->setHwAccelEnabled(checked);
+    QSettings("RambosPlayer", "RambosPlayer").setValue("hwAccelEnabled", checked);
+}
+
 // 清除最近文件列表并刷新菜单。
 void MainWindow::onClearRecent() {
     QSettings("RambosPlayer", "RambosPlayer").remove("recentFiles");
@@ -131,9 +148,10 @@ void MainWindow::onSeekSliderMoved(int value) {
     player_->seek(seconds);
 }
 
-// 音量滑块变化，value 范围 0–100 映射到 0.0–1.0。
+// 音量滑块变化，value 范围 0–100 映射到 0.0–1.0，并持久化到 QSettings。
 void MainWindow::onVolumeChanged(int value) {
     player_->setVolume(value / 100.0f);
+    QSettings("RambosPlayer", "RambosPlayer").setValue("volume", value);
 }
 
 // 收到文件时长后设置标签右半部分，进度条最大值固定 1000 无需更改。

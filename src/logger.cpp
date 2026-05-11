@@ -9,6 +9,8 @@
 #include <QMutex>
 #include <QTextStream>
 
+Q_LOGGING_CATEGORY(lcTrace, "rambos.trace", QtDebugMsg)
+
 #ifdef Q_OS_WIN
 #  include <windows.h>
 #  include <dbghelp.h>
@@ -83,13 +85,14 @@ void Logger::install(const QString& logDir)
 
     qInstallMessageHandler(messageHandler);
 
-    // 日志级别规则（优先级：环境变量 > 此处代码）：
-    //   默认：*.debug=false        — 只保留 Info/Warning/Critical，日志文件安静
-    //   调试音视频同步：$env:QT_LOGGING_RULES="rambos.*=true"
-    //   查看所有 debug：$env:QT_LOGGING_RULES="*.debug=true"
-    //   只看音频时钟：  $env:QT_LOGGING_RULES="rambos.audio=true"
-    //   只看视频帧：    $env:QT_LOGGING_RULES="rambos.video=true"
-    QLoggingCategory::setFilterRules("*.debug=false");
+    // 日志级别规则：
+    //   默认：*.debug=false — 只保留 Info/Warning/Critical，日志文件安静
+    //   启用 trace：$env:QT_LOGGING_RULES="rambos.trace=true"
+    QString rules = "*.debug=false";
+    QString envRules = qEnvironmentVariable("QT_LOGGING_RULES");
+    if (!envRules.isEmpty())
+        rules += "\n" + envRules;
+    QLoggingCategory::setFilterRules(rules);
 
 #ifdef Q_OS_WIN
     SetUnhandledExceptionFilter(crashHandler);

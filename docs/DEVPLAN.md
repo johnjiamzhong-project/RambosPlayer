@@ -172,18 +172,18 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 ### Task 11 — HWAccel 封装
 
-- [ ] 创建 `src/hwaccel.h` / `src/hwaccel.cpp`，封装 `av_hwdevice_ctx_create(AV_HWDEVICE_TYPE_D3D11VA)`
+- [x] 创建 `src/hwaccel.h` / `src/hwaccel.cpp`，封装 `av_hwdevice_ctx_create(AV_HWDEVICE_TYPE_D3D11VA)`
 
 ### Task 12 — VideoDecodeThread 硬解集成
 
-- [ ] 修改 `VideoDecodeThread::init`，尝试绑定 `hw_device_ctx`；失败时静默回退软解
-- [ ] 修改 `VideoDecodeThread::run`，检测 `frame->format == AV_PIX_FMT_D3D11`，若是则先 `av_hwframe_transfer_data` 下载到 CPU frame，再推入队列
+- [x] 修改 `VideoDecodeThread::init`，尝试绑定 `hw_device_ctx`；失败时静默回退软解
+- [x] 修改 `VideoDecodeThread::run`，检测 `frame->format == AV_PIX_FMT_D3D11`，若是则先 `av_hwframe_transfer_data` 下载到 CPU frame，再推入队列
 
 ### Task 13 — 性能验收
 
-- [ ] 创建 `tests/tst_hwaccel.cpp`：open `sample.mp4`，解码 10 帧，验证 `frame->width > 0`（硬解/软解均接受）
-- [ ] 对比测试：用任务管理器分别记录软解和硬解播放 1080p 时的 CPU 占用，截图存 `docs/perf/hwaccel.png`
-- [ ] `git commit -m "feat: D3D11VA 硬件加速解码，软解自动回退"`
+- [x] 创建 `tests/tst_hwaccel.cpp`：open `sample.mp4`，解码 10 帧，验证 `frame->width > 0`（硬解/软解均接受）
+- [x] 对比测试：用任务管理器分别记录软解和硬解播放 1080p 时的 CPU 占用，截图存 `docs/perf/hwaccel.png`
+- [x] `git commit -m "feat: D3D11VA 硬件加速解码，软解自动回退"`
 
 **验收：** 硬解路径下 CPU 降低 ≥ 30%；软解文件仍能正常播放。
 
@@ -293,7 +293,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 - [x] Phase 4 — 解码层
 - [x] Phase 5 — 渲染与同步 ✅
 - [x] Phase 6 — 完整播放器 UI ✅
-- [ ] Phase 7 — 硬件加速
+- [x] Phase 7 — 硬件加速
 - [ ] Phase 8 — 视频滤镜
 - [ ] Phase 9 — 屏幕录制/推流
 - [ ] Phase 10 — 视频剪辑器

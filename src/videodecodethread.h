@@ -16,7 +16,8 @@ class VideoDecodeThread : public QThread {
 public:
     ~VideoDecodeThread() override;
 
-    bool init(AVCodecParameters* params);
+    // hwEnabled: 尝试 D3D11VA 硬解，失败则静默回退软解
+    bool init(AVCodecParameters* params, bool hwEnabled = false);
     void stop();
     void flush();
 
@@ -40,4 +41,5 @@ private:
     std::atomic<bool> abort_{false};                // 停止标志
     std::atomic<bool> flush_{false};                // Seek 后清空解码器缓冲
     AVRational timeBase_{1, 1};                     // 时间基，用于外部查询
+    bool hwAccel_ = false;                          // 是否成功启用了硬件加速
 };
