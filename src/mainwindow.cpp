@@ -2,6 +2,8 @@
 #include "ui_mainwindow.h"
 #include "videorenderer.h"
 #include "playercontroller.h"
+#include "filterpanel.h"
+#include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeyEvent>
@@ -17,6 +19,14 @@ MainWindow::MainWindow(QWidget* parent)
 
     renderer_ = ui->videoWidget;
     player_   = new PlayerController(renderer_);  // 不挂 parent，由析构函数手动控制销毁顺序
+
+    // 创建滤镜面板，挂在右侧 Dock
+    filterPanel_ = new FilterPanel(player_);
+    filterDock_  = new QDockWidget("滤镜编辑器", this);
+    filterDock_->setWidget(filterPanel_);
+    filterDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    filterDock_->setVisible(false);
+    addDockWidget(Qt::RightDockWidgetArea, filterDock_);
 
     // 读取持久化配置，应用到菜单和播放器
     {
@@ -40,8 +50,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(player_, &PlayerController::durationChanged,  this, &MainWindow::onDurationChanged);
     connect(player_, &PlayerController::positionChanged,  this, &MainWindow::onPositionChanged);
     connect(player_, &PlayerController::playbackFinished, this, &MainWindow::onPlaybackFinished);
-    connect(ui->actionClearRecent, &QAction::triggered,   this, &MainWindow::onClearRecent);
-    connect(ui->actionHwAccel,     &QAction::toggled,     this, &MainWindow::onHwAccelToggled);
+    connect(ui->actionClearRecent,  &QAction::triggered,  this, &MainWindow::onClearRecent);
+    connect(ui->actionHwAccel,      &QAction::toggled,    this, &MainWindow::onHwAccelToggled);
+    connect(ui->actionFilterPanel,  &QAction::toggled,    this, &MainWindow::onFilterPanelToggled);
+    connect(filterDock_, &QDockWidget::visibilityChanged, ui->actionFilterPanel, &QAction::setChecked);
 
     rebuildRecentMenu();
 }
@@ -122,6 +134,11 @@ void MainWindow::rebuildRecentMenu() {
 void MainWindow::onHwAccelToggled(bool checked) {
     player_->setHwAccelEnabled(checked);
     QSettings("RambosPlayer", "RambosPlayer").setValue("hwAccelEnabled", checked);
+}
+
+// 滤镜面板显示/隐藏切换
+void MainWindow::onFilterPanelToggled(bool checked) {
+    filterDock_->setVisible(checked);
 }
 
 // 清除最近文件列表并刷新菜单。

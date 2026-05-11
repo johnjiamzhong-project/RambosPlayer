@@ -21,11 +21,13 @@ add_executable(RambosPlayer WIN32
     src/avsync.cpp
     src/demuxthread.cpp
     src/hwaccel.cpp
+    src/filtergraph.cpp
     src/videodecodethread.cpp
     src/audiodecodethread.cpp
     src/videorenderer.cpp
     src/playercontroller.cpp
     src/mainwindow.cpp
+    src/filterpanel.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE

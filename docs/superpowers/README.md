@@ -19,3 +19,4 @@
 |------|------|
 | [2026-05-08-framequeue-design.md](specs/2026-05-08-framequeue-design.md) | `FrameQueue<T>` — 线程安全有界阻塞队列 |
 | [2026-05-08-demuxthread-design.md](specs/2026-05-08-demuxthread-design.md) | `DemuxThread` — FFmpeg 解复用线程，stop/seek/内存/测试策略 |
+| [2026-05-11-phase8-filter-design.md](specs/2026-05-11-phase8-filter-design.md) | Phase 8 视频滤镜编辑器 — FilterGraph + VideoDecodeThread 集成 + FilterPanel UI |

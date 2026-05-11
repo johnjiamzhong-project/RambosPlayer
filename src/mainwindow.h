@@ -7,6 +7,8 @@ QT_END_NAMESPACE
 
 class VideoRenderer;
 class PlayerController;
+class FilterPanel;
+class QDockWidget;
 
 // MainWindow 是播放器的主窗口，包含视频渲染区（VideoRenderer）和底部控制栏。
 // 控制栏布局全部定义在 mainwindow.ui 中；本类只负责信号连接和交互逻辑。
@@ -32,6 +34,7 @@ private slots:
     void onPlaybackFinished();
     void onClearRecent();
     void onHwAccelToggled(bool checked);
+    void onFilterPanelToggled(bool checked);
 
 private:
     void openFile(const QString& path);         // 打开文件并更新最近记录
@@ -41,6 +44,8 @@ private:
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权
     PlayerController* player_;      // 持有并控制完整播放流水线
+    QDockWidget* filterDock_ = nullptr;  // 滤镜面板的 Dock 容器
+    FilterPanel*  filterPanel_ = nullptr; // 滤镜调参面板
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     bool isFullscreen_ = false;     // 全屏状态标志
 

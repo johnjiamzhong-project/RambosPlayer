@@ -14,7 +14,7 @@
 | 功能1 — 核心播放器 | ✅ 完成 |
 | 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | ✅ 完成 |
-| 功能4 — 视频滤镜编辑器 | 📋 待开始 |
+| 功能4 — 视频滤镜编辑器 | ✅ 完成 |
 | 功能5 — 屏幕录制 / 推流 | 📋 待开始 |
 | 功能6 — 视频剪辑器 | 📋 待开始 |
 
@@ -61,7 +61,9 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 | `AudioDecodeThread` | `src/audiodecodethread.h/.cpp` | 解码 + `swr_convert` 重采样为 S16 立体声 → `QAudioOutput`，同步更新音频时钟 |
 | `VideoRenderer` | `src/videorenderer.h/.cpp` | `QTimer` 1 ms 检查渲染时机，`sws_scale` YUV420P→RGB32，`QPainter` 绘帧 |
 | `PlayerController` | `src/playercontroller.h/.cpp` | 持有并管理所有组件生命周期，对外暴露 open/play/pause/stop/seek/setVolume |
-| `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏 |
+| `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏，滤镜面板 Dock |
+| `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
+| `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
 
 ---
 

@@ -26,7 +26,7 @@
 
 ### 关键收益（可量化的部分）
 
-- Phase 1–6（项目脚手架 → FrameQueue → AVSync → DemuxThread → VideoDecodeThread → AudioDecodeThread → VideoRenderer → PlayerController → MainWindow）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、进度条/音量/全屏等完整播放器功能，6 项端对端场景全部通过
+- Phase 1–8（项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 硬件加速 → 视频滤镜）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、D3D11VA 硬解、实时滤镜调参等完整播放器功能
 - 每个功能都有对应 spec 和 plan 文档，可追溯决策过程
 
 ---
@@ -37,7 +37,7 @@
 
 ---
 
-*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26 起草，2026-05-10 更新至 Phase 6 完成*
+*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26 起草，2026-05-11 更新至 Phase 8 完成*
 
 ---
 
@@ -431,9 +431,51 @@ A: 支持重复打开文件（播放中切换视频）。不先 stop，旧线程
 **Q20: onDemuxFinished 为什么延迟 500ms 才发 playbackFinished？**  
 A: DemuxThread 的 finished 信号在解复用循环结束时发出，但此时包队列里可能还有几十个未消费的包。如果立即发 playbackFinished，UI 会停掉播放，而解码线程还有数据没播完，最后几秒画面和声音会被截断。延迟 500ms 给解码线程留时间耗尽剩余包，是一种简化的"排水"策略。
 
+**Q21: 为什么滤镜参数传递用 atomic + dirtyFlag 而不是直接调 FilterGraph 方法？**  
+A: FilterGraph 跑在 VideoDecodeThread（解码线程），而 FilterPanel 的滑块在 GUI 线程。如果 GUI 线程直接调 FilterGraph::rebuild()，等于让 GUI 线程去碰解码线程正在使用的 AVFilterGraph 对象——在 process() 和 rebuild() 之间会产生竞态，可能导致崩溃。atomic + dirtyFlag 模式让 rebuild 始终在解码线程自己的上下文里执行，GUI 线程只负责"下订单"。
+
+**Q22: 为什么用 hue + colorbalance 而不是 eq 滤镜？**  
+A: FFmpeg 以独立模块编译滤镜，每个滤镜是一个 .so/.dll。vcpkg 构建环境没有编译 eq 滤镜模块。hue（调整亮度/饱和度）+ colorbalance（调整 RGB 通道对比度）在本构建中可用，功能上完全覆盖 eq 的场景，且参数更精细。
+
+**Q23: 滤镜重建（rebuild）的性能开销有多大？能不能改成运行时调参？**  
+A: FFmpeg libavfilter 不支持对已配置的滤镜链修改参数，必须 close → init 重建。重建一次约 1–5ms（取决于滤镜链复杂度），仅在用户拖滑块时触发，人眼的视觉延迟远大于这个开销。如果未来需要高性能实时调参（如 60fps 下逐帧改参数），方案是使用 GPU shader（OpenGL/DirectX）替代 FFmpeg 滤镜。
+
+**Q24: 水印为什么用 movie + overlay 而不是 drawtext？**  
+A: drawtext 只能渲染文字，不支持图片。movie 滤镜可以加载任意图片作为第二视频流，overlay 将两个流合成。但 drawtext 在本构建中同样不可用（编译时未启用 libfreetype）。
+
+
+#### 8. 视频滤镜：FilterGraph + 实时调参（Phase 8）
+
+**问题**：如何在不阻塞解码线程的前提下，让 UI 实时调节视频滤镜参数（亮度/对比度/饱和度/水印）？
+
+**核心设计**：
+
+```cpp
+// FilterGraph: 封装 libavfilter 滤镜链
+class FilterGraph {
+    bool init(int w, int h, AVPixelFormat fmt, AVRational tb, const QString& desc);
+    int  process(AVFrame* in, AVFrame* out);  // 0=成功，out 调用方预分配
+    bool rebuild(const QString& newDesc);     // close() + init()，在线重建
+    void close();
+};
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **滤镜插入点** | VideoDecodeThread::run() 解码后、push 前 | 解码线程是帧的生产者，就地处理避免跨线程搬运帧；GUI 线程不接触 AVFrame |
+| **跨线程参数传递** | atomic + dirtyFlag（同 seek/flush 模式） | FilterPanel 写 atomic + 设 dirtyFlag，解码线程下个循环检测并 rebuild，无需加锁 |
+| **FilterGraph 在线重建** | close() + init() 整链重建 | FFmpeg 不支持运行时修改滤镜参数，只能销毁重建；仅在用户拖滑块时触发，开销忽略 |
+| **直通模式（passthrough）** | desc 为空时 process 直接 av_frame_clone | 滤镜未启用时无性能损耗 |
+| **可用滤镜选型** | hue + colorbalance 替代 eq | 本构建环境缺 eq，hue（亮度/饱和度）+ colorbalance（对比度）可替代 |
+| **水印实现** | movie + overlay 滤镜组合 | FFmpeg 原生支持，无需手动混合像素 |
+
+**TDD 验证**：tst_filtergraph.cpp 8/8 全部通过（passthrough, hflipFilter, invalidFilter, rebuildAfterFailure, rebuildToPassthrough, probeAvailableFilters）。
+
 ---
 
-#### 8. 主窗口：MainWindow
+#### 9. 主窗口：MainWindow
 
 **问题**：如何组织播放器 UI，让进度条拖拽、音量调节、全屏切换协同工作？
 

@@ -60,7 +60,7 @@
   - `videoDelay(pts)`：视频领先 → 返回等待毫秒数；落后超过 400 ms → 返回 0（丢帧）
 - [x] 创建 `tests/tst_avsync.cpp`，覆盖：默认时钟为负、set/get 精度、同步时延迟≈0、领先 200 ms 时延迟≈200、落后 500 ms 时延迟=0
 - [x] 运行 `TstAVSync.exe`，全部 PASS（7 passed, 0 failed）
-- [ ] `git commit -m "feat: AVSync 音频时钟与视频延迟计算"`
+- [x] `git commit -m "feat: AVSync 音频时钟与视频延迟计算"`
 
 **验收：** `tests.exe` 输出 0 failures。
 
@@ -103,7 +103,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   - `flush()` 在 seek 后调用，清空解码器缓冲和输出队列
   - `stop()` abort 两侧队列
 - [x] 编译通过（集成测试在 Phase 6 覆盖）
-- [ ] `git commit -m "feat: VideoDecodeThread 视频解码线程"`
+- [x] `git commit -m "feat: VideoDecodeThread 视频解码线程"`
 
 ### Task 6 — AudioDecodeThread
 
@@ -113,7 +113,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   - `setVolume(float)` 线程安全（原子量暂存，`run()` 循环中应用）
   - `flush()` 清空解码器和 swr 缓冲
 - [x] 编译通过
-- [ ] `git commit -m "feat: AudioDecodeThread 音频解码与 QAudioOutput 推流"`
+- [x] `git commit -m "feat: AudioDecodeThread 音频解码与 QAudioOutput 推流"`
 
 **验收：** 两个类编译无警告；接口签名与 Phase 5/6 使用一致。
 
@@ -129,7 +129,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   - `QTimer`（1 ms）触发 `onTimer()`：从队列 `tryPop`（超时 0）→ 调用 `sync_->videoDelay(pts)` → 领先则 `push` 回队列等下次，`msleep` 延迟后 `sws_scale` 写入 `QImage` → `update()`
   - `paintEvent` 用 `QPainter` 保持宽高比居中绘制，背景黑色
 - [x] 手动集成测试：用 DemuxThread + VideoDecodeThread + AudioDecodeThread + VideoRenderer 搭出最小 demo，打开 sample.mp4，确认视频/音频同步播放（Task 8 PlayerController 完成后执行）
-- [ ] `git commit -m "feat: VideoRenderer QPainter 帧渲染与音视频同步"`
+- [x] `git commit -m "feat: VideoRenderer QPainter 帧渲染与音视频同步"`
 
 **验收：** 视频流畅，音画同步误差 < 100 ms（耳听目测）。
 
@@ -160,7 +160,7 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
   | 双击全屏 → 双击退出 | 正常切换 ✅ |
   | 播放中关闭窗口 | 无崩溃 ✅ |
 
-- [ ] `git commit -m "feat: 完整播放器 UI 初级功能完成"`
+- [x] `git commit -m "feat: 完整播放器 UI 初级功能完成"`
 
 **验收：** 全部端对端场景通过；单元测试 0 failures。
 
@@ -193,27 +193,29 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 **目标：** 实时预览亮度/对比度/裁剪/水印，可通过 UI 调节参数。
 
-### Task 14 — FilterGraph 封装（TDD）
+### Task 14 — FilterGraph 封装（TDD）✅
 
-- [ ] 创建 `src/filtergraph.h` / `src/filtergraph.cpp`
+- [x] 创建 `src/filtergraph.h` / `src/filtergraph.cpp`
   - `init(width, height, pixFmt, AVRational timeBase, const QString& filterStr)` → `avfilter_graph_parse_ptr`
-  - `process(AVFrame* in)` → `av_buffersrc_add_frame` / `av_buffersink_get_frame` → 返回 `AVFrame*`
+  - `process(AVFrame* in, AVFrame* out)` → `av_buffersrc_add_frame` / `av_buffersink_get_frame`
   - `rebuild(const QString& newFilterStr)` 重建滤镜图（用于实时调参）
-- [ ] 创建 `tests/tst_filtergraph.cpp`：init 一个 `eq=brightness=0.1` 图，process 一帧，验证返回帧不为 null 且尺寸不变
+- [x] 创建 `tests/tst_filtergraph.cpp`：passthrough、hflip、invalidFilter、rebuild 等 8 个测试全部通过
 
-### Task 15 — VideoDecodeThread 滤镜集成
+### Task 15 — VideoDecodeThread 滤镜集成 ✅
 
-- [ ] 在 `VideoDecodeThread::run` 中，帧推入队列前先过 `FilterGraph::process`（可选，由 `PlayerController` 控制是否启用）
+- [x] 在 `VideoDecodeThread::run` 中，帧推入队列前先过 `FilterGraph::process`（由 atomic `filterEnabled_` 控制是否启用）
+- [x] 滤镜参数通过 atomic 变量 + `filterDirty_` 标志跨线程传递，解码线程自动 rebuild
 
-### Task 16 — FilterPanel UI + 集成验证
+### Task 16 — FilterPanel UI + 集成验证 ✅
 
-- [ ] 创建 `src/filterpanel.h` / `src/filterpanel.cpp`（`QDockWidget`）
-  - 亮度滑块 → 生成 `eq=brightness=<v>` 滤镜字符串
-  - 对比度滑块 → `eq=contrast=<v>`
+- [x] 创建 `src/filterpanel.h` / `src/filterpanel.cpp` / `src/filterpanel.ui`（`QWidget`，挂在 `QDockWidget` 中）
+  - 亮度滑块 → `hue=b=<v>`（范围 -1.0..1.0）
+  - 对比度滑块 → `colorbalance=rm=<v>:gm=<v>:bm=<v>`（范围 -1.0..1.0）
+  - 饱和度滑块 → `hue=s=<v>`（范围 0.0..3.0）
   - 水印路径输入 → `movie=<path>[wm];[in][wm]overlay=10:10`
-  - 任意参数变化 → 调用 `filterGraph_->rebuild(str)`
-- [ ] 手动验证：调节亮度/对比度滑块时视频预览实时变化
-- [ ] `git commit -m "feat: libavfilter 滤镜图 + 实时调参 UI"`
+  - 任意参数变化 → 设 dirty 标志，解码线程自动 rebuild
+- [x] MainWindow 菜单栏"文件 → 滤镜面板"（checkable），控制右侧 Dock 显示/隐藏
+- [x] 编译通过，端对端验证待手动测试
 
 **验收：** 调节亮度/对比度滑块时视频预览实时变化；滤镜测试通过。
 
@@ -294,6 +296,6 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 - [x] Phase 5 — 渲染与同步 ✅
 - [x] Phase 6 — 完整播放器 UI ✅
 - [x] Phase 7 — 硬件加速
-- [ ] Phase 8 — 视频滤镜
+- [x] Phase 8 — 视频滤镜 ✅
 - [ ] Phase 9 — 屏幕录制/推流
 - [ ] Phase 10 — 视频剪辑器

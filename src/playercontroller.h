@@ -34,6 +34,13 @@ public:
     void setHwAccelEnabled(bool on);
     bool hwAccelEnabled() const { return hwAccelEnabled_; }
 
+    // 滤镜参数转发（→ VideoDecodeThread）
+    void setFilterEnabled(bool on)  { videoDec_.setFilterEnabled(on); }
+    void setBrightness(float v)     { videoDec_.setBrightness(v); }
+    void setContrast(float v)       { videoDec_.setContrast(v); }
+    void setSaturation(float v)     { videoDec_.setSaturation(v); }
+    void setWatermark(const QString& path) { videoDec_.setWatermark(path); }
+
     int64_t duration() const;   // 毫秒
     bool isPlaying() const { return playing_; }
 

@@ -34,6 +34,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_demuxthread.cpp")
     target_sources(TstDemuxThread PRIVATE ${CMAKE_SOURCE_DIR}/src/demuxthread.cpp)
 endif()
 
+# Task 14 - FilterGraph
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_filtergraph.cpp")
+    add_qt_test(TstFilterGraph tst_filtergraph.cpp)
+    target_sources(TstFilterGraph PRIVATE ${CMAKE_SOURCE_DIR}/src/filtergraph.cpp)
+endif()
+
 # Task 13 - HWAccel
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_hwaccel.cpp")
     add_qt_test(TstHWAccel tst_hwaccel.cpp)
