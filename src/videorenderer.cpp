@@ -1,4 +1,5 @@
 #include "videorenderer.h"
+#include "logger.h"
 #include <QLoggingCategory>
 #include <QPainter>
 #include <QThread>
@@ -34,7 +35,8 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
     timeBase_ = timeBase;
     sync_ = sync;
     frameQueue_ = frameQueue;
-    swsCtx_ = sws_getContext(width, height, AV_PIX_FMT_YUV420P,
+    srcFormat_ = AV_PIX_FMT_YUV420P;  // 默认软解格式，硬解首次收帧时自动切换
+    swsCtx_ = sws_getContext(width, height, srcFormat_,
                               width, height, AV_PIX_FMT_RGB32,
                               SWS_BILINEAR, nullptr, nullptr, nullptr);
     currentFrame_ = QImage(width, height, QImage::Format_RGB32);
@@ -73,33 +75,63 @@ void VideoRenderer::onTimer() {
                      << "audioClock =" << audioClock
                      << "diff =" << diff;
 
-    // 视频严重落后（正向 seek 后旧帧）：丢弃不渲染，否则淹没主线程导致死锁。
+    // 视频落后超过 400ms：丢弃（正向 seek 残留帧或解码太慢的帧）
     if (audioClock >= 0.0 && diff < -0.4) {
+        if (diff < -5.0)
+            qWarning() << "VideoRenderer: drop way-too-late frame pts" << pts << "clock" << audioClock << "diff" << diff;
         av_frame_free(&frame);
         return;
     }
 
-    // 视频严重超前（反向 seek 后旧帧 PTS 远大于新 audioClock）：同样丢弃。
-    // 阈值 1.5s：正常播放 diff 不超过 0.5s，超过 1.5s 必为 seek 残留的旧帧。
-    if (audioClock >= 0.0 && diff > 1.5) {
+    // 视频超前超过 5 秒：丢弃（向后 seek 后残留的旧位置帧，
+    // audioClock 被 seek 设回低位，旧帧 PTS 远大于新时钟，会被当成"超前"卡死 pendingFrame_）
+    if (audioClock >= 0.0 && diff > 5.0) {
+        qWarning() << "VideoRenderer: drop stale-ahead frame pts" << pts << "clock" << audioClock << "diff" << diff;
         av_frame_free(&frame);
         return;
     }
 
-    // 视频轻微超前：暂存等下次 timer 再检查，不阻塞主线程
-    if (diff > 0.0) {
-        pendingFrame_ = frame;
+    // 视频超前：暂存等下次 timer 再检查。
+    // 若已有暂存帧，保留更接近时钟的一帧；另一帧释放。
+    if (audioClock >= 0.0 && diff > 0.0) {
+        if (pendingFrame_) {
+            double pPts = (pendingFrame_->pts != AV_NOPTS_VALUE)
+                          ? pendingFrame_->pts * av_q2d(timeBase_) : 0.0;
+            double pDiff = pPts - audioClock;
+            if (diff < pDiff) {
+                qCDebug(lcVideo) << "VideoRenderer: swap pending frame pts" << pts << "for closer pts" << pPts;
+                av_frame_free(&pendingFrame_);
+                pendingFrame_ = frame;
+            } else {
+                av_frame_free(&frame);
+            }
+        } else {
+            qCDebug(lcVideo) << "VideoRenderer: buffer pending frame pts" << pts << "diff" << diff;
+            pendingFrame_ = frame;
+        }
         return;
+    }
+
+    // 硬解路径下帧格式可能从 YUV420P 变为 NV12，检测到变化时重建 sws 上下文
+    if (frame->format != srcFormat_ && frame->format != AV_PIX_FMT_NONE) {
+        srcFormat_ = (AVPixelFormat)frame->format;
+        if (swsCtx_) sws_freeContext(swsCtx_);
+        swsCtx_ = sws_getContext(srcW_, srcH_, srcFormat_,
+                                  srcW_, srcH_, AV_PIX_FMT_RGB32,
+                                  SWS_BILINEAR, nullptr, nullptr, nullptr);
     }
 
     uint8_t* dst[1]  = { currentFrame_.bits() };
     int dstStride[1] = { currentFrame_.bytesPerLine() };
     {
         QMutexLocker lk(&frameMutex_);
-        sws_scale(swsCtx_,
-                  (const uint8_t* const*)frame->data, frame->linesize,
-                  0, srcH_, dst, dstStride);
+        if (swsCtx_) {
+            sws_scale(swsCtx_,
+                      (const uint8_t* const*)frame->data, frame->linesize,
+                      0, srcH_, dst, dstStride);
+        }
     }
+    qCDebug(lcVideo) << "VideoRenderer: render frame pts" << pts << "format" << frame->format;
     av_frame_free(&frame);
     update();
 }

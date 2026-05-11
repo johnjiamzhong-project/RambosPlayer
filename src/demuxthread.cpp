@@ -1,5 +1,6 @@
 // src/demuxthread.cpp
 #include "demuxthread.h"
+#include "logger.h"
 
 extern "C" {
 #include <libavutil/avutil.h>
@@ -23,6 +24,12 @@ bool DemuxThread::open(const QString& path,
                         FrameQueue<AVPacket*>* audioQueue) {
     // 重置 abort_ 标志，允许 run() 在下次 start() 后正常循环
     abort_.store(false, std::memory_order_relaxed);
+
+    // 关闭上一个文件，避免 avformat_open_input 在旧 AVFormatContext 上复用导致崩溃
+    //（例如播放中通过最近文件菜单切换视频时，fmtCtx_ 仍指向旧文件上下文）
+    if (fmtCtx_) { avformat_close_input(&fmtCtx_); }
+    videoIdx_ = -1;
+    audioIdx_ = -1;
 
     // 步骤1：打开容器文件，分配并填充 AVFormatContext（包含封装格式、I/O 缓冲等）
     // path 转 UTF-8 是为了兼容中文路径；nullptr 表示自动探测格式和使用默认选项
@@ -75,12 +82,15 @@ void DemuxThread::handleSeek() {
     double target = seekTarget_.exchange(-1.0, std::memory_order_relaxed);
     if (target < 0.0) return;
 
+    qInfo() << "DemuxThread::handleSeek target =" << target;
+
     int64_t ts = (int64_t)(target * AV_TIME_BASE);
     av_seek_frame(fmtCtx_, -1, ts, AVSEEK_FLAG_BACKWARD);
 
     AVPacket* p;
     while (videoQueue_->tryPop(p, 0)) av_packet_free(&p);
     while (audioQueue_->tryPop(p, 0)) av_packet_free(&p);
+    qInfo() << "DemuxThread::handleSeek done, queues cleared";
 }
 
 // 解复用主循环：持续读取 AVPacket 并按流索引分发到对应队列。

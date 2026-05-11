@@ -104,6 +104,28 @@
 
 ---
 
+## #011 — 向后 Seek 声音恢复但画面卡死
+
+- **日期**：2026-05-11
+- **现象**：向前快进（向后拖动进度条）正常；向后 seek（往回拖动进度条）后声音恢复播放，画面却完全卡死不更新，日志中 seek 完成后无任何 `VideoRenderer` 输出
+- **根因**：`PlayerController::seek()` 立即把 `audioClock` 设为目标位置（向后 seek 时新值比当前 PTS 小）。视频帧队列中残留的旧位置帧（PTS 远大于新时钟），`VideoRenderer::onTimer()` 计算 `diff = pts - audioClock` 得正数 → 进入"视频超前"分支 → 暂存到 `pendingFrame_` 等待音频追上来。但音频在 seek 目标位置播放，要追上旧帧的 PTS 需要数百秒实时间。`pendingFrame_` 持续不为空，renderer 永远不再从队列取新帧 → **画面永久卡死**
+- **修复**：
+  - `VideoRenderer::onTimer()` 在"落后丢弃"（`diff < -0.4`）和"超前暂存"（`diff > 0`）之间，新增对称的丢弃检查：`diff > 5.0` 秒时直接丢弃帧。5 秒阈值远超正常播放时视频可能超前的最大值（< 0.5s），不会误杀正常帧；但足以清除向后 seek 后数百秒偏移的残留旧帧，防止其卡死 `pendingFrame_`
+  - `VideoDecodeThread::run()` flush 路径增加 `qInfo` 日志，与 `AudioDecodeThread` 对齐，便于后续诊断
+- **涉及文件**：`src/videorenderer.cpp`、`src/videodecodethread.cpp`
+
+---
+
+## #012 — 播放中切换视频崩溃于 ff_rfps_calculate
+
+- **日期**：2026-05-11
+- **现象**：播放视频时通过最近文件菜单选择另一个视频，程序崩溃，调用栈指向 `ff_rfps_calculate(AVFormatContext *ic)`
+- **根因**：`PlayerController::open()` → `stop()` 只停线程、不关 `fmtCtx_`。随后 `DemuxThread::open()` 直接调 `avformat_open_input(&fmtCtx_, ...)`，此时 `fmtCtx_` 仍指向旧文件的 `AVFormatContext`。FFmpeg 在 `avformat_find_stream_info` → `ff_rfps_calculate` 阶段访问已失效的内部流数据，导致崩溃
+- **修复**：`DemuxThread::open()` 开头增加 `if (fmtCtx_) avformat_close_input(&fmtCtx_);` 释放旧上下文，同时重置 `videoIdx_` / `audioIdx_` 为 -1
+- **涉及文件**：`src/demuxthread.cpp`
+
+---
+
 ## #010 — 音量滑块点击不跳转：QSlider 默认 pageStep 步进
 
 - **日期**：2026-05-10
