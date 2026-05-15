@@ -203,6 +203,9 @@ QPushButton:hover { background: #555; }</string>
     <addaction name="actionFilterPanel"/>
     <addaction name="actionHwAccel"/>
 	    <addaction name="actionStream"/>
+	    <addaction name="separator"/>
+	    <addaction name="actionTrimMode"/>
+	    <addaction name="actionExport"/>
    </widget>
    <addaction name="menuFile"/>
   </widget>
@@ -239,6 +242,28 @@ QPushButton:hover { background: #555; }</string>
    </property>
    <property name="text">
     <string>硬件加速 (D3D11VA)</string>
+   </property>
+  </action>
+    <action name="actionTrimMode">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>剪辑模式(&amp;T)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+T</string>
+   </property>
+  </action>
+  <action name="actionExport">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>导出片段...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+E</string>
    </property>
   </action>
   <action name="actionStream">

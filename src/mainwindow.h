@@ -9,6 +9,9 @@ class VideoRenderer;
 class PlayerController;
 class FilterPanel;
 class StreamController;
+class Timeline;
+class ThumbnailExtractor;
+class ExportWorker;
 class QDockWidget;
 
 // MainWindow 是播放器的主窗口，包含视频渲染区（VideoRenderer）和底部控制栏。
@@ -37,6 +40,11 @@ private slots:
     void onHwAccelToggled(bool checked);
     void onFilterPanelToggled(bool checked);
     void onStreamStart();
+    void onTrimModeToggled(bool checked);
+    void onExportTriggered();
+    void onThumbnailsReady(const QList<QImage>& images);
+    void onExportProgress(int64_t currentPts, int64_t totalPts);
+    void onExportFinished(bool ok);
 
 private:
     void openFile(const QString& path);         // 打开文件并更新最近记录
@@ -48,7 +56,12 @@ private:
     PlayerController* player_;      // 持有并控制完整播放流水线
     QDockWidget*     filterDock_  = nullptr; // 滤镜面板的 Dock 容器
     FilterPanel*     filterPanel_ = nullptr; // 滤镜调参面板
-    StreamController* streamCtrl_  = nullptr; // 推流控制器
+    StreamController*   streamCtrl_    = nullptr; // 推流控制器
+    QDockWidget*        trimDock_      = nullptr; // 剪辑时间轴 Dock 容器
+    Timeline*           timeline_      = nullptr; // 剪辑时间轴控件
+    ThumbnailExtractor* thumbExtractor_ = nullptr; // 缩略图异步提取
+    ExportWorker*       exportWorker_  = nullptr; // 无损剪切导出线程
+    QString             currentFile_;              // 当前打开的文件路径
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     bool isFullscreen_ = false;     // 全屏状态标志
 

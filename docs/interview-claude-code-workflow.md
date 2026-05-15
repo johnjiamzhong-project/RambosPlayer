@@ -26,7 +26,7 @@
 
 ### 关键收益（可量化的部分）
 
-- Phase 1–9（项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 硬件加速 → 视频滤镜 → 推流管线）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、D3D11VA 硬解、实时滤镜调参、桌面采集与 RTMP 推流等完整多媒体功能
+- Phase 1–10（项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 硬件加速 → 视频滤镜 → 推流管线 → 视频剪辑器）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、D3D11VA 硬解、实时滤镜调参、桌面采集与 RTMP 推流、时间轴无损剪辑等完整多媒体功能
 - 每个功能都有对应 spec 和 plan 文档，可追溯决策过程
 
 ---
@@ -37,7 +37,7 @@
 
 ---
 
-*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26 起草，2026-05-15 更新至 Phase 9 完成*
+*基于 RambosPlayer 项目（FFmpeg + Qt 多媒体播放器）的实际开发经验，2026-04-26 起草，2026-05-15 更新至 Phase 10 完成*
 
 ---
 
@@ -560,3 +560,53 @@ RambosPlayer (推流端)            ffmpeg -listen 1 (接收端)
 ```
 
 **端对端验证**：本地 FLV 录制正常；RTMP 推流 → ffmpeg 接收文件内容一致。
+
+---
+
+#### 11. 视频剪辑器：ThumbnailExtractor + Timeline + ExportWorker（Phase 10）
+
+**问题**：如何实现带时间轴预览的无损视频剪辑，起点精确、导出流畅、PTS 归零？
+
+**核心设计**：
+
+```
+MainWindow "剪辑模式 (Ctrl+T)"
+    │  currentFile_
+    ▼
+ThumbnailExtractor (QThread)         Timeline (QWidget)
+  av_seek_frame 逐点解码      ──→    缩略图轨道 + 把手拖拽
+  逐张 thumbnailReady               trimPointChanged(in, out)
+    │                                    │
+    └──── 缩略图逐张即时刷新 ─────────────┘
+                                         │
+                                    Ctrl+E 导出
+                                         │
+                                         ▼
+                                   ExportWorker (QThread)
+                                     -c copy + 关键帧对齐 + PTS 归零
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **缩略图提取方式** | 独立 QThread，av_seek_frame 逐点定位解码 | 不依赖播放进度，暂停状态也能提取；独立线程避免阻塞 UI |
+| **缩略图送达** | 逐张 thumbnailReady 信号，非批量 | 95 分钟电影也能几秒内看到第一张图，用户不用等全部完成 |
+| **探测优化** | max_analyze_duration=3s, probesize=5MB | 默认 avformat_find_stream_info 对大文件探测极慢，限制后可秒开 |
+| **时间轴控件** | 纯 QWidget + QPainter 自绘 | 无需第三方库；刻度尺自适应间距、缩略图均匀分布、把手颜色区分（绿入红出） |
+| **无损剪切** | -c copy 模式 | 不重编码，速度只受磁盘 I/O 限制，画质无损 |
+| **关键帧对齐** | 等待所有视频流首关键帧就绪后才开始写 | 避免 P/B 帧缺少参照帧导致前 3 秒卡顿或花屏 |
+| **PTS 归零** | 以最早关键帧 PTS 为偏移量统一扣除 | 避免多帧被挤压到 PTS=0 造成卡顿；输出从 00:00 开始 |
+| **多流处理** | 视频/音频各自跟踪出口 | 有视频无音频或有音频无视频的文件都能正确处理 |
+
+**踩坑记录**：
+
+1. **PTS 偏移用 inPts_ 而非实际关键帧 PTS**：inPts_ 之后第一个关键帧之前的所有帧 PTS 被扣成负数 → clamp 到 0 → 多帧堆在 0 位，开头卡死。修改为以最早关键帧实际 PTS 为偏移。
+
+2. **触发就绪的关键帧被丢弃**：keyframeSeen 检查通过后直接 continue，导致关键帧本身未写入，后续 P 帧依赖缺失 → 前几秒花屏。修复：关键帧触发就绪后不跳转，继续执行写入逻辑。
+
+3. **信号名 finished 与 QThread::finished() 冲突**：导致二次导出按钮失效。更名为 exportFinished。
+
+4. **缩略图 PTS 比较不可靠**：seek 后 frame->pts 可能为 AV_NOPTS_VALUE，PTS 比较永远失败 → 零张缩略图。移除 PTS 比较，seek 后解码到的第一帧直接用。
+
+**端对端验证**：拖拽剪辑点 → 导出，画面流畅无卡顿，时长与选区一致。

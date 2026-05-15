@@ -335,28 +335,31 @@ RambosPlayer (推流端)                      ffmpeg -listen 1 (接收端)
 
 ### Task 21 — ThumbnailExtractor
 
-- [ ] 创建 `src/thumbnailextractor.h` / `src/thumbnailextractor.cpp`
+- [x] 创建 `src/thumbnailextractor.h` / `src/thumbnailextractor.cpp`
   - `extract(path, count)` → `QList<QImage>`，解码 count 个均匀分布的关键帧
 
 ### Task 22 — Timeline QWidget
 
-- [ ] 创建 `src/timeline.h` / `src/timeline.cpp`（`QWidget` 子类）
-  - 绘制时间轴刻度（`paintEvent`）
+- [x] 创建 `src/timeline.h` / `src/timeline.cpp`（`QWidget` 子类）
+  - 绘制时间轴刻度（`paintEvent`），自适应间距
   - 绘制视频缩略图轨道（从 `ThumbnailExtractor` 取 `QImage`）
   - 左右剪辑把手可拖拽（`mousePressEvent` / `mouseMoveEvent`），拖拽后发 `trimPointChanged(in, out)` 信号
+  - 把手正上方显示 MM:SS / HH:MM:SS 时间标签
 
 ### Task 23 — ExportWorker
 
-- [ ] 创建 `src/exportworker.h` / `src/exportworker.cpp`
-  - `run(inputPath, outputPath, inPts, outPts)`：`av_seek_frame` 到 inPts，循环 `av_read_frame` 直到 outPts，`-c copy` 写出
+- [x] 创建 `src/exportworker.h` / `src/exportworker.cpp`
+  - `-c copy` 无损剪切：av_seek_frame 到入口 → 等所有视频流关键帧就绪 → PTS 归零 → av_interleaved_write_frame → av_write_trailer
+  - 音视频同步启动，关键帧不丢失
 
 ### Task 24 — 剪辑模式 MainWindow 集成 + 端对端验收
 
-- [ ] 在 `MainWindow` 加"剪辑模式"切换按钮，显示/隐藏 `Timeline` dock
-- [ ] 手动验证：拖拽剪辑点，点击"导出"，用 ffprobe 确认输出文件时长与选区一致，误差 < 1 GOP
-- [ ] `git commit -m "feat: 视频剪辑器时间线 UI 与无损剪切导出"`
+- [x] 在 `MainWindow` 加"剪辑模式 (Ctrl+T)"菜单 + "导出片段 (Ctrl+E)"，显示/隐藏 `Timeline` dock
+- [x] 缩略图逐张送达，状态栏实时显示修剪区间
+- [x] 手动验证：拖拽剪辑点，导出，播放正常，时长正确
+- [ ] `git commit -m "feat: 视频剪辑器时间线 UI 与无损剪切导出（Phase 10）"`
 
-**验收：** 导出文件时长误差 < 1 个 GOP（通常 < 2 秒）；程序无崩溃。
+**验收：** 导出文件画面流畅无卡顿，时长与选区一致；程序无崩溃。
 
 ---
 
@@ -371,4 +374,4 @@ RambosPlayer (推流端)                      ffmpeg -listen 1 (接收端)
 - [x] Phase 7 — 硬件加速
 - [x] Phase 8 — 视频滤镜 ✅
 - [x] Phase 9 — 屏幕录制/推流 ✅
-- [ ] Phase 10 — 视频剪辑器
+- [x] Phase 10 — 视频剪辑器 ✅

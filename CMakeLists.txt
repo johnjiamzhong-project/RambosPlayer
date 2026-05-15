@@ -32,6 +32,9 @@ add_executable(RambosPlayer WIN32
     src/encodethread.cpp
     src/muxthread.cpp
     src/streamcontroller.cpp
+    src/thumbnailextractor.cpp
+    src/timeline.cpp
+    src/exportworker.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE

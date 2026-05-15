@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RambosPlayer 滤镜面板操作逻辑</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --accent: #0f3460;
+    --hl: #e94560;
+    --text: #eaeaea;
+    --muted: #888;
+    --green: #4ecca3;
+    --yellow: #f0c040;
+    --blue: #4a9ff5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem 1.5rem;
+  }
+  h1 { text-align: center; font-size: 1.8rem; margin-bottom: 0.3rem; color: var(--hl); }
+  h1 small { display: block; font-size: 0.85rem; color: var(--muted); font-weight: normal; margin-top: 0.3rem; }
+  h2 { font-size: 1.25rem; margin: 2rem 0 0.8rem; padding-bottom: 0.35rem; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 1.05rem; margin: 1.4rem 0 0.5rem; color: var(--blue); }
+  .container { max-width: 960px; margin: 0 auto; }
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin: 1rem 0;
+    border-left: 4px solid var(--accent);
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.92rem; }
+  th { background: var(--accent); color: #fff; padding: 8px 12px; text-align: left; }
+  td { padding: 7px 12px; border-bottom: 1px solid #2a2a4a; }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  code {
+    background: #0d1b2a;
+    color: var(--green);
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: #0d1b2a;
+    color: #ccc;
+    padding: 14px 18px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 0.84em;
+    line-height: 1.55;
+    margin: 0.6rem 0;
+  }
+  .flow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 0.25rem 0.6rem; margin: 1rem 0; font-size: 0.9rem; }
+  .flow .box { background: var(--accent); color: #fff; padding: 6px 14px; border-radius: 6px; white-space: nowrap; }
+  .flow .arrow { color: var(--hl); font-weight: bold; font-size: 1.2rem; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: bold; }
+  .tag-ui { background: #3a5a7c; color: #fff; }
+  .tag-thread { background: #6b3a7c; color: #fff; }
+  .tag-atomic { background: #7c5a3a; color: #fff; }
+  .note { background: #1e2a1e; border-left: 4px solid var(--green); padding: 10px 16px; border-radius: 0 8px 8px 0; margin: 0.8rem 0; font-size: 0.9rem; }
+  .warn { background: #2e1e1e; border-left: 4px solid var(--hl); padding: 10px 16px; border-radius: 0 8px 8px 0; margin: 0.8rem 0; font-size: 0.9rem; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+  hr { border: none; border-top: 1px solid #2a2a4a; margin: 1.8rem 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>滤镜面板操作逻辑
+  <small>RambosPlayer Phase 8 — FilterGraph + FilterPanel 交互流程</small>
+</h1>
+
+<!-- ========== 1. UI 控件 ========== -->
+<h2>1. FilterPanel UI 控件</h2>
+
+<div class="cols">
+  <div class="card">
+    <h3>控件布局 (filterpanel.ui)</h3>
+    <table>
+      <tr><th>控件</th><th>类型</th><th>范围</th><th>默认值</th></tr>
+      <tr><td>启用滤镜</td><td>QCheckBox</td><td>—</td><td>关闭</td></tr>
+      <tr><td>亮度</td><td>QSlider</td><td>-100 … 100</td><td>0</td></tr>
+      <tr><td>对比度</td><td>QSlider</td><td>-100 … 100</td><td>0</td></tr>
+      <tr><td>饱和度</td><td>QSlider</td><td>0 … 300</td><td>100 (=1.0)</td></tr>
+      <tr><td>水印路径</td><td>QLineEdit</td><td>—</td><td>空</td></tr>
+      <tr><td>浏览</td><td>QPushButton</td><td>—</td><td>—</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>滑块 → float 映射</h3>
+    <table>
+      <tr><th>参数</th><th>公式</th><th>输出范围</th></tr>
+      <tr><td>亮度</td><td><code>val / 100.0</code></td><td>-1.0 … 1.0</td></tr>
+      <tr><td>对比度</td><td><code>val / 100.0</code></td><td>-1.0 … 1.0</td></tr>
+      <tr><td>饱和度</td><td><code>val / 100.0</code></td><td>0.0 … 3.0</td></tr>
+      <tr><td>水印</td><td>文件路径字符串</td><td>空 = 不叠加</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ========== 2. 信号链路 ========== -->
+<h2>2. 信号传递链路</h2>
+
+<div class="flow">
+  <span class="box">FilterPanel<br><small>GUI 线程</small></span>
+  <span class="arrow">→</span>
+  <span class="box">PlayerController<br><small>GUI 线程</small></span>
+  <span class="arrow">→</span>
+  <span class="box">VideoDecodeThread<br><small>atomic + dirtyFlag</small></span>
+  <span class="arrow">→</span>
+  <span class="box">FilterGraph<br><small>解码线程</small></span>
+</div>
+
+<h3>2.1 FilterPanel → PlayerController (GUI 线程)</h3>
+<div class="card">
+  <p>FilterPanel 的每个滑块变化时，直接调用 <code>PlayerController</code> 的内联转发方法：</p>
+  <pre>
+<span style="color:#888">// filterpanel.cpp — onBrightnessChanged</span>
+<span style="color:var(--yellow)">float</span> f = value / <span style="color:var(--blue)">100.0f</span>;
+ui->brightnessValue-><span style="color:var(--green)">setText</span>(QString::number(f, <span style="color:var(--green)">'f'</span>, <span style="color:var(--blue)">2</span>));
+player_-><span style="color:var(--green)">setBrightness</span>(f);   <span style="color:#888">// → PlayerController</span></pre>
+
+  <table>
+    <tr><th>FilterPanel 槽</th><th>player_-> 调用</th></tr>
+    <tr><td><code>onEnabledChanged(state)</code></td><td><code>setFilterEnabled(bool)</code></td></tr>
+    <tr><td><code>onBrightnessChanged(val)</code></td><td><code>setBrightness(float)</code></td></tr>
+    <tr><td><code>onContrastChanged(val)</code></td><td><code>setContrast(float)</code></td></tr>
+    <tr><td><code>onSaturationChanged(val)</code></td><td><code>setSaturation(float)</code></td></tr>
+    <tr><td><code>onBrowseWatermark()</code></td><td><code>setWatermark(QString)</code></td></tr>
+  </table>
+</div>
+
+<h3>2.2 PlayerController → VideoDecodeThread (内联转发)</h3>
+<div class="card">
+  <p>PlayerController 的转发方法全部内联在头文件中，直接调用 <code>videoDec_</code> 对应方法：</p>
+  <pre>
+<span style="color:#888">// playercontroller.h</span>
+<span style="color:var(--yellow)">void</span> setBrightness(<span style="color:var(--yellow)">float</span> v)  { videoDec_.setBrightness(v); }
+<span style="color:var(--yellow)">void</span> setContrast(<span style="color:var(--yellow)">float</span> v)    { videoDec_.setContrast(v); }
+<span style="color:var(--yellow)">void</span> setSaturation(<span style="color:var(--yellow)">float</span> v)  { videoDec_.setSaturation(v); }
+<span style="color:var(--yellow)">void</span> setWatermark(<span style="color:var(--yellow)">const</span> QString&amp; p) { videoDec_.setWatermark(p); }
+<span style="color:var(--yellow)">void</span> setFilterEnabled(<span style="color:var(--yellow)">bool</span> on)  { videoDec_.setFilterEnabled(on); }</pre>
+
+  <div class="note">这一步仍在 <strong>GUI 线程</strong>。真正的跨线程发生在 VideoDecodeThread 内部——GUI 线程写 atomic 变量，解码线程读。</div>
+</div>
+
+<!-- ========== 3. 跨线程参数传递 ========== -->
+<h2>3. 跨线程参数传递 (atomic + dirtyFlag)</h2>
+
+<div class="card">
+  <h3>VideoDecodeThread 的 atomic 参数集</h3>
+  <pre>
+<span style="color:var(--yellow)">std::atomic</span>&lt;<span style="color:var(--yellow)">bool</span>&gt;  filterEnabled_{<span style="color:var(--blue)">false</span>};   <span style="color:#888">// 滤镜总开关</span>
+<span style="color:var(--yellow)">std::atomic</span>&lt;<span style="color:var(--yellow)">bool</span>&gt;  filterDirty_{<span style="color:var(--blue)">false</span>};    <span style="color:#888">// 参数变更标志（触发 rebuild）</span>
+<span style="color:var(--yellow)">std::atomic</span>&lt;<span style="color:var(--yellow)">float</span>&gt; brightness_{<span style="color:var(--blue)">0.0f</span>};     <span style="color:#888">// 亮度偏移</span>
+<span style="color:var(--yellow)">std::atomic</span>&lt;<span style="color:var(--yellow)">float</span>&gt; contrast_{<span style="color:var(--blue)">0.0f</span>};      <span style="color:#888">// 对比度偏移</span>
+<span style="color:var(--yellow)">std::atomic</span>&lt;<span style="color:var(--yellow)">float</span>&gt; saturation_{<span style="color:var(--blue)">1.0f</span>};   <span style="color:#888">// 饱和度倍率</span>
+<span style="color:var(--yellow)">mutable QMutex</span> watermarkMtx_;             <span style="color:#888">// 保护 watermarkPath_</span>
+<span style="color:var(--yellow)">QString</span>      watermarkPath_;               <span style="color:#888">// 空串 = 无水印</span></pre>
+</div>
+
+<h3>3.1 写端 (GUI 线程, FilterPanel 触发)</h3>
+<div class="card">
+  <p>GPU 线程调用 setter，写入 atomic 并置 dirty 标志：</p>
+  <pre>
+<span style="color:#888">// videodecodethread.cpp</span>
+<span style="color:var(--yellow)">void</span> VideoDecodeThread::setBrightness(<span style="color:var(--yellow)">float</span> v) {
+    brightness_.store(v, std::memory_order_release);
+    filterDirty_.store(<span style="color:var(--blue)">true</span>, std::memory_order_release);
+}
+<span style="color:var(--yellow)">void</span> VideoDecodeThread::setWatermark(<span style="color:var(--yellow)">const</span> QString&amp; path) {
+    <span style="color:var(--yellow)">QMutexLocker</span> lock(&amp;watermarkMtx_);
+    <span style="color:var(--yellow)">if</span> (watermarkPath_ != path) { watermarkPath_ = path; filterDirty_ = <span style="color:var(--blue)">true</span>; }
+}</pre>
+
+  <div class="warn"><strong>为什么 watermarkPath_ 用 QMutex 而不是 atomic？</strong><br>
+  QString 不是平凡类型，<code>std::atomic&lt;QString&gt;</code> 无法编译。<br>
+  用 QMutex 保护读写；<code>QMutexLocker</code> 在 setter（GUI 线程）和 buildFilterDesc（解码线程）中各取一次锁。</div>
+</div>
+
+<h3>3.2 读端 (解码线程, run() 循环顶)</h3>
+<div class="card">
+  <p>每个解码循环的顶部检查 dirty 标志：</p>
+  <pre>
+<span style="color:#888">// videodecodethread.cpp — run() 循环</span>
+<span style="color:var(--yellow)">while</span> (!aborted_) {
+    <span style="color:#888">// 1. 处理 flush 请求</span>
+    <span style="color:var(--yellow)">if</span> (flush_.load()) { ... }
+
+    <span style="color:#888">// 2. 检测滤镜参数变更 → rebuild</span>
+    <span style="color:var(--yellow)">if</span> (filterDirty_.load(std::memory_order_acquire)) {
+        <span style="color:var(--yellow)">if</span> (filterEnabled_.load()) {
+            QString desc = buildFilterDesc();       <span style="color:#888">// 拼滤镜字串</span>
+            filterGraph_.rebuild(desc);             <span style="color:#888">// 在线重建滤镜链</span>
+        } <span style="color:var(--yellow)">else</span> {
+            filterGraph_.rebuild(QString{});        <span style="color:#888">// 空字串 → 直通</span>
+        }
+        filterDirty_.store(<span style="color:var(--blue)">false</span>, std::memory_order_release);
+    }
+
+    <span style="color:#888">// 3. 取包 → 解码 → 滤镜 → push</span>
+    ...
+}</pre>
+</div>
+
+<!-- ========== 4. 滤镜字串构造 ========== -->
+<h2>4. 滤镜描述字串构造</h2>
+
+<div class="card">
+  <h3>buildFilterDesc() 逻辑</h3>
+  <pre>
+<span style="color:var(--yellow)">QString</span> VideoDecodeThread::buildFilterDesc() <span style="color:var(--yellow)">const</span> {
+    QStringList parts;
+
+    <span style="color:#888">// 亮度 + 饱和度 → hue 滤镜</span>
+    <span style="color:var(--yellow)">float</span> b = brightness_.load();
+    <span style="color:var(--yellow)">float</span> s = saturation_.load();
+    parts &lt;&lt; QString(<span style="color:var(--green)">"hue=b=%1:s=%2"</span>).arg(b, <span style="color:var(--blue)">0</span>, <span style="color:var(--green)">'f'</span>, <span style="color:var(--blue)">2</span>).arg(s, <span style="color:var(--blue)">0</span>, <span style="color:var(--green)">'f'</span>, <span style="color:var(--blue)">2</span>);
+
+    <span style="color:#888">// 对比度 → colorbalance（同时调整 R/G/B midtones）</span>
+    <span style="color:var(--yellow)">float</span> c = contrast_.load();
+    <span style="color:var(--yellow)">if</span> (c != <span style="color:var(--blue)">0.0f</span>)
+        parts &lt;&lt; QString(<span style="color:var(--green)">"colorbalance=rm=%1:gm=%1:bm=%1"</span>).arg(c, <span style="color:var(--blue)">0</span>, <span style="color:var(--green)">'f'</span>, <span style="color:var(--blue)">2</span>);
+
+    <span style="color:#888">// 水印 → movie + overlay</span>
+    {
+        <span style="color:var(--yellow)">QMutexLocker</span> lock(&amp;watermarkMtx_);
+        <span style="color:var(--yellow)">if</span> (!watermarkPath_.isEmpty())
+            parts &lt;&lt; QString(<span style="color:var(--green)">"movie=%1[wm];[in][wm]overlay=10:10"</span>).arg(watermarkPath_);
+    }
+
+    <span style="color:var(--yellow)">return</span> parts.join(<span style="color:var(--green)">','</span>);
+}</pre>
+</div>
+
+<div class="card">
+  <h3>拼接示例</h3>
+  <table>
+    <tr><th>滑块状态</th><th>生成的字串</th></tr>
+    <tr>
+      <td>亮度=0.10, 饱和度=1.00, 对比度=0.10</td>
+      <td style="font-size:0.82em"><code>hue=b=0.10:s=1.00,colorbalance=rm=0.10:gm=0.10:bm=0.10</code></td>
+    </tr>
+    <tr>
+      <td>亮度=0.10, 对比度=0, 饱和度=1.00, 水印=logo.png</td>
+      <td style="font-size:0.82em"><code>hue=b=0.10:s=1.00,movie=logo.png[wm];[in][wm]overlay=10:10</code></td>
+    </tr>
+    <tr>
+      <td>全部默认（启用滤镜但无滑块调节）</td>
+      <td style="font-size:0.82em"><code>hue=b=0.00:s=1.00</code></td>
+    </tr>
+    <tr>
+      <td>滤镜关闭</td>
+      <td style="font-size:0.82em"><code>""</code>（空字串 → 直通模式）</td>
+    </tr>
+  </table>
+</div>
+
+<hr>
+
+<!-- ========== 5. FilterGraph 生命周期 ========== -->
+<h2>5. FilterGraph 生命周期</h2>
+
+<div class="flow" style="font-size:0.82rem">
+  <span class="box">init<br><small>decode open</small></span>
+  <span class="arrow">→</span>
+  <span class="box">process<br><small>每帧</small></span>
+  <span class="arrow">→</span>
+  <span class="box">rebuild<br><small>参数变更</small></span>
+  <span class="arrow">→</span>
+  <span class="box">close<br><small>decode stop</small></span>
+</div>
+
+<div class="cols">
+  <div class="card">
+    <h3>init(width, height, pixFmt, tb, desc)</h3>
+    <p>在 <code>VideoDecodeThread::init()</code> 末尾调用，desc 为空（初始不启用滤镜）。内部创建：</p>
+    <ol style="padding-left:1.2rem">
+      <li><code>avfilter_graph_alloc()</code> — 建图</li>
+      <li><code>avfilter_graph_create_filter("buffer")</code> — buffersrc 入口</li>
+      <li><code>avfilter_graph_create_filter("buffersink")</code> — buffersink 出口</li>
+      <li><code>avfilter_graph_parse_ptr(desc)</code> — 解析用户滤镜字串</li>
+      <li><code>avfilter_graph_config()</code> — 连接整条链</li>
+    </ol>
+    <p style="margin-top:0.5rem"><strong>passthrough 模式</strong>：desc 为空时仅保存宽高/格式，不创建图。<br>
+    <code>process()</code> 直接 <code>av_frame_clone</code> 返回入帧。</p>
+  </div>
+
+  <div class="card">
+    <h3>process(AVFrame* in, AVFrame* out)</h3>
+    <p>每帧解码后调用。out 由调用方 <code>av_frame_alloc</code> 预分配：</p>
+    <pre>
+<span style="color:#888">// 在 run() 中</span>
+AVFrame* filtered = av_frame_alloc();
+filterGraph_.process(decodedFrame, filtered);
+<span style="color:#888">// filtered 现在持有滤镜处理后的帧，push 到 videoFrameQ</span></pre>
+
+    <p>路径分支：</p>
+    <ol style="padding-left:1.2rem">
+      <li><strong>desc 为空</strong> → <code>av_frame_clone</code> + <code>av_frame_move_ref</code></li>
+      <li><strong>desc 非空</strong> → <code>av_buffersrc_add_frame_flags</code> + <code>av_buffersink_get_frame</code></li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>rebuild(newDesc)</h3>
+    <p>用户拖滑块导致参数变更时调用。实现是</p>
+    <pre>close();  init(width, height, pixFmt, tb, newDesc);</pre>
+    <p>即销毁旧链，重建新链。开销 ~1-5ms，仅在用户交互时触发，不产生可感知的卡顿。</p>
+  </div>
+
+  <div class="card">
+    <h3>close()</h3>
+    <p><code>avfilter_graph_free(&graph_)</code> 释放整条滤镜链。析构函数也会调用。</p>
+  </div>
+</div>
+
+<hr>
+
+<!-- ========== 6. 完整帧流程 ========== -->
+<h2>6. 一帧的完整旅程</h2>
+
+<div style="background:var(--card);border-radius:10px;padding:1.2rem 1.5rem;border-left:4px solid var(--green)">
+<pre style="background:transparent;padding:0;overflow-x:auto;font-size:0.82rem">
+<span style="color:#888">┌─ DemuxThread ────────────────────────────────────────────────────┐</span>
+│ av_read_frame → videoPacketQ.push(pkt)                            │
+<span style="color:#888">└───────────────────────┬───────────────────────────────────────────┘</span>
+                        │
+                        ▼
+<span style="color:#888">┌─ VideoDecodeThread::run() ───────────────────────────────────────┐</span>
+│                                                                    │
+│  <span style="color:var(--yellow)">① 检查 filterDirty_</span>                                               │
+│    ├─ true  → buildFilterDesc() → filterGraph_.rebuild(desc)       │
+│    └─ false → 跳过                                                 │
+│                                                                    │
+│  <span style="color:var(--yellow)">② 取包 → 解码</span>                                                    │
+│    videoPacketQ.tryPop(pkt) → avcodec_send_packet → receive_frame  │
+│                                                                    │
+│  <span style="color:var(--yellow)">③ 滤镜处理</span>                                                        │
+│    <span style="color:var(--yellow)">if</span> (filterEnabled_) {                                          │
+│        filtered = av_frame_alloc();                                 │
+│        filterGraph_.process(decodedFrame, filtered);                │
+│    } <span style="color:var(--yellow)">else</span> {                                                       │
+│        filtered = av_frame_clone(decodedFrame);                    │
+│    }                                                               │
+│                                                                    │
+│  <span style="color:var(--yellow)">④ videoFrameQ.push(filtered)</span>                                    │
+│                                                                    │
+<span style="color:#888">└───────────────────────┬───────────────────────────────────────────┘</span>
+                        │
+                        ▼
+<span style="color:#888">┌─ VideoRenderer::onTimer() ───────────────────────────────────────┐</span>
+│ videoFrameQ.tryPop(frame) → AVSync.videoDelay(pts)                 │
+│   → sws_scale(YUV420P→RGB32) → QPainter::drawImage()              │
+<span style="color:#888">└──────────────────────────────────────────────────────────────────┘</span>
+</pre>
+</div>
+
+<hr>
+
+<!-- ========== 7. 关键注意事项 ========== -->
+<h2>7. 关键设计要点</h2>
+
+<div class="cols">
+  <div class="warn">
+    <strong>滤镜重建在解码线程</strong><br>
+    重建发生在 <code>run()</code> 循环顶的 dirty 检测段，<strong>不在</strong> GUI 线程。这样 <code>process()</code> 和 <code>rebuild()</code> 永远在同一线程串行执行，不存在竞态。
+  </div>
+  <div class="warn">
+    <strong>FilterGraph::process() 的 out 参数</strong><br>
+    调用方必须预先 <code>av_frame_alloc()</code> 分配帧对象。<br>
+    <code>av_buffersink_get_frame</code> 要求传入已分配的空 <code>AVFrame</code>，传 <code>nullptr</code> 会导致崩溃。
+  </div>
+  <div class="warn">
+    <strong>watermarkPath_ 的 mutex</strong><br>
+    QString 不能声明为 <code>std::atomic</code>。<br>
+    用 <code>QMutex</code> 保护，且标记为 <code>mutable</code> 以便 const 方法 <code>buildFilterDesc()</code> 也能加锁。
+  </div>
+  <div class="warn">
+    <strong>滤镜不可用时静默回退</strong><br>
+    若 <code>avfilter_graph_parse_ptr</code> 失败（如滤镜名不存在），<code>init()</code> 返回 false，<code>rebuild()</code> 返回 false。<br>
+    此时 desc 已清空，自动回退直通模式，不影响正常播放。
+  </div>
+</div>
+
+<hr>
+
+<!-- ========== 8. Dock 显示/隐藏 ========== -->
+<h2>8. MainWindow 集成</h2>
+
+<div class="card">
+  <pre>
+<span style="color:#888">// mainwindow.cpp 构造函数</span>
+filterPanel_ = <span style="color:var(--yellow)">new</span> FilterPanel(player_);
+filterDock_  = <span style="color:var(--yellow)">new</span> QDockWidget(<span style="color:var(--green)">"滤镜编辑器"</span>, <span style="color:var(--yellow)">this</span>);
+filterDock_->setWidget(filterPanel_);
+filterDock_->setVisible(<span style="color:var(--blue)">false</span>);                        <span style="color:#888">// 默认隐藏</span>
+addDockWidget(Qt::RightDockWidgetArea, filterDock_);  <span style="color:#888">// 右侧停靠</span>
+
+<span style="color:#888">// 菜单 action ↔ Dock 可见性 双向同步</span>
+<span style="color:var(--green)">connect</span>(ui->actionFilterPanel, &amp;QAction::toggled, <span style="color:var(--yellow)">this</span>, &amp;MainWindow::onFilterPanelToggled);
+<span style="color:var(--green)">connect</span>(filterDock_, &amp;QDockWidget::visibilityChanged, ui->actionFilterPanel, &amp;QAction::setChecked);</pre>
+
+  <p style="margin-top:0.8rem">菜单路径：<code>文件(F) → 滤镜面板</code>（可勾选 toggle action）</p>
+</div>
+
+<p style="text-align:center;color:var(--muted);margin-top:2.5rem;font-size:0.82rem">
+  RambosPlayer Phase 8 — 2026-05-11
+</p>
+
+</div>
+</body>
+</html>

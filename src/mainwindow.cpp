@@ -4,6 +4,9 @@
 #include "playercontroller.h"
 #include "filterpanel.h"
 #include "streamcontroller.h"
+#include "timeline.h"
+#include "thumbnailextractor.h"
+#include "exportworker.h"
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -15,6 +18,7 @@
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QStatusBar>
+#include <QDebug>
 
 // 构造函数：setupUi 完成所有控件创建和布局，此处只做指针绑定、初始值和信号连接。
 // renderer_ 直接取 ui->videoWidget（promoted VideoRenderer），无需手动 setCentralWidget。
@@ -33,6 +37,18 @@ MainWindow::MainWindow(QWidget* parent)
     filterDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     filterDock_->setVisible(false);
     addDockWidget(Qt::RightDockWidgetArea, filterDock_);
+
+    // 创建剪辑模式组件：Timeline + ThumbnailExtractor + ExportWorker
+    timeline_       = new Timeline();
+    thumbExtractor_ = new ThumbnailExtractor();
+    exportWorker_   = new ExportWorker();
+
+    // 剪辑时间轴 Dock，挂在底部
+    trimDock_ = new QDockWidget("视频剪辑", this);
+    trimDock_->setWidget(timeline_);
+    trimDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    trimDock_->setVisible(false);
+    addDockWidget(Qt::BottomDockWidgetArea, trimDock_);
 
     // 读取持久化配置，应用到菜单和播放器
     {
@@ -65,6 +81,34 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(filterDock_, &QDockWidget::visibilityChanged, ui->actionFilterPanel, &QAction::setChecked);
 
+    // 剪辑模式信号连接
+    connect(ui->actionTrimMode, &QAction::toggled,          this, &MainWindow::onTrimModeToggled);
+    connect(ui->actionExport,  &QAction::triggered,         this, &MainWindow::onExportTriggered);
+    connect(trimDock_,         &QDockWidget::visibilityChanged, ui->actionTrimMode, &QAction::setChecked);
+    connect(thumbExtractor_,   &ThumbnailExtractor::thumbnailReady,  this, [this](const QImage& img) {
+        timeline_->addThumbnail(img);
+    });
+    connect(thumbExtractor_,   &ThumbnailExtractor::thumbnailsReady, this, &MainWindow::onThumbnailsReady);
+    connect(thumbExtractor_,   &ThumbnailExtractor::errorOccurred,   this, [](const QString& msg) {
+        QMessageBox::warning(nullptr, "缩略图错误", msg);
+    });
+    connect(timeline_, &Timeline::trimPointChanged, this, [this](int64_t inUs, int64_t outUs) {
+        ui->actionExport->setEnabled(true);
+        int inSec  = static_cast<int>(inUs / 1000000);
+        int outSec = static_cast<int>(outUs / 1000000);
+        int durSec = outSec - inSec;
+        statusBar()->showMessage(
+            QString("入口 %1:%2 → 出口 %3:%4  时长 %5秒")
+                .arg(inSec / 60, 2, 10, QChar('0')).arg(inSec % 60, 2, 10, QChar('0'))
+                .arg(outSec / 60, 2, 10, QChar('0')).arg(outSec % 60, 2, 10, QChar('0'))
+                .arg(durSec));
+    });
+    connect(exportWorker_, &ExportWorker::progressed, this, &MainWindow::onExportProgress);
+    connect(exportWorker_, &ExportWorker::exportFinished, this, &MainWindow::onExportFinished);
+    connect(exportWorker_, &ExportWorker::errorOccurred, this, [](const QString& msg) {
+        QMessageBox::warning(nullptr, "导出错误", msg);
+    });
+
     rebuildRecentMenu();
 }
 
@@ -74,18 +118,26 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow() {
     streamCtrl_->stop();
     delete streamCtrl_;
+    delete thumbExtractor_;
+    delete exportWorker_;
     delete player_;
     player_ = nullptr;
     delete ui;
 }
 
 // 打开文件并开始播放，同时更新最近文件记录。供对话框和最近文件菜单共用。
+// 若剪辑模式已开启，自动提取缩略图。
 void MainWindow::openFile(const QString& path) {
     player_->stop();
     if (player_->open(path)) {
+        currentFile_ = path;
         updateRecentFiles(path);
         ui->playPauseBtn->setText("⏸");
         player_->play();
+
+        // 剪辑模式下自动提取缩略图
+        if (trimDock_->isVisible())
+            thumbExtractor_->extract(path);
     }
 }
 
@@ -263,6 +315,57 @@ void MainWindow::onStreamStart() {
     } else {
         statusBar()->showMessage("推流启动失败，详见弹窗提示", 5000);
     }
+}
+
+// 剪辑模式切换：显示/隐藏时间轴 Dock，启动缩略图提取。
+void MainWindow::onTrimModeToggled(bool checked) {
+    trimDock_->setVisible(checked);
+    if (checked && !currentFile_.isEmpty()) {
+        timeline_->setDuration(duration_ * 1000);  // ms → us，先画刻度
+        thumbExtractor_->extract(currentFile_);
+        ui->actionExport->setEnabled(false);
+    }
+}
+
+// 缩略图全部提取完成：确保时长已设置（第一张来时就设了，这里做兜底）。
+void MainWindow::onThumbnailsReady(const QList<QImage>&) {
+    timeline_->setDuration(duration_ * 1000);
+}
+
+// 导出片段：弹出保存对话框，启动 ExportWorker。记住上次导出路径。
+void MainWindow::onExportTriggered() {
+    QSettings s("RambosPlayer", "RambosPlayer");
+    QString lastExportDir = s.value("lastExportDir",
+                                     QFileInfo(currentFile_).absolutePath()).toString();
+    QString defaultPath = lastExportDir + "/clip_" + QFileInfo(currentFile_).completeBaseName() + ".mp4";
+
+    QString outPath = QFileDialog::getSaveFileName(this, "导出剪辑片段", defaultPath,
+        "MP4 (*.mp4);;所有文件 (*)");
+    if (outPath.isEmpty()) return;
+
+    s.setValue("lastExportDir", QFileInfo(outPath).absolutePath());
+
+    int64_t inUs  = timeline_->inPts();
+    int64_t outUs = timeline_->outPts();
+    qInfo() << "导出范围:" << inUs / 1000000.0 << "s –" << outUs / 1000000.0 << "s";
+
+    statusBar()->showMessage("正在导出...");
+    ui->actionExport->setEnabled(false);
+    exportWorker_->run(currentFile_, outPath, inUs, outUs);
+}
+
+// 导出进度更新。
+void MainWindow::onExportProgress(int64_t currentPts, int64_t totalPts) {
+    if (totalPts > 0) {
+        int pct = static_cast<int>(currentPts * 100 / totalPts);
+        statusBar()->showMessage(QString("导出中... %1%").arg(pct));
+    }
+}
+
+// 导出完成/失败处理。
+void MainWindow::onExportFinished(bool ok) {
+    statusBar()->showMessage(ok ? "导出完成" : "导出失败", 5000);
+    ui->actionExport->setEnabled(true);
 }
 
 // 毫秒转 "MM:SS" 字符串，用于时间标签显示。

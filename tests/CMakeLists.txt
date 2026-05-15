@@ -34,6 +34,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_demuxthread.cpp")
     target_sources(TstDemuxThread PRIVATE ${CMAKE_SOURCE_DIR}/src/demuxthread.cpp)
 endif()
 
+# Task 21 - ThumbnailExtractor
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_thumbnailextractor.cpp")
+    add_qt_test(TstThumbnailExtractor tst_thumbnailextractor.cpp)
+    target_sources(TstThumbnailExtractor PRIVATE ${CMAKE_SOURCE_DIR}/src/thumbnailextractor.cpp)
+endif()
+
 # Task 14 - FilterGraph
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_filtergraph.cpp")
     add_qt_test(TstFilterGraph tst_filtergraph.cpp)
