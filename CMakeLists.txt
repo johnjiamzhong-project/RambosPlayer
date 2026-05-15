@@ -16,6 +16,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
 find_package(FFMPEG REQUIRED)
 
 add_executable(RambosPlayer WIN32
+    src/resources.qrc
     src/main.cpp
     src/logger.cpp
     src/avsync.cpp

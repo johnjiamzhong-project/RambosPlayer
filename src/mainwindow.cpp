@@ -26,6 +26,11 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
 
+    // 播放按钮：使用 SVG 图标，清除文字确保图标居中
+    ui->playPauseBtn->setText("");
+    ui->playPauseBtn->setIconSize(QSize(24, 24));
+    ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+
     renderer_ = ui->videoWidget;
     player_   = new PlayerController(renderer_);
     streamCtrl_ = new StreamController();  // 不挂 parent，由析构函数手动控制销毁顺序
@@ -132,7 +137,7 @@ void MainWindow::openFile(const QString& path) {
     if (player_->open(path)) {
         currentFile_ = path;
         updateRecentFiles(path);
-        ui->playPauseBtn->setText("⏸");
+        ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
         player_->play();
 
         // 剪辑模式下自动提取缩略图
@@ -215,10 +220,10 @@ void MainWindow::onClearRecent() {
 void MainWindow::onPlayPause() {
     if (player_->isPlaying()) {
         player_->pause();
-        ui->playPauseBtn->setText("▶");
+        ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
     } else {
         player_->play();
-        ui->playPauseBtn->setText("⏸");
+        ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
     }
 }
 
@@ -250,7 +255,7 @@ void MainWindow::onPositionChanged(int64_t ms) {
 
 // 播放结束后复位按钮为播放状态。
 void MainWindow::onPlaybackFinished() {
-    ui->playPauseBtn->setText("▶");
+    ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
 }
 
 // 拦截进度条鼠标按下：用 sliderValueFromPosition 算出精确点击位置并立即 seek。
