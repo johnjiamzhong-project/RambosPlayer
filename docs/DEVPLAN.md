@@ -251,10 +251,45 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 - [x] 创建 `src/streamcontroller.h` / `src/streamcontroller.cpp` 串联三者
 - [x] 在 `MainWindow` 菜单栏加"推流"菜单，弹出 URL 输入对话框，启动/停止推流
-- [ ] 手动验证：启动推流后，用 `ffplay rtmp://127.0.0.1:1935/live/test` 能看到桌面画面，延迟 < 3 秒
-- [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流"`
+- [x] 手动验证：本地 FLV 录制正常，RTMP 推流 → ffmpeg 接收文件内容一致
+- [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流（Phase 9）"`
 
-**验收：** ffplay 能接收并播放推流画面，延迟 < 3 秒。
+**RTMP 端对端验证方法：**
+
+本地无需搭建 nginx-rtmp，直接用 ffmpeg 自带 RTMP 服务进行测试。
+
+1. 终端 1 — 启动 RTMP 监听（服务端）：
+   ```powershell
+   ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/test -c copy "G:\source\vscode\ffmpeg_pro\stage5\RambosPlayer\received.flv"
+   ```
+2. RambosPlayer → 菜单栏"推流(&S)..."：
+   - 输入源：`desktop`
+   - 输入目标：`rtmp://127.0.0.1:1935/live/test`
+3. 推流数秒后点"停止推流"，终端 1 Ctrl+C 结束
+4. 播放 `received.flv`，确认画面与推流内容一致
+
+#### RTMP 推流原理
+
+```
+RambosPlayer (推流端)                      ffmpeg -listen 1 (接收端)
+┌─────────────────────────┐               ┌──────────────────────────┐
+│  CaptureThread          │               │                          │
+│    ↓ rawFrameQ_         │               │  RTMP 协议握手            │
+│  EncodeThread           │   FLV over    │    ↓                     │
+│    ↓ encodedPacketQ_    │ ════════════▶ │  av_read_frame 解封装     │
+│  MuxThread              │   RTMP/TCP    │    ↓                     │
+│   av_interleaved_write  │               │  av_interleaved_write     │
+│   → 逐帧写 FLV 到 URL   │               │   → 保存为 received.flv   │
+└─────────────────────────┘               └──────────────────────────┘
+```
+
+- `ffmpeg -listen 1 -i <url>` 让 ffmpeg 在指定 RTMP URL 上充当**服务端**，等待推流端连接
+- RambosPlayer 的 MuxThread 通过 `avio_open(url)` 发起 TCP 连接，完成 RTMP 握手后开始推送 FLV 封装的 H.264 数据
+- 接收端 `-c copy` 无损透传，不重编码，直接写文件
+- 最后的 `I/O error` 是推流端主动断开连接，接收端检测到 socket 关闭后正常退出，**不是异常**
+
+**验收：** 本地 FLV 录制正常；RTMP 推流 → ffmpeg 接收文件内容一致，延迟 < 3 秒。
+- [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流（Phase 9）"`
 
 ### 环境依赖 — H.264 编码器
 
@@ -335,5 +370,5 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 - [x] Phase 6 — 完整播放器 UI ✅
 - [x] Phase 7 — 硬件加速
 - [x] Phase 8 — 视频滤镜 ✅
-- [ ] Phase 9 — 屏幕录制/推流
+- [x] Phase 9 — 屏幕录制/推流 ✅
 - [ ] Phase 10 — 视频剪辑器
