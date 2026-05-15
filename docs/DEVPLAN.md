@@ -225,34 +225,72 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 **目标：** 能采集桌面或摄像头，编码后推流到本地 RTMP 服务。
 
+> 推流管线架构图：[docs/推流管线架构2.html](docs/推流管线架构2.html)
+
 **准备：** 本地启动一个 RTMP 服务（如 nginx-rtmp）监听 `rtmp://127.0.0.1:1935/live/test`。
 
 ### Task 17 — CaptureThread
 
-- [ ] 创建 `src/capturethread.h` / `src/capturethread.cpp`
+- [x] 创建 `src/capturethread.h` / `src/capturethread.cpp`
   - `init(source)` 其中 `source` 为 `"desktop"`（gdigrab）或设备名（dshow）
-  - `run()` 循环：`av_read_frame` from input → 推入 `FrameQueue<AVPacket*>`
+  - `run()` 循环：`av_read_frame` from input → 解码 → clone → 推入 `FrameQueue<AVFrame*>`
 
 ### Task 18 — EncodeThread
 
-- [ ] 创建 `src/encodethread.h` / `src/encodethread.cpp`
-  - `init(codecName, width, height, fps, bitrate)` 打开编码器（优先 `h264_nvenc`，失败回退 `libx264`）
+- [x] 创建 `src/encodethread.h` / `src/encodethread.cpp`
+  - `init(width, height, fps, bitrate)` 打开编码器（优先 `h264_nvenc` → `libx264` → `libopenh264` → 通用 H.264）
   - `run()` 从帧队列取 raw frame → `avcodec_send_frame` / `avcodec_receive_packet` → 推入输出包队列
 
 ### Task 19 — MuxThread
 
-- [ ] 创建 `src/muxthread.h` / `src/muxthread.cpp`
+- [x] 创建 `src/muxthread.h` / `src/muxthread.cpp`
   - `init(outputUrl)` 打开 `flv` 输出格式，`avio_open` 连接 RTMP URL
   - `run()` 从编码包队列取包 → `av_interleaved_write_frame`
 
 ### Task 20 — StreamController + 推流 UI + 端对端验收
 
-- [ ] 创建 `src/streamcontroller.h` / `src/streamcontroller.cpp` 串联三者
-- [ ] 在 `MainWindow` 菜单栏加"推流"菜单，弹出 URL 输入对话框，启动/停止推流
+- [x] 创建 `src/streamcontroller.h` / `src/streamcontroller.cpp` 串联三者
+- [x] 在 `MainWindow` 菜单栏加"推流"菜单，弹出 URL 输入对话框，启动/停止推流
 - [ ] 手动验证：启动推流后，用 `ffplay rtmp://127.0.0.1:1935/live/test` 能看到桌面画面，延迟 < 3 秒
 - [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流"`
 
 **验收：** ffplay 能接收并播放推流画面，延迟 < 3 秒。
+
+### 环境依赖 — H.264 编码器
+
+> **问题**（2026-05-15）：vcpkg FFmpeg 默认安装 (`ffmpeg[avcodec,avformat,...]`) **不含任何 H.264 编码器**，
+> 导致 `EncodeThread::init` 三步回退全部落空，推流静默失败。
+>
+> **排查结果：**
+> ```
+> $ .\vcpkg list ffmpeg
+> ffmpeg:x64-windows  8.1#2
+> ffmpeg[avcodec]:x64-windows
+> ffmpeg[avdevice]:x64-windows
+> ffmpeg[avfilter]:x64-windows
+> ffmpeg[avformat]:x64-windows
+> ffmpeg[swresample]:x64-windows
+> ffmpeg[swscale]:x64-windows
+> # ← 缺少 ffmpeg[gpl,x264] 或 ffmpeg[openh264] 或 ffmpeg[nvcodec]
+> ```
+>
+> **解决方案（三选一）：**
+> ```powershell
+> # 推荐：libx264 软编（需要 GPL）
+> .\vcpkg install ffmpeg[gpl,x264] --recurse
+>
+> # 备选：Cisco openh264（BSD 许可，无需 GPL）
+> .\vcpkg install ffmpeg[openh264] --recurse
+>
+> # 可选：NVIDIA GPU 硬编（需要 NVENC GPU + 驱动）
+> .\vcpkg install ffmpeg[nvcodec] --recurse
+> ```
+>
+> **代码层改进**（已实施）：
+> - `encodethread.cpp`：每步尝试写 `qInfo`，最终失败时输出 vcpkg 安装建议到日志
+> - `streamcontroller.cpp`：每个 init 阶段写日志 + 发 `errorOccurred` 信号
+> - `mainwindow.cpp`：`errorOccurred` → `QMessageBox::warning` 弹窗，不再只闪状态栏
+> - 默认输出路径改为 `QCoreApplication::applicationDirPath() + "/record.flv"`
 
 ---
 

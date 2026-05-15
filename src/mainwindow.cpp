@@ -3,6 +3,7 @@
 #include "videorenderer.h"
 #include "playercontroller.h"
 #include "filterpanel.h"
+#include "streamcontroller.h"
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -10,6 +11,10 @@
 #include <QMouseEvent>
 #include <QSettings>
 #include <QStyle>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QCoreApplication>
+#include <QStatusBar>
 
 // 构造函数：setupUi 完成所有控件创建和布局，此处只做指针绑定、初始值和信号连接。
 // renderer_ 直接取 ui->videoWidget（promoted VideoRenderer），无需手动 setCentralWidget。
@@ -18,7 +23,8 @@ MainWindow::MainWindow(QWidget* parent)
     ui->setupUi(this);
 
     renderer_ = ui->videoWidget;
-    player_   = new PlayerController(renderer_);  // 不挂 parent，由析构函数手动控制销毁顺序
+    player_   = new PlayerController(renderer_);
+    streamCtrl_ = new StreamController();  // 不挂 parent，由析构函数手动控制销毁顺序
 
     // 创建滤镜面板，挂在右侧 Dock
     filterPanel_ = new FilterPanel(player_);
@@ -53,6 +59,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(ui->actionClearRecent,  &QAction::triggered,  this, &MainWindow::onClearRecent);
     connect(ui->actionHwAccel,      &QAction::toggled,    this, &MainWindow::onHwAccelToggled);
     connect(ui->actionFilterPanel,  &QAction::toggled,    this, &MainWindow::onFilterPanelToggled);
+    connect(ui->actionStream,      &QAction::triggered,  this, &MainWindow::onStreamStart);
+    connect(streamCtrl_, &StreamController::errorOccurred, this, [](const QString& msg) {
+        QMessageBox::warning(nullptr, "推流错误", msg);
+    });
     connect(filterDock_, &QDockWidget::visibilityChanged, ui->actionFilterPanel, &QAction::setChecked);
 
     rebuildRecentMenu();
@@ -62,9 +72,11 @@ MainWindow::MainWindow(QWidget* parent)
 // player_->stop() 会调用 renderer_->stopRendering()，renderer_ 是 ui 内的 promoted widget，
 // 若先 delete ui 则 renderer_ 已销毁，player_ 析构时再访问它会触发 UAF 崩溃。
 MainWindow::~MainWindow() {
-    delete player_;   // stop() 在 renderer_ 还存活时执行
+    streamCtrl_->stop();
+    delete streamCtrl_;
+    delete player_;
     player_ = nullptr;
-    delete ui;        // VideoRenderer 随 ui 安全销毁，此时 pendingFrame_ 已为 null
+    delete ui;
 }
 
 // 打开文件并开始播放，同时更新最近文件记录。供对话框和最近文件菜单共用。
@@ -224,6 +236,33 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 void MainWindow::mouseDoubleClickEvent(QMouseEvent*) {
     isFullscreen_ = !isFullscreen_;
     isFullscreen_ ? showFullScreen() : showNormal();
+}
+
+// 推流设置对话框：输入源和目标 URL，启动/停止推流。
+// 启动中时再次点击变为停止。默认保存至 exe 同目录。
+void MainWindow::onStreamStart() {
+    if (streamCtrl_->isStreaming()) {
+        streamCtrl_->stop();
+        ui->actionStream->setText("推流(&S)...");
+        return;
+    }
+
+    QString source = QInputDialog::getText(this, "推流源",
+        "采集源 (desktop / 摄像头设备名):",
+        QLineEdit::Normal, "desktop");
+    if (source.isEmpty()) return;
+
+    QString defaultPath = QCoreApplication::applicationDirPath() + "/record.flv";
+    QString url = QInputDialog::getText(this, "推流目标",
+        "RTMP URL 或本地 .flv 路径:",
+        QLineEdit::Normal, defaultPath);
+    if (url.isEmpty()) return;
+
+    if (streamCtrl_->start(source, url)) {
+        ui->actionStream->setText("停止推流");
+    } else {
+        statusBar()->showMessage("推流启动失败，详见弹窗提示", 5000);
+    }
 }
 
 // 毫秒转 "MM:SS" 字符串，用于时间标签显示。

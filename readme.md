@@ -15,7 +15,7 @@
 | 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
-| 功能5 — 屏幕录制 / 推流 | 📋 待开始 |
+| 功能5 — 屏幕录制 / 推流 | 🚧 开发中 (待端对端验证) |
 | 功能6 — 视频剪辑器 | 📋 待开始 |
 
 ---
@@ -50,6 +50,26 @@ VideoDecodeThread                     AudioDecodeThread
 VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 ```
 
+### 推流管线
+
+```
+MainWindow
+    │ streamCtrl_->start(source, url)
+    ▼
+StreamController
+    │  持有 rawFrameQ_ + encodedPacketQ_
+    ▼
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  CaptureThread   │ ──▶ │  EncodeThread    │ ──▶ │   MuxThread      │
+│  gdigrab/dshow   │     │  H.264 编码      │     │  FLV/RTMP 封装   │
+│  → AVFrame*(BGR0)│     │  → AVPacket*     │     │  → 本地/网络输出  │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+      rawFrameQ_              encodedPacketQ_
+      (cap 30)                (cap 60)
+```
+
+> 详细推流管线架构：[docs/推流管线架构2.html](docs/推流管线架构2.html)
+
 ### 核心组件
 
 | 组件 | 文件 | 说明 |
@@ -64,6 +84,10 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 | `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏，滤镜面板 Dock |
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
+| `CaptureThread` | `src/capturethread.h/.cpp` | 桌面 (gdigrab) 或摄像头 (dshow) 采集，解码后输出 AVFrame* 到 FrameQueue |
+| `EncodeThread` | `src/encodethread.h/.cpp` | 消费原始帧队列，sws_scale 转 YUV420P，H.264 编码后输出 AVPacket* |
+| `MuxThread` | `src/muxthread.h/.cpp` | 消费编码包队列，av_interleaved_write_frame 写 FLV/RTMP，停止时 avio_closep 冲刷文件 |
+| `StreamController` | `src/streamcontroller.h/.cpp` | 持有 CaptureThread + EncodeThread + MuxThread 生命周期，管理启动/停止顺序 |
 
 ---
 

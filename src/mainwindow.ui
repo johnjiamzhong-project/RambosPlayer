@@ -202,6 +202,7 @@ QPushButton:hover { background: #555; }</string>
     <addaction name="separator"/>
     <addaction name="actionFilterPanel"/>
     <addaction name="actionHwAccel"/>
+	    <addaction name="actionStream"/>
    </widget>
    <addaction name="menuFile"/>
   </widget>
@@ -238,6 +239,14 @@ QPushButton:hover { background: #555; }</string>
    </property>
    <property name="text">
     <string>硬件加速 (D3D11VA)</string>
+   </property>
+  </action>
+  <action name="actionStream">
+   <property name="text">
+    <string>推流(&amp;S)...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+S</string>
    </property>
   </action>
  </widget>

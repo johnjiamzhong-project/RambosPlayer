@@ -17,6 +17,12 @@ RambosPlayer is a multithreaded multimedia player built with C++17, Qt 5.14.2, a
 - **源文件函数注释**：每个函数定义前必须有一行或多行中文注释，说明该函数的职责与关键行为（非显而易见的逻辑需说明原因）。
 - **Bug 修复记录**：开发计划之外发现并修复的问题，修复完成后必须追加到 `docs/BUGFIX-LOG.md`，按已有模板填写日期、现象、根因、修复方案和涉及文件。
 - **崩溃排查**：程序崩溃时，**第一步必须读取日志文件**（`<exe>/logs/rambos_*.log`）定位崩溃前最后一条消息；若同目录存在 `crash_*.dmp`，提示用户用 WinDbg / Visual Studio 加载并附上 `.pdb` 查看调用栈。根据日志内容缩小范围后再改代码，不得在未读日志的情况下盲目猜测原因。
+- **画 HTML/SVG 图表**：生成 SVG 时必须遵守以下规则，否则会反复报错：
+  1. **不用 bash heredoc 传 Python 代码**：heredoc 遇到 SVG 特殊字符会直接报错，必须先用 Write 工具将 Python 脚本写入文件，再用 `python xxx.py` 执行。
+  2. **SVG 文本节点必须转义**：`&` → `&amp;`，`<` → `&lt;`，`>` → `&gt;`，重点检查代码片段（如 `avio_closep(&pb)`）和泛型类型名（如 `FrameQueue<T>`）。
+  3. **生成后必须验证 XML**：执行 `python -c "import xml.etree.ElementTree as ET; ET.parse('file.svg')"` 确认合法，有错误必须修复后再写入 HTML。
+  4. **临时脚本用完即删**：生成结束后删除 `gen_diagram.py` 等中间文件，不留在 `docs/` 目录。
+
 - **Git commit 信息必须用中文描述**
 - **commit 时机与内容**：代码由用户自行测试验收后手动触发 commit，Claude 不主动提交。每个模块只提交一次，Claude 的职责是在用户说"提交"之前准备好所有内容：
   1. 代码 + 测试实现完成（用户自行运行测试验收）

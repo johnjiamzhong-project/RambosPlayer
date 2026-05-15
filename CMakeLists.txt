@@ -28,6 +28,10 @@ add_executable(RambosPlayer WIN32
     src/playercontroller.cpp
     src/mainwindow.cpp
     src/filterpanel.cpp
+    src/capturethread.cpp
+    src/encodethread.cpp
+    src/muxthread.cpp
+    src/streamcontroller.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE
