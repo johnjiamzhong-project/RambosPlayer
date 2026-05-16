@@ -1,15 +1,8 @@
-# RambosPlayer 多媒体处理工具箱
+# RambosPlayer 多媒体播放器
 
-> 基于 FFmpeg + Qt 的多线程多媒体实验项目，目标是覆盖 FFmpeg 全链路实战 —— 能播、能录、能推、能剪。
+> 基于 FFmpeg + Qt 的多线程多媒体播放器，目标是覆盖 FFmpeg 全链路实战 —— 能播、能录、能推、能剪。
 
-### 为什么一个"播放器"有录屏和推流？
 
-传统播放器（VLC、PotPlayer、MPC-HC）只需解复用→解码→渲染，但本项目的学习目标是 **FFmpeg 全链路**：
-
-- **解码链路（播放）**：`av_read_frame` / `avcodec_send_packet` / `sws_scale` — 数据从文件流向屏幕
-- **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 数据从采集设备流向网络
-
-两条链路合在一起才构成完整的 FFmpeg 技能树。加上视频剪辑器（关键帧定位 + 无损剪切），覆盖了 `av_seek_frame` / `av_interleaved_write_frame` 的导出场景。所以定位更接近**"多媒体处理工具箱"**而非纯播放器。
 
 ## 文档
 
@@ -62,14 +55,6 @@
 | 视频滤镜（亮度/对比度/饱和度/水印） | 菜单 → 滤镜编辑器，实时预览 |
 | 屏幕录制 / RTMP 推流 | 菜单 → 推流，输入采集源和目标 URL |
 | 视频剪辑（无损剪切导出） | 菜单 → 剪辑模式（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
-
----
-
-## 已知问题
-
-| 问题 | 状态 | 说明 |
-|------|:----:|------|
-| 水印不显示 | 🔴 待解决 | FFmpeg `movie` 滤镜无法正确解析含盘符的 Windows 绝对路径（`G:/...`）。盘符中的 `:` 经 `avfilter_graph_parse_ptr` → `av_get_token` → `avfilter_init_str` → `av_set_options_string` 四层解析后始终无法正确传递到 movie filter 的 `filename` 选项。`avformat_open_input` 直接打开文件正常（验证文件存在且可读），但通过滤镜图字符串传参时多层 `\` 转义均无法穿透。需研究 FFmpeg 源码中 `avfilter_graph_parse2` 对 movie 源滤镜的选项传递机制后再解决。 |
 
 ---
 
@@ -170,3 +155,26 @@ RambosPlayer/
 
 ---
 
+
+
+# 其他
+
+## 已知问题
+
+| 问题       |   状态   | 说明                                                         |
+| ---------- | :------: | ------------------------------------------------------------ |
+| 水印不显示 | 🔴 待解决 | FFmpeg `movie` 滤镜无法正确解析含盘符的 Windows 绝对路径（`G:/...`）。盘符中的 `:` 经 `avfilter_graph_parse_ptr` → `av_get_token` → `avfilter_init_str` → `av_set_options_string` 四层解析后始终无法正确传递到 movie filter 的 `filename` 选项。`avformat_open_input` 直接打开文件正常（验证文件存在且可读），但通过滤镜图字符串传参时多层 `\` 转义均无法穿透。需研究 FFmpeg 源码中 `avfilter_graph_parse2` 对 movie 源滤镜的选项传递机制后再解决。 |
+
+---
+
+## 
+
+### 为什么一个"播放器"有录屏和推流？
+
+传统播放器（VLC、PotPlayer、MPC-HC）只需解复用→解码→渲染，但本项目的学习目标是 **FFmpeg 全链路**：
+
+- **解码链路（播放）**：`av_read_frame` / `avcodec_send_packet` / `sws_scale` — 数据从文件流向屏幕
+
+- **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 数据从采集设备流向网络
+
+  两条链路合在一起才构成完整的 FFmpeg 技能树。加上视频剪辑器（关键帧定位 + 无损剪切），覆盖了 `av_seek_frame` / `av_interleaved_write_frame` 的导出场景。所以定位更接近**"多媒体处理工具箱"**而非纯播放器。
