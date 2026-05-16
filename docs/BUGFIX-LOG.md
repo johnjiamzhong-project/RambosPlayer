@@ -173,3 +173,13 @@
 - **根因**：Qt `QSlider` 默认鼠标点击行为是 `pageStep` 步进，不会跳到点击坐标对应的值；原 `eventFilter` 只处理了进度条，未覆盖音量滑块
 - **修复**：对 `volumeSlider` 也 `installEventFilter`，在 `eventFilter` 中用 `QStyle::sliderValueFromPosition` 计算点击坐标对应值并 `setValue`；同时将两个滑块的处理合并为统一的 `qobject_cast<QSlider*>` 逻辑，进度条额外手动调 `onSeekSliderMoved`（因其连接的是 `sliderMoved` 而非 `valueChanged`）
 - **涉及文件**：`src/mainwindow.cpp`
+
+---
+
+## #016 — 进度条拖拽失效：eventFilter 拦截手柄点击导致无法滑动
+
+- **日期**：2026-05-16
+- **现象**：点击进度条轨道跳转正常，但拖拽进度条滑块无法滑动；只能点不能拖
+- **根因**：`#015` 修复中 `eventFilter` 无差别拦截所有 `QSlider` 的 `MouseButtonPress`，包括手柄上的点击。手柄点击被 `return true` 消费后，slider 收不到事件无法启动拖拽状态
+- **修复**：通过 `QStyleOptionSlider` + `QStyle::subControlRect(CC_Slider, SC_SliderHandle)` 获取手柄矩形；若点击坐标在手柄内 → `return false` 放行给 slider 原生拖拽；若在轨道上 → 点哪跳哪（原有行为）
+- **涉及文件**：`src/mainwindow.cpp`

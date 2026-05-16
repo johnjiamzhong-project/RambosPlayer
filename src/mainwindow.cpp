@@ -8,6 +8,7 @@
 #include "thumbnailextractor.h"
 #include "exportworker.h"
 #include <QDockWidget>
+#include <QStyleOptionSlider>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeyEvent>
@@ -277,6 +278,16 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
         if (slider) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
+                QStyleOptionSlider opt;
+                opt.initFrom(slider);
+                opt.minimum = slider->minimum();
+                opt.maximum = slider->maximum();
+                opt.sliderPosition = slider->sliderPosition();
+                opt.sliderValue = slider->value();
+                QRect handleRect = slider->style()->subControlRect(
+                    QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, slider);
+                if (handleRect.contains(me->pos()))
+                    return false;
                 int val = QStyle::sliderValueFromPosition(
                     slider->minimum(), slider->maximum(),
                     me->x(), slider->width());
