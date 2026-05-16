@@ -1,6 +1,15 @@
-# RambosPlayer 多媒体播放器
+# RambosPlayer 多媒体处理工具箱
 
-> 基于 FFmpeg + Qt 的多线程媒体播放器，目标是掌握音视频同步、硬件加速与实时流媒体处理。
+> 基于 FFmpeg + Qt 的多线程多媒体实验项目，目标是覆盖 FFmpeg 全链路实战 —— 能播、能录、能推、能剪。
+
+### 为什么一个"播放器"有录屏和推流？
+
+传统播放器（VLC、PotPlayer、MPC-HC）只需解复用→解码→渲染，但本项目的学习目标是 **FFmpeg 全链路**：
+
+- **解码链路（播放）**：`av_read_frame` / `avcodec_send_packet` / `sws_scale` — 数据从文件流向屏幕
+- **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 数据从采集设备流向网络
+
+两条链路合在一起才构成完整的 FFmpeg 技能树。加上视频剪辑器（关键帧定位 + 无损剪切），覆盖了 `av_seek_frame` / `av_interleaved_write_frame` 的导出场景。所以定位更接近**"多媒体处理工具箱"**而非纯播放器。
 
 ## 文档
 
