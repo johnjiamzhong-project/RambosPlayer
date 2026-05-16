@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QMutex>
 #include <QTimer>
+#include <QElapsedTimer>
 #include "framequeue.h"
 #include "avsync.h"
 
@@ -27,6 +28,7 @@ public:
     void startRendering();
     void stopRendering();
     void flushPendingFrame();   // seek 时清除残留的 pendingFrame_，防止旧帧卡住队列
+    void renderOneFrame();      // seek while paused 时由 PlayerController 延迟调用，强制渲染一帧刷新画面
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -45,4 +47,10 @@ private:
     int srcW_ = 0, srcH_ = 0;          // 视频原始宽高，用于宽高比计算
     AVRational timeBase_{1, 1};         // 视频流时间基，用于 pts → 秒换算
     AVFrame* pendingFrame_ = nullptr;   // 未到渲染时间的帧，暂存避免推回队列阻塞主线程
+
+    QElapsedTimer noFrameTimer_;        // 计量"队列连续空"的时长，用于打印无帧警告
+    bool noFrameTimerStarted_ = false;  // noFrameTimer_ 是否已启动
+    bool noFrameLogged_ = false;        // 避免同一段空窗重复打印
+    int  dropCount_ = 0;                // 当前轮连续丢帧数，汇总后打印
+    double lastRenderedPts_ = -1.0;     // 上次成功渲染的帧 PTS，用于检测 seek 后首帧
 };

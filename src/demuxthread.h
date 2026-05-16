@@ -42,6 +42,8 @@ private:
     int64_t                duration_   = 0;         // 文件总时长，单位微秒（AV_TIME_BASE）
     std::atomic<bool>      abort_{false};           // stop() 置 true，run() 循环检查后退出
     std::atomic<double>    seekTarget_{-1.0};       // seek 目标（秒），-1 表示无待处理 seek
+    std::atomic<double>    seekExactTarget_{-1.0};  // 精确 seek 目标（秒），handleSeek 后置位，run() 跳过低于目标的包
+    std::atomic<bool>      logNextAudioPush_{false}; // seek 完成后打印第一个推入音频包的 PTS
 
     void handleSeek();  // 在 run() 每次循环顶部检查并执行 seek
 };

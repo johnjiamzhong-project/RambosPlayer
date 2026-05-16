@@ -85,14 +85,24 @@ void PlayerController::stop() {
 // Seek：立刻更新音频钟到目标位置，再通知各线程。
 // 必须先更新钟：VideoRenderer 用 audioClock 判断是否丢帧，若钟仍停在旧位置，
 // 旧帧 diff ≈ 0 不会被丢弃，videoFrameQ 堵满 → DemuxThread 无法执行 seek。
+// 清除包队列以唤醒可能阻塞在 push 上的 DemuxThread，避免 handleSeek 延迟。
 void PlayerController::seek(double seconds) {
     qInfo() << "PlayerController::seek target =" << seconds << "audioClock was" << sync_.audioClock();
     sync_.setAudioClock(seconds);
     renderer_->flushPendingFrame();
     demux_.seek(seconds);
+    videoPacketQ_.clear();  // 唤醒 DemuxThread 阻塞的 push，使其尽快执行 handleSeek
+    audioPacketQ_.clear();
     videoDec_.flush();
-    audioDec_.flush();
+    audioDec_.flush(seconds);
     qInfo() << "PlayerController::seek flushes done";
+
+    // 暂停状态下 posTimer_ 已停止，需手动补发进度条位置；
+    // 并延迟 200ms 触发单帧渲染，让 VideoDecodeThread 有足够时间解码出新帧。
+    if (!playing_) {
+        emit positionChanged((int64_t)(seconds * 1000.0));
+        QTimer::singleShot(200, renderer_, &VideoRenderer::renderOneFrame);
+    }
 }
 
 // 设置音量，转发给 AudioDecodeThread（线程安全原子量）。
@@ -132,8 +142,8 @@ void PlayerController::updatePosition() {
         double jump = ac - lastPositionSec_;
         // 正常播放 100ms 推进约 0.1s，正向跳 > 5s 或时间倒流 > 2s 视为异常
         if (jump > 5.0 || jump < -2.0)
-            qWarning() << "PlayerController: audioClock jump from" << lastPositionSec_
-                       << "to" << ac << "delta" << jump;
+            qInfo() << "PlayerController: audioClock jump from" << lastPositionSec_
+                    << "to" << ac << "delta" << jump;
     }
     lastPositionSec_ = ac;
     emit positionChanged((int64_t)(ac * 1000.0));

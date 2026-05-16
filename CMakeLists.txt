@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia Svg)
 find_package(FFMPEG REQUIRED)
 
 add_executable(RambosPlayer WIN32
@@ -48,6 +48,7 @@ target_link_libraries(RambosPlayer PRIVATE
     Qt5::Gui
     Qt5::Widgets
     Qt5::Multimedia
+    Qt5::Svg
     ${FFMPEG_LIBRARIES}
 )
 

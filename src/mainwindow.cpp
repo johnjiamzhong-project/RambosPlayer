@@ -32,6 +32,14 @@ MainWindow::MainWindow(QWidget* parent)
     ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
 
     renderer_ = ui->videoWidget;
+    renderer_->installEventFilter(this);
+    renderer_->setFocusPolicy(Qt::StrongFocus);
+
+    // 控制栏控件不抢焦点：鼠标点击后焦点仍留在 renderer_，
+    // 保证进度条拖拽 / 点击后方向键快进快退依然有效。
+    ui->progressSlider->setFocusPolicy(Qt::NoFocus);
+    ui->volumeSlider->setFocusPolicy(Qt::NoFocus);
+    ui->playPauseBtn->setFocusPolicy(Qt::NoFocus);
     player_   = new PlayerController(renderer_);
     streamCtrl_ = new StreamController();  // 不挂 parent，由析构函数手动控制销毁顺序
 
@@ -69,7 +77,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(ui->actionOpen,     &QAction::triggered,    this, &MainWindow::onOpenFile);
     connect(ui->playPauseBtn,   &QPushButton::clicked,  this, &MainWindow::onPlayPause);
-    connect(ui->progressSlider, &QSlider::sliderMoved, this, &MainWindow::onSeekSliderMoved);
+    connect(ui->progressSlider, &QSlider::sliderMoved,    this, &MainWindow::onSeekSliderMoved);
+    connect(ui->progressSlider, &QSlider::sliderReleased, this, [this]{ renderer_->setFocus(); });
     ui->progressSlider->installEventFilter(this);
     ui->volumeSlider->installEventFilter(this);
     connect(ui->volumeSlider,   &QSlider::valueChanged, this, &MainWindow::onVolumeChanged);
@@ -248,6 +257,7 @@ void MainWindow::onDurationChanged(int64_t ms) {
 
 // 每 100ms 更新进度条和时间标签；用户正在拖拽时跳过进度条更新，避免跳动。
 void MainWindow::onPositionChanged(int64_t ms) {
+    currentPos_ = ms;
     if (!ui->progressSlider->isSliderDown() && duration_ > 0)
         ui->progressSlider->setValue((int)((double)ms / duration_ * 1000));
     ui->timeLabel->setText(formatTime(ms) + " / " + formatTime(duration_));
@@ -258,11 +268,8 @@ void MainWindow::onPlaybackFinished() {
     ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
 }
 
-// 拦截进度条鼠标按下：用 sliderValueFromPosition 算出精确点击位置并立即 seek。
-// 不拦截其他控件，也不消费事件（返回 false），让 Qt 照常处理后续拖拽逻辑。
-// 拦截进度条和音量条的鼠标按下，点击任意位置直接跳转而非 pageStep 步进。
-// volumeSlider 连接 valueChanged，setValue 即可触发；
-// progressSlider 连接 sliderMoved（不响应 setValue），需额外手动调 onSeekSliderMoved。
+// 拦截进度条/音量条的鼠标点击，实现点哪跳哪而非 pageStep 步进。
+// 同时拦截 VideoRenderer 的键盘事件，实现方向键快进/快退与空格暂停。
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
     if (event->type() == QEvent::MouseButtonPress) {
         auto* slider = qobject_cast<QSlider*>(obj);
@@ -275,18 +282,55 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
                 slider->setValue(val);
                 if (slider == ui->progressSlider)
                     onSeekSliderMoved(val);
+                return true;
             }
+        }
+    }
+    if (event->type() == QEvent::KeyPress && obj == renderer_) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->isAutoRepeat()) return false;  // 忽略按键自动重复，避免多次 seek 叠加
+        if (ke->key() == Qt::Key_Space) {
+            qInfo() << "MainWindow: Space pressed, toggle play/pause";
+            onPlayPause();
+            return true;
+        }
+        if (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right) {
+            if (duration_ <= 0) {
+                qInfo() << "MainWindow: arrow key ignored, no media loaded";
+                return true;
+            }
+            double offset = (ke->key() == Qt::Key_Left) ? -10.0 : 10.0;
+            double newSec = qBound(0.0, currentPos_ / 1000.0 + offset, duration_ / 1000.0);
+            qInfo() << "MainWindow:" << (ke->key() == Qt::Key_Left ? "Left" : "Right")
+                    << "arrow, seek from" << currentPos_ / 1000.0 << "s to" << newSec << "s"
+                    << "(offset =" << offset << "s)";
+            player_->seek(newSec);
+            return true;
         }
     }
     return QMainWindow::eventFilter(obj, event);
 }
 
-// 空格键暂停/恢复，其余按键交给父类处理。
+// 空格暂停/恢复，左右方向键快退/快进 10 秒。
+// 仅当焦点不在 VideoRenderer 时作为降级路径；正常情况由 eventFilter 拦截。
 void MainWindow::keyPressEvent(QKeyEvent* event) {
-    if (event->key() == Qt::Key_Space)
+    if (event->isAutoRepeat()) return;
+    if (event->key() == Qt::Key_Space) {
+        qInfo() << "MainWindow::keyPressEvent Space";
         onPlayPause();
-    else
+    } else if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+        if (duration_ <= 0) {
+            qInfo() << "MainWindow::keyPressEvent arrow ignored, no media loaded";
+            return;
+        }
+        double offset = (event->key() == Qt::Key_Left) ? -10.0 : 10.0;
+        double newSec = qBound(0.0, currentPos_ / 1000.0 + offset, duration_ / 1000.0);
+        qInfo() << "MainWindow::keyPressEvent" << (event->key() == Qt::Key_Left ? "Left" : "Right")
+                << "seek to" << newSec;
+        player_->seek(newSec);
+    } else {
         QMainWindow::keyPressEvent(event);
+    }
 }
 
 // 双击切换全屏/窗口模式。

@@ -44,17 +44,32 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
 
 // 启动/停止 1ms 定时器，控制帧拉取循环的运行状态。
 // stopRendering 同时释放暂存帧，防止残留帧跨文件泄漏。
-void VideoRenderer::startRendering() { timer_->start(); }
+void VideoRenderer::startRendering() {
+    noFrameTimer_.restart();
+    noFrameTimerStarted_ = true;
+    noFrameLogged_ = false;
+    dropCount_ = 0;
+    timer_->start();
+}
 
 // seek 时由 PlayerController 调用，释放暂存的旧帧，避免旧 PTS 卡住帧队列消费。
+// 同时重置无帧计时器，使 seek 后能立即开始计量新的空窗期。
 void VideoRenderer::flushPendingFrame() {
     if (pendingFrame_) av_frame_free(&pendingFrame_);
+    noFrameTimer_.restart();
+    noFrameTimerStarted_ = true;
+    noFrameLogged_ = false;
+    dropCount_ = 0;
 }
 
 void VideoRenderer::stopRendering()  {
     timer_->stop();
     if (pendingFrame_) av_frame_free(&pendingFrame_);
 }
+
+// seek while paused 后由 PlayerController 通过 QTimer::singleShot 延迟调用，
+// 直接触发一次 onTimer() 把新位置的帧渲染出来，无需重启定时器。
+void VideoRenderer::renderOneFrame() { onTimer(); }
 
 // 定时回调：音视频同步的核心决策点。
 // 优先检查暂存帧，再从队列取帧；帧到得太早时暂存而非阻塞主线程。
@@ -63,7 +78,15 @@ void VideoRenderer::onTimer() {
     pendingFrame_ = nullptr;
 
     if (!frame) {
-        if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) return;
+        if (!frameQueue_ || !frameQueue_->tryPop(frame, 0)) {
+            // 队列持续为空：每 500ms 打印一次警告，帮助定位 seek 后的视频停顿
+            if (noFrameTimerStarted_ && noFrameTimer_.elapsed() > 500 && !noFrameLogged_) {
+                qInfo() << "VideoRenderer: no frame for" << noFrameTimer_.elapsed()
+                        << "ms (queue empty, dropCount=" << dropCount_ << ")";
+                noFrameLogged_ = true;
+            }
+            return;
+        }
     }
 
     double pts = (frame->pts != AV_NOPTS_VALUE)
@@ -77,8 +100,11 @@ void VideoRenderer::onTimer() {
 
     // 视频落后超过 400ms：丢弃（正向 seek 残留帧或解码太慢的帧）
     if (audioClock >= 0.0 && diff < -0.4) {
-        if (diff < -5.0)
-            qWarning() << "VideoRenderer: drop way-too-late frame pts" << pts << "clock" << audioClock << "diff" << diff;
+        ++dropCount_;
+        // 第 1 帧、第 30 帧、之后每 60 帧打印一次，避免日志爆炸
+        if (dropCount_ == 1 || dropCount_ == 30 || dropCount_ % 60 == 0)
+            qInfo() << "VideoRenderer: drop late frame #" << dropCount_
+                    << "pts=" << pts << "clock=" << audioClock << "diff=" << diff;
         av_frame_free(&frame);
         return;
     }
@@ -86,7 +112,8 @@ void VideoRenderer::onTimer() {
     // 视频超前超过 5 秒：丢弃（向后 seek 后残留的旧位置帧，
     // audioClock 被 seek 设回低位，旧帧 PTS 远大于新时钟，会被当成"超前"卡死 pendingFrame_）
     if (audioClock >= 0.0 && diff > 5.0) {
-        qWarning() << "VideoRenderer: drop stale-ahead frame pts" << pts << "clock" << audioClock << "diff" << diff;
+        qInfo() << "VideoRenderer: drop stale-ahead frame pts=" << pts
+                << "clock=" << audioClock << "diff=" << diff;
         av_frame_free(&frame);
         return;
     }
@@ -120,6 +147,22 @@ void VideoRenderer::onTimer() {
                                   srcW_, srcH_, AV_PIX_FMT_RGB32,
                                   SWS_BILINEAR, nullptr, nullptr, nullptr);
     }
+
+    // seek 后首帧 / 长时间无帧后恢复：打印诊断信息
+    bool isFirstAfterGap = noFrameLogged_ ||
+                           (lastRenderedPts_ >= 0.0 && qAbs(pts - lastRenderedPts_) > 1.0) ||
+                           lastRenderedPts_ < 0.0;
+    if (isFirstAfterGap) {
+        qInfo() << "VideoRenderer: render frame pts=" << pts
+                << "clock=" << audioClock << "diff=" << diff
+                << "(after" << noFrameTimer_.elapsed() << "ms, drops=" << dropCount_ << ")";
+    }
+
+    // 重置计数器，为下次空窗/seek 做准备
+    dropCount_ = 0;
+    noFrameLogged_ = false;
+    noFrameTimer_.restart();
+    lastRenderedPts_ = pts;
 
     uint8_t* dst[1]  = { currentFrame_.bits() };
     int dstStride[1] = { currentFrame_.bytesPerLine() };

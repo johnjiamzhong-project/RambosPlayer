@@ -137,22 +137,39 @@ class DemuxThread : public QThread {
 
 **流程**：
 ```
-用户拖拽进度条
+用户拖拽进度条 / 按方向键
   ↓
-DemuxThread::seek(targetMs) 接收请求
+PlayerController::seek(target)
+  ├─ sync_.setAudioClock(target)   // 立即更新音频时钟，VideoRenderer 开始丢弃旧帧
+  ├─ renderer_->flushPendingFrame() // 清除暂存旧帧
+  ├─ demux_.seek(target)           // 原子写入 seekTarget_
+  ├─ videoPacketQ_.clear()         // 唤醒阻塞 DemuxThread
+  ├─ audioPacketQ_.clear()
+  ├─ videoDec_.flush()             // 设 flush_ 标志，VideoDecodeThread 异步处理
+  └─ audioDec_.flush(target)       // 设 flush_ + minAcceptablePts_ 过滤旧帧时钟
   ↓
-av_seek_frame() 定位到关键帧
+DemuxThread::handleSeek()
+  ├─ av_seek_frame(BACKWARD)       // 定位到 target 之前的关键帧 K
+  ├─ 从 K 起推送所有视频包（H.264 参考帧依赖，不能丢弃 K→target 段）
+  └─ 丢弃 target 前的音频包（防止播放旧音频片段）
   ↓
-清空 videoPacketQueue 和 audioPacketQueue
+VideoDecodeThread
+  ├─ 收到关键帧 K，从 K 正常解码
+  └─ 推送帧到 videoFrameQ_
   ↓
-VideoDecodeThread 和 AudioDecodeThread 调用 codec->flush()
-  ↓
-PlayerController::reset() 清空 frame 队列和 abort 标志
-  ↓
-重新播放，AVSync 重新同步
+VideoRenderer
+  ├─ 丢弃 PTS < target - 0.4s 的旧帧（diff < -0.4）
+  └─ 渲染 PTS ≈ target 的首帧
 ```
 
-**关键点**：必须清空所有队列，否则旧包会污染新解码。
+**关键设计：视频包必须从关键帧起全部放行**
+
+早期实现曾将关键帧到 target 之间的视频包也丢弃（只推送 PTS ≥ target 的包），以为可以减少 VideoDecodeThread 的无效解码工作。但实测发现这会导致视频冻结 2–5 秒：
+
+- `avcodec_flush_buffers` 后，H.264 解码器需要 IDR 帧（关键帧）作为解码起点
+- 若第一个收到的包是 P/B 帧（关键帧已被丢弃），解码器持续返回 `EAGAIN`
+- 直到遇到下一个 IDR 帧才能输出，GOP 间隔最长可达 8–10 秒
+- 修复后让视频包从关键帧 K 起全部流入，VideoRenderer 凭 `diff < -0.4s` 快速丢弃旧帧（< 500 ms 恢复）
 
 ---
 
@@ -443,6 +460,18 @@ A: FFmpeg libavfilter 不支持对已配置的滤镜链修改参数，必须 clo
 **Q24: 水印为什么用 movie + overlay 而不是 drawtext？**  
 A: drawtext 只能渲染文字，不支持图片。movie 滤镜可以加载任意图片作为第二视频流，overlay 将两个流合成。但 drawtext 在本构建中同样不可用（编译时未启用 libfreetype）。
 
+**Q25: Seek 时为什么不能只推送 PTS ≥ target 的视频包，跳过关键帧到目标之间的包？**  
+A: H.264 使用帧间预测，P/B 帧依赖前面的参考帧解码。`avcodec_flush_buffers` 重置解码器后，若第一个收到的包是 P/B 帧（关键帧已被跳过），解码器内部找不到参考帧，持续返回 `EAGAIN`，直到收到下一个 IDR 帧才能恢复输出。实测 GOP 间隔 2–8 秒的视频会冻结对应时长。正确做法是从 `av_seek_frame` 跳到的关键帧 K 起推送全部视频包，让解码器从 K 正常解码；VideoRenderer 凭 `diff < -0.4s` 丢弃 K→target 的旧帧，开销远小于等待下一个 IDR。
+
+**Q26: Seek 时音频包为什么可以丢弃关键帧到目标之间的部分，视频却不行？**  
+A: AAC 等音频编码器虽然也有帧间依赖（滤波器组重叠），但 FFmpeg 的音频解码器在 flush 后能从单帧直接输出 PCM，不会卡住。更重要的是：丢弃旧音频包是为了防止用户听到 seek 目标前的音频片段，这是用户体验需求。视频旧帧则由 VideoRenderer 静默丢弃（不显示），只损失少量 CPU 解码时间，不影响体验。
+
+**Q27: Qt 的 eventFilter 返回 true 消费了鼠标事件，为什么控件还能获得焦点？**  
+A: Qt 的焦点分配在 Windows 平台部分由 OS 原生消息（WM_SETFOCUS/WM_LBUTTONDOWN）驱动，发生在应用层事件过滤之前，或与之并行。即使 eventFilter 返回 true 阻止了 QMouseEvent 到达控件，OS 可能已经把焦点交给该控件。可靠的做法是对不需要接受焦点的控件设置 `Qt::NoFocus` 策略，从根本上告诉系统该控件不参与焦点调度，点击不改变焦点所有权。
+
+**Q28: VideoRenderer 的 seek 诊断日志是如何设计的，为什么不直接用 qCDebug？**  
+A: `qCDebug` 配合 `Q_LOGGING_CATEGORY(lcVideo, "rambos.video", QtWarningMsg)` 时，QtWarningMsg 是该 category 的最低级别，比 QtDebugMsg 高，导致所有 `qCDebug` 调用被静默过滤，日志文件中看不到任何 VideoRenderer 输出。为了在生产日志中保留关键诊断点（seek 后首帧、长时间无帧、旧帧连续丢弃），改为直接用 `qInfo()` 并配合速率限制：无帧超过 500 ms 才打印一次，丢帧在第 1、30 帧及之后每 60 帧打印一次，避免 30 fps 下日志爆炸。
+
 
 #### 8. 视频滤镜：FilterGraph + 实时调参（Phase 8）
 
@@ -506,7 +535,7 @@ class MainWindow : public QMainWindow {
 | **最近文件列表** | `QSettings` 持久化，动态重建 `QMenu` 条目 | 分隔线前删除旧条目再按序插入，支持编号快捷键 `&1`–`&9` |
 | **全屏切换** | 双击 `mouseDoubleClickEvent` → `showFullScreen()` / `showNormal()` | Qt 原生全屏，无边框无任务栏，符合视频播放器预期 |
 
-**端对端验证结果（6/6 通过）**：
+**端对端验证结果（8/8 通过）**：
 
 | 场景 | 结果 |
 |------|:--:|
@@ -516,6 +545,8 @@ class MainWindow : public QMainWindow {
 | 播放到末尾，按钮变 ▶ | ✅ |
 | 双击全屏 → 双击退出，正常切换 | ✅ |
 | 播放中关闭窗口，无崩溃 | ✅ |
+| 大跨度 seek（跳转 1000 s+），视频 < 500 ms 恢复（H.264 参考帧修复） | ✅ |
+| 点击进度条后立即按方向键，快进/快退正常（Qt::NoFocus 修复） | ✅ |
 
 **验证**：全部端对端场景通过；单元测试 0 failures（FrameQueue 7 passed, AVSync 7 passed, DemuxThread 3 passed）。
 

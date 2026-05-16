@@ -52,8 +52,12 @@ void AudioDecodeThread::stop() {
     if (inputQueue_) inputQueue_->abort();
 }
 
-// 标记需要 flush，run() 检测后清空解码器缓冲和 swr 缓冲
-void AudioDecodeThread::flush() { flush_ = true; }
+// 标记需要 flush，并记录 seek 目标供 run() 过滤竞态旧帧。
+// seekTargetSec < 0 表示非 seek 触发的 flush，不启用 PTS 过滤。
+void AudioDecodeThread::flush(double seekTargetSec) {
+    minAcceptablePts_.store(seekTargetSec, std::memory_order_relaxed);
+    flush_ = true;
+}
 
 // 暂停/恢复：run() 检测到 paused_==true 时挂起 QAudioOutput，避免声音继续输出
 void AudioDecodeThread::setPaused(bool p) { paused_ = p; }
@@ -80,11 +84,24 @@ void AudioDecodeThread::run() {
     AVFrame* frame = av_frame_alloc();
     uint8_t* outBuf = nullptr;
     int outBufSize = 0;
-    double lastLogClock = -1.0;  // 上次打印时钟的值，每推进 1s 打一次
+    double lastLogClock = -1.0;    // 上次打印时钟的值，每推进 1s 打一次
+    int64_t lastPopFlushGen = -1;  // 用于识别每次 flush 后的第一个 pkt
 
     while (!abort_) {
-        // 暂停：挂起硬件输出并自旋等待，恢复时 resume sink
+        // 暂停：先处理 flush（seek while paused），再挂起硬件输出并自旋等待。
+        // flush 必须在 paused 分支内检查，否则 continue 会绕过主循环下方的 flush 块，
+        // 导致 seek while paused 后 codec/swr 缓冲不被清空，位置错乱。
         if (paused_.load()) {
+            if (flush_.exchange(false)) {
+                avcodec_flush_buffers(codecCtx_);
+                swr_convert(swrCtx_, nullptr, 0, nullptr, 0);
+                sink_->stop();
+                sink_->setBufferSize(16384);
+                device_ = sink_->start();
+                int64_t gen = flushGen_.fetch_add(1, std::memory_order_relaxed) + 1;
+                qInfo() << "AudioDecodeThread: flush gen" << gen << "done (paused)"
+                        << "minAcceptablePts=" << minAcceptablePts_.load();
+            }
             if (sink_->state() == QAudio::ActiveState)
                 sink_->suspend();
             QThread::msleep(10);
@@ -97,9 +114,11 @@ void AudioDecodeThread::run() {
         if (vol >= 0.f) sink_->setVolume(vol);
 
         if (flush_.exchange(false)) {
-            // 第一轮清空：刷掉队列中已有的旧包
-            AVPacket* stale;
-            while (inputQueue_->tryPop(stale, 0)) av_packet_free(&stale);
+            // 不在此处清包：PlayerController::seek() 已调 audioPacketQ_.clear()，
+            // DemuxThread::handleSeek() 紧接着也 clear 一次；两步之后队列里已是
+            // seek 目标位置之后的有效新包。若此处再清，DemuxThread 在两次 clear 之间
+            // 以文件 I/O 全速推入的 500+ 个有效包会全部丢失，导致消费起点超前 ~11s。
+            // 极少数竞态漏入的旧包（< 2 个）由 minAcceptablePts_ 时钟过滤器兜底。
 
             avcodec_flush_buffers(codecCtx_);
             swr_convert(swrCtx_, nullptr, 0, nullptr, 0);
@@ -107,16 +126,25 @@ void AudioDecodeThread::run() {
             sink_->setBufferSize(16384);
             device_ = sink_->start();
 
-            // 第二轮清空：处理 flush 期间新推入的包
-            //（DemuxThread 可能在 handleSeek 前还在推旧位置的包）
-            while (inputQueue_->tryPop(stale, 0)) av_packet_free(&stale);
-
-            // gen 在最后递增——确保两轮清空之后收到的帧才允许更新时钟
+            // gen 在最后递增——确保 flush 完成后收到的帧才允许更新时钟
             int64_t gen = flushGen_.fetch_add(1, std::memory_order_relaxed) + 1;
-            qInfo() << "AudioDecodeThread: flush gen" << gen << "done";
+            qInfo() << "AudioDecodeThread: flush gen" << gen << "done"
+                    << "minAcceptablePts=" << minAcceptablePts_.load();
         }
 
         if (!inputQueue_->tryPop(pkt, 20)) continue;
+
+        // 每次 flush 后打印第一个被消费的 pkt PTS，便于确认消费起点
+        {
+            int64_t curGen = flushGen_.load(std::memory_order_relaxed);
+            if (curGen != lastPopFlushGen) {
+                lastPopFlushGen = curGen;
+                double pktPts = (pkt->pts != AV_NOPTS_VALUE)
+                    ? pkt->pts * av_q2d(timeBase_) : -1.0;
+                qInfo() << "AudioDecodeThread: first pkt after flush gen" << curGen
+                        << "PTS=" << pktPts;
+            }
+        }
 
         if (avcodec_send_packet(codecCtx_, pkt) < 0) {
             av_packet_free(&pkt); continue;
@@ -148,14 +176,31 @@ void AudioDecodeThread::run() {
                     device_->write((const char*)outBuf, n * 4);
             }
 
-            // 只有世代未变时才更新时钟，防止旧帧将时钟拉回 seek 前的位置
+            // 只有世代未变且没有待处理 flush 时才更新时钟，
+            // 防止旧帧在 seek 后将时钟拉回错误位置。
+            // minAcceptablePts_ 过滤竞态漏入的旧包（PTS 远低于 seek 目标的帧），
+            // 首帧通过后立即清除该过滤器。
             if (frame->pts != AV_NOPTS_VALUE &&
-                gen == flushGen_.load(std::memory_order_relaxed)) {
+                gen == flushGen_.load(std::memory_order_relaxed) &&
+                !flush_.load(std::memory_order_relaxed)) {
                 double clock = frame->pts * av_q2d(timeBase_);
-                sync_->setAudioClock(clock);
+                double minPts = minAcceptablePts_.load(std::memory_order_relaxed);
+                if (minPts < 0.0 || clock >= minPts - 1.0) {
+                    sync_->setAudioClock(clock);
+                    if (minPts >= 0.0) {
+                        qInfo() << "AudioDecodeThread: first valid clock after seek"
+                                << "PTS=" << clock << "seekTarget=" << minPts
+                                << "diff=" << (clock - minPts);
+                        minAcceptablePts_.store(-1.0, std::memory_order_relaxed);
+                    }
+                } else {
+                    qInfo() << "AudioDecodeThread: clock filtered by minPts=" << minPts
+                            << "PTS=" << clock << "diff=" << (clock - minPts);
+                }
             } else if (frame->pts != AV_NOPTS_VALUE) {
                 qInfo() << "AudioDecodeThread: clock update BLOCKED gen" << gen
                                  << "current flushGen" << flushGen_.load()
+                                 << "flush pending" << flush_.load()
                                  << "pts" << frame->pts;
             }
             av_frame_unref(frame);

@@ -63,6 +63,7 @@ private:
     ExportWorker*       exportWorker_  = nullptr; // 无损剪切导出线程
     QString             currentFile_;              // 当前打开的文件路径
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
+    int64_t currentPos_ = 0;        // 当前播放位置（毫秒），键盘快进/快退用
     bool isFullscreen_ = false;     // 全屏状态标志
 
     static constexpr int MaxRecentFiles = 10;   // 最近文件列表最大条数

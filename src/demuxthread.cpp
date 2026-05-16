@@ -76,6 +76,8 @@ void DemuxThread::seek(double seconds) {
 // 检查是否有待处理的 seek 请求。若有，调用 av_seek_frame 跳转到目标关键帧，
 // 然后逐一 pop+free 清空两条队列中的残留包，避免解码线程消费过期数据。
 // 使用 pop+free 而非 clear()，是因为 clear() 不释放队列中的 AVPacket* 指针。
+// seek 后设置 seekExactTarget_，使 run() 跳过 PTS 低于目标的包，
+// 实现从关键帧"快进解码"到精确目标位置，消除 GOP 粒度导致的跳转偏差。
 void DemuxThread::handleSeek() {
     if (!fmtCtx_) { seekTarget_.store(-1.0, std::memory_order_relaxed); return; }
 
@@ -84,18 +86,31 @@ void DemuxThread::handleSeek() {
 
     qInfo() << "DemuxThread::handleSeek target =" << target;
 
-    int64_t ts = (int64_t)(target * AV_TIME_BASE);
-    av_seek_frame(fmtCtx_, -1, ts, AVSEEK_FLAG_BACKWARD);
+    // 按视频流的时间基计算 seek 时间戳，比用 AV_TIME_BASE 更精确
+    int streamIdx = videoIdx_ >= 0 ? videoIdx_ : audioIdx_;
+    if (streamIdx < 0) return;
+
+    AVRational tb = fmtCtx_->streams[streamIdx]->time_base;
+    int64_t ts = av_rescale_q((int64_t)(target * AV_TIME_BASE), AV_TIME_BASE_Q, tb);
+    av_seek_frame(fmtCtx_, streamIdx, ts, AVSEEK_FLAG_BACKWARD);
 
     AVPacket* p;
-    while (videoQueue_->tryPop(p, 0)) av_packet_free(&p);
-    while (audioQueue_->tryPop(p, 0)) av_packet_free(&p);
-    qInfo() << "DemuxThread::handleSeek done, queues cleared";
+    int vclear = 0, aclear = 0;
+    while (videoQueue_->tryPop(p, 0)) { av_packet_free(&p); ++vclear; }
+    while (audioQueue_->tryPop(p, 0)) { av_packet_free(&p); ++aclear; }
+    qInfo() << "DemuxThread::handleSeek cleared" << vclear << "video" << aclear
+            << "audio pkts from queues";
+
+    // 设置精确目标，run() 读取到 >= target 的包之前会丢弃中间帧
+    seekExactTarget_.store(target, std::memory_order_relaxed);
+    logNextAudioPush_.store(true, std::memory_order_relaxed);
+    qInfo() << "DemuxThread::handleSeek keyframe seek done, exact target =" << target;
 }
 
 // 解复用主循环：持续读取 AVPacket 并按流索引分发到对应队列。
 // 每轮循环先处理 seek 请求，再读一个包，clone 后 push 进队列（clone 使所有权独立）。
 // 遇到 EOF 或读取错误时退出；stop() 设置 abort_ 后下次循环检查时也会退出。
+// seekExactTarget_ 活跃时丢弃 PTS 低于目标的包，实现关键帧到精确目标的快进。
 void DemuxThread::run() {
     if (!fmtCtx_) return;
 
@@ -116,10 +131,41 @@ void DemuxThread::run() {
         // 在 clone 前再次检查 abort_，减少 abort 时的 push-drop 泄漏窗口
         if (abort_.load(std::memory_order_relaxed)) break;
 
+        // 精确 seek 过滤：
+        // - 音频包：丢弃 PTS 低于目标的包，避免在目标前播放旧音频。
+        // - 视频包：全部保留，从关键帧起全部送入 VideoDecodeThread。
+        //   原因：H.264 等编解码器在 avcodec_flush_buffers 后，若收到的首包是
+        //   P/B 帧（缺失关键帧到目标间的参考帧），解码器持续返回 EAGAIN，
+        //   须等到下一个 IDR 才能输出帧；IDR 间隔可达 8–10 s，造成长时间冻结。
+        //   视频旧帧由 VideoRenderer 凭 diff < -0.4 快速丢弃，不影响画面正确性。
+        double exactTarget = seekExactTarget_.load(std::memory_order_relaxed);
+        if (exactTarget >= 0.0 && pkt->pts != AV_NOPTS_VALUE) {
+            AVRational* stb = &fmtCtx_->streams[pkt->stream_index]->time_base;
+            double pktSec = pkt->pts * av_q2d(*stb);
+
+            // 仅丢弃目标前的音频包
+            if (pkt->stream_index == audioIdx_ && pktSec < exactTarget - 0.05) {
+                av_packet_unref(pkt);
+                continue;
+            }
+            // 视频包到达目标时清除标志（纯音频文件则以音频包为准）
+            if ((pkt->stream_index == videoIdx_ || videoIdx_ < 0) &&
+                pktSec >= exactTarget - 0.05) {
+                seekExactTarget_.store(-1.0, std::memory_order_relaxed);
+                qInfo() << "DemuxThread: exact seek reached, pkt PTS =" << pktSec;
+            }
+        }
+
         if (pkt->stream_index == videoIdx_) {
             AVPacket* p = av_packet_clone(pkt);
             videoQueue_->push(p);
         } else if (pkt->stream_index == audioIdx_) {
+            if (logNextAudioPush_.exchange(false, std::memory_order_relaxed)) {
+                AVRational* stb = &fmtCtx_->streams[pkt->stream_index]->time_base;
+                double pts = (pkt->pts != AV_NOPTS_VALUE)
+                    ? pkt->pts * av_q2d(*stb) : -1.0;
+                qInfo() << "DemuxThread: first audio push after seek, PTS=" << pts;
+            }
             AVPacket* p = av_packet_clone(pkt);
             audioQueue_->push(p);
         }

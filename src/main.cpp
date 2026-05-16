@@ -24,8 +24,8 @@ static void setDarkTitleBar(HWND hwnd) {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    // 设置应用图标
-    app.setWindowIcon(QIcon(":/icons/app.svg"));
+    // 直接使用 ICO（内含多尺寸），Qt 会根据场景自动选用合适的分辨率
+    app.setWindowIcon(QIcon(":/icons/app.ico"));
 
     // 加载暗色主题样式表
     QFile qss(":/style.qss");

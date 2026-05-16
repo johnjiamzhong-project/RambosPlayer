@@ -126,6 +126,46 @@
 
 ---
 
+## #013 — Seek 后实际播放位置偏移 10–20 秒
+
+- **日期**：2026-05-16
+- **现象**：按右箭头快进 10 秒，实际跳 20–30 秒；按左箭头后退 10 秒，反而净前进约 10 秒（方向反转）
+- **根因**（经两轮日志确认）：`AudioDecodeThread::run()` flush 路径中的**第一轮清空**（`clear-1`）是真正凶手。
+  - PlayerController::seek() 已执行 `audioPacketQ_.clear()`，DemuxThread::handleSeek() 紧接也 clear 一次，此后队列仅含 seek 目标位置之后的有效新包
+  - DemuxThread 以文件 I/O 全速向队列推包；AudioDecodeThread 检测到 `flush_` 时队列中已积压 **500+ 个有效包**（覆盖约 11s 音频）
+  - clear-1 把这 500+ 个有效包全部丢弃，DemuxThread 文件指针超前 ~11s；flush gen done 后消费起点变成 `seekTarget + 11s`，时钟跳升
+  - 第一轮清空的初衷是清旧包，但 PlayerController 和 handleSeek 已完成清旧，实际清的全是有效新包
+  - 第二轮清空同理（在后续迭代中已删除，但 clear-1 仍存在导致问题延续）
+- **修复**：
+  - 完全删除 `AudioDecodeThread` flush 路径中的 clear-1（不再主动清包）
+  - 依赖 PlayerController 的 `audioPacketQ_.clear()` + DemuxThread `handleSeek` 的 tryPop 清旧，两步已足够
+  - 保留 `minAcceptablePts_` 时钟过滤器（由 `flush(seekTargetSec)` 传入），应对极少数竞态漏入的 1–2 个旧包
+- **涉及文件**：`src/audiodecodethread.h`、`src/audiodecodethread.cpp`、`src/playercontroller.cpp`
+
+---
+
+## #014 — Seek 后视频冻结 2–5 秒（H.264 精确 seek 丢弃参考帧）
+
+- **日期**：2026-05-16
+- **现象**：按右箭头快进或拖动进度条后，声音立即跳到新位置播放，但视频画面冻结 2–5 秒才更新；日志显示 `VideoRenderer: no frame for Xms (queue empty, dropCount=1)`
+- **根因**：`DemuxThread::handleSeek` 执行完关键帧 seek 后，`run()` 的"精确 seek"阶段会丢弃关键帧到目标之间的**所有**视频包（包括 IDR 帧本身），只推送 PTS ≥ target 的包。VideoDecodeThread 调用 `avcodec_flush_buffers` 后缺少参考帧，收到的首包若为 P/B 帧则持续返回 `EAGAIN`，直到遇到**下一个 IDR 帧**才能输出解码帧。H.264 GOP 最长可达 8–10 秒，导致视频冻结对应时长
+- **修复**：精确 seek 阶段改为**仅丢弃目标前的音频包**（防止播放旧音频），视频包从关键帧起全部放行送入 VideoDecodeThread；VideoDecodeThread 从关键帧开始正常解码，VideoRenderer 凭 `diff < -0.4s` 快速丢弃目标前旧帧，视频恢复时间从 2–5 s 缩短至 < 500 ms
+- **涉及文件**：`src/demuxthread.cpp`
+
+---
+
+## #015 — 点击进度条后方向键快进/快退失效（QSlider 抢焦点）
+
+- **日期**：2026-05-16
+- **现象**：用键盘左右方向键快进/快退正常；鼠标点击进度条跳转后，再按方向键无任何 seek 效果
+- **根因**：`eventFilter` 拦截进度条的 `MouseButtonPress` 并正确触发 seek，但 Qt 在事件分发后仍将输入焦点转移给 `QSlider`。此后 `Key_Left/Key_Right` 被 `QSlider` 的内置 `keyPressEvent` 消费（用于调整滑块步进），事件不再冒泡到 `VideoRenderer` 或 `MainWindow`，`eventFilter` 和 `keyPressEvent` 中的 seek 逻辑均不触发
+- **修复**：
+  1. 构造函数中对进度条、音量条、播放按钮设置 `Qt::NoFocus`，使点击不改变焦点，`renderer_` 始终持有焦点
+  2. 连接 `progressSlider::sliderReleased` 信号，拖拽松开后显式调 `renderer_->setFocus()`，覆盖拖拽场景
+- **涉及文件**：`src/mainwindow.cpp`
+
+---
+
 ## #010 — 音量滑块点击不跳转：QSlider 默认 pageStep 步进
 
 - **日期**：2026-05-10

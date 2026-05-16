@@ -21,7 +21,7 @@ public:
 
     bool init(AVCodecParameters* params, AVRational timeBase, AVSync* sync);
     void stop();
-    void flush();
+    void flush(double seekTargetSec = -1.0);
     void setVolume(float v);
 
     void setInputQueue(FrameQueue<AVPacket*>* q) { inputQueue_ = q; }
@@ -44,6 +44,7 @@ private:
     std::atomic<bool> abort_{false};       // 停止标志
     std::atomic<bool> flush_{false};       // Seek 后清空缓冲
     std::atomic<int64_t> flushGen_{0};     // flush 世代计数器，防止旧帧在 seek 后更新时钟
+    std::atomic<double> minAcceptablePts_{-1.0}; // flush 后允许更新时钟的最小 PTS（秒），过滤竞态漏入的旧包
     std::atomic<bool> paused_{false};      // 暂停标志，run() 检测后 suspend/resume QAudioOutput
     std::atomic<float> pendingVolume_{-1.f}; // 待应用的音量（-1 表示无）
 };
