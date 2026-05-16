@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QtMath>
 #include <QFontMetrics>
+#include <QDebug>
 
 Timeline::Timeline(QWidget* parent)
     : QWidget(parent)
@@ -18,6 +19,7 @@ void Timeline::setDuration(int64_t durationUs)
     duration_ = durationUs;
     if (outPts_ == 0)  // 首次设置才初始化出口到末尾
         outPts_ = durationUs;
+    qInfo() << "Timeline::setDuration" << durationUs / 1000000.0 << "s";
     update();
 }
 
@@ -276,6 +278,10 @@ void Timeline::mouseMoveEvent(QMouseEvent* ev)
 
 void Timeline::mouseReleaseEvent(QMouseEvent*)
 {
+    if (handleDrag_ >= 0)
+        qInfo() << "Timeline: trim" << (handleDrag_ == 0 ? "in" : "out")
+                << "set to" << (handleDrag_ == 0 ? inPts_ : outPts_) / 1000000.0 << "s"
+                << "range=" << (outPts_ - inPts_) / 1000000.0 << "s";
     handleDrag_ = -1;
     setCursor(Qt::ArrowCursor);
 }

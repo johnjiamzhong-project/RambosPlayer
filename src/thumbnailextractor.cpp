@@ -1,5 +1,7 @@
 #include "thumbnailextractor.h"
 #include <QtMath>
+#include <QDebug>
+#include <QFileInfo>
 
 ThumbnailExtractor::ThumbnailExtractor(QObject* parent)
     : QThread(parent), count_(8)
@@ -22,6 +24,8 @@ void ThumbnailExtractor::extract(const QString& path, int count)
     }
     path_ = path;
     count_ = qMax(1, count);
+    qInfo() << "ThumbnailExtractor: extract" << QFileInfo(path).fileName()
+            << "count=" << count_;
     start();
 }
 
@@ -131,8 +135,10 @@ void ThumbnailExtractor::run()
     avcodec_free_context(&codecCtx);
     avformat_close_input(&fmtCtx);
 
-    if (!isInterruptionRequested())
+    if (!isInterruptionRequested()) {
+        qInfo() << "ThumbnailExtractor: done, got" << result.size() << "thumbnails";
         emit thumbnailsReady(result);
+    }
 }
 
 QImage ThumbnailExtractor::frameToImage(AVFrame* frame, AVCodecContext* codecCtx,

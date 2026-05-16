@@ -49,6 +49,7 @@ bool PlayerController::open(const QString& path) {
     }
 
     emit durationChanged(duration());  // 通知 UI 文件时长已确定（毫秒）
+    qInfo() << "PlayerController::open ok duration=" << duration() << "ms";
     return true;
 }
 
@@ -57,6 +58,7 @@ bool PlayerController::open(const QString& path) {
 void PlayerController::play() {
     if (playing_ || !demux_.formatContext()) return;
     playing_ = true;
+    qInfo() << "PlayerController::play";
     audioDec_.setPaused(false);   // 先解除暂停，再 start（start 对已运行线程是 no-op）
     demux_.start();
     videoDec_.start();
@@ -69,6 +71,7 @@ void PlayerController::play() {
 // 解码线程继续持有资源，恢复时无需重新初始化。
 void PlayerController::pause() {
     playing_ = false;
+    qInfo() << "PlayerController::pause at" << sync_.audioClock() << "s";
     posTimer_->stop();
     renderer_->stopRendering();
     audioDec_.setPaused(true);
@@ -76,6 +79,8 @@ void PlayerController::pause() {
 
 // 停止：停止渲染，等待所有线程退出，清空三条队列。
 void PlayerController::stop() {
+    if (demux_.formatContext())
+        qInfo() << "PlayerController::stop";
     playing_ = false;
     posTimer_->stop();
     renderer_->stopRendering();

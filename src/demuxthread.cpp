@@ -57,6 +57,9 @@ bool DemuxThread::open(const QString& path,
     duration_   = fmtCtx_->duration;
     videoQueue_ = videoQueue;
     audioQueue_ = audioQueue;
+    qInfo() << "DemuxThread::open ok" << path
+            << "duration=" << duration_ / AV_TIME_BASE << "s"
+            << "videoIdx=" << videoIdx_ << "audioIdx=" << audioIdx_;
     return true;
 }
 
@@ -120,7 +123,10 @@ void DemuxThread::run() {
         handleSeek();
 
         int ret = av_read_frame(fmtCtx_, pkt);
-        if (ret == AVERROR_EOF) break;
+        if (ret == AVERROR_EOF) {
+            qInfo() << "DemuxThread: EOF reached";
+            break;
+        }
         if (ret < 0) {
             char errbuf[64];
             av_strerror(ret, errbuf, sizeof(errbuf));

@@ -23,6 +23,11 @@ public:
 
     bool isEmpty() const { return desc_.isEmpty(); }
 
+    // 供 VideoDecodeThread 在首帧 HW→SW 转换后更新实际软解格式，
+    // 避免 buffersrc 以硬解格式（D3D11）构建后收到软解帧（NV12）导致崩溃。
+    AVPixelFormat pixFmt() const { return pixFmt_; }
+    void setPixFmt(AVPixelFormat fmt) { pixFmt_ = fmt; }
+
 private:
     AVFilterGraph* graph_ = nullptr;   // libavfilter 滤镜图
     AVFilterContext* src_ = nullptr;   // buffersrc 入口

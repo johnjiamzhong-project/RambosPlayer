@@ -55,6 +55,7 @@ private:
     std::atomic<bool> flush_{false};                // Seek 后清空解码器缓冲
     AVRational timeBase_{1, 1};                     // 时间基，用于外部查询
     bool hwAccel_ = false;                          // 是否成功启用了硬件加速
+    AVPixelFormat swFmt_ = AV_PIX_FMT_NONE;        // 首帧 HW→SW 转换后确定的实际软解格式
 
     // 滤镜参数（GUI 线程写，解码线程读）
     std::atomic<bool>  filterEnabled_{false};       // 滤镜开关

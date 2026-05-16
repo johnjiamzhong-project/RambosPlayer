@@ -1,10 +1,12 @@
 #include "videodecodethread.h"
 #include "hwaccel.h"
 #include <QDebug>
+#include <QFileInfo>
 
 extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/hwcontext.h>
+#include <libavformat/avformat.h>
 }
 
 VideoDecodeThread::~VideoDecodeThread() {
@@ -39,11 +41,19 @@ bool VideoDecodeThread::init(AVCodecParameters* params, bool hwEnabled) {
         }
     }
 
-    // 初始化滤镜图为直通模式，后续由 rebuild 按需激活
+    // 初始化滤镜图为直通模式，后续由 rebuild 按需激活。
+    // 硬解时 codecCtx_->pix_fmt = AV_PIX_FMT_D3D11，但帧经 av_hwframe_transfer_data
+    // 后为 NV12（D3D11VA 通用软解输出），必须用软解格式初始化 buffersrc，否则送帧时崩溃。
+    AVPixelFormat filterFmt = hwAccel_ ? AV_PIX_FMT_NV12 : codecCtx_->pix_fmt;
+    swFmt_ = AV_PIX_FMT_NONE;  // 重置，等首帧后由 run() 更新
     filterGraph_.init(codecCtx_->width, codecCtx_->height,
-                      codecCtx_->pix_fmt, timeBase_, QString{});
+                      filterFmt, timeBase_, QString{});
 
-    return avcodec_open2(codecCtx_, codec, nullptr) >= 0;
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) return false;
+    qInfo() << "VideoDecodeThread::init ok codec=" << codec->name
+            << "size=" << params->width << "x" << params->height
+            << "hw=" << hwAccel_;
+    return true;
 }
 
 // 设置停止标志并 abort 两侧队列，解除 run() 阻塞
@@ -65,6 +75,20 @@ void VideoDecodeThread::setBrightness(float v)   { brightness_ = v; filterDirty_
 void VideoDecodeThread::setContrast(float v)     { contrast_   = v; filterDirty_ = true; }
 void VideoDecodeThread::setSaturation(float v)   { saturation_ = v; filterDirty_ = true; }
 void VideoDecodeThread::setWatermark(const QString& path) {
+    // 诊断：直接用 avformat_open_input 测试 FFmpeg 能否访问该文件
+    if (!path.isEmpty()) {
+        QString fwd = path; fwd.replace('\\', '/');
+        AVFormatContext* probe = nullptr;
+        int r = avformat_open_input(&probe, fwd.toUtf8().constData(), nullptr, nullptr);
+        if (r < 0) {
+            char eb[128]; av_strerror(r, eb, sizeof(eb));
+            qWarning() << "VideoDecodeThread::setWatermark avformat_open_input FAILED"
+                       << fwd << "error:" << eb;
+        } else {
+            qInfo() << "VideoDecodeThread::setWatermark avformat_open_input OK" << fwd;
+            avformat_close_input(&probe);
+        }
+    }
     { QMutexLocker lk(&watermarkMtx_); watermarkPath_ = path; }
     filterDirty_ = true;
 }
@@ -86,15 +110,30 @@ QString VideoDecodeThread::buildFilterDesc() const {
         parts << QString("colorbalance=rm=%1:gm=%1:bm=%1").arg(c, 0, 'f', 2);
 
     QMutexLocker lk(&watermarkMtx_);
-    if (!watermarkPath_.isEmpty())
-        parts << QString("movie=%1[wm];[in][wm]overlay=10:10")
-                    .arg(watermarkPath_);
+    if (!watermarkPath_.isEmpty()) {
+        if (!QFileInfo::exists(watermarkPath_)) {
+            qWarning() << "VideoDecodeThread: watermark file not found:" << watermarkPath_;
+        } else {
+            QString fwdPath = watermarkPath_;
+            fwdPath.replace('\\', '/');
+            // Windows 盘符冒号需要两层转义穿透 FFmpeg 两道解析：
+            //   Layer 1 av_get_token("[];,"): G\\:/ → 输出 G\:/ (\\ → \)
+            //   Layer 2 av_set_options_string:  G\:/ → 输出 G:/  (\: → :)
+            //   最终 movie filter 拿到 G:/path，avformat_open_input 正常打开。
+            if (fwdPath.length() >= 2 && fwdPath[1] == ':')
+                fwdPath.insert(1, "\\\\");  // 插入两个反斜杠（C++ 字面量 \\\\ = 两个字符 \\）
+            QString filterStr = QString("movie=filename=%1[wm];[in][wm]overlay=10:10").arg(fwdPath);
+            qInfo() << "VideoDecodeThread: watermark filter:" << filterStr;
+            parts << filterStr;
+        }
+    }
 
     return parts.join(',');
 }
 
 // 主循环：取包 → send_packet → receive_frame → [滤镜] → clone 推入输出队列。
 void VideoDecodeThread::run() {
+    qInfo() << "VideoDecodeThread::run start";
     AVPacket* pkt = nullptr;
     AVFrame* frame = av_frame_alloc();
     AVFrame* filtered = av_frame_alloc();
@@ -131,6 +170,17 @@ void VideoDecodeThread::run() {
                     swTmp->pts     = frame->pts;
                     swTmp->pkt_dts = frame->pkt_dts;
                     src = swTmp;
+
+                    // 首帧转换后确认实际软解格式（D3D11VA 通常为 NV12，10-bit 内容为 P010）。
+                    // 若与滤镜初始化时假定的格式不符，更新格式并触发重建，避免送帧崩溃。
+                    if (swFmt_ == AV_PIX_FMT_NONE) {
+                        swFmt_ = (AVPixelFormat)swTmp->format;
+                        qInfo() << "VideoDecodeThread: hw sw_format =" << swFmt_;
+                        if (swFmt_ != filterGraph_.pixFmt()) {
+                            filterGraph_.setPixFmt(swFmt_);
+                            if (!filterGraph_.isEmpty()) filterDirty_ = true;
+                        }
+                    }
                 } else {
                     qWarning() << "VideoDecodeThread: av_hwframe_transfer_data failed, skip frame"
                                << "pts" << frame->pts;
@@ -160,5 +210,6 @@ void VideoDecodeThread::run() {
     av_frame_free(&filtered);
     av_frame_free(&frame);
     filterGraph_.close();
+    qInfo() << "VideoDecodeThread::run finished";
     emit finished();
 }

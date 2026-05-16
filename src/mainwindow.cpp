@@ -144,6 +144,7 @@ MainWindow::~MainWindow() {
 void MainWindow::openFile(const QString& path) {
     player_->stop();
     if (player_->open(path)) {
+        qInfo() << "MainWindow: opened" << path;
         currentFile_ = path;
         updateRecentFiles(path);
         ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));

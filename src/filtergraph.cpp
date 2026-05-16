@@ -1,5 +1,6 @@
 #include "filtergraph.h"
 #include <QDebug>
+#include <QRegularExpression>
 
 extern "C" {
 #include <libavfilter/avfilter.h>
@@ -60,7 +61,33 @@ bool FilterGraph::init(int width, int height, AVPixelFormat pixFmt,
     avfilter_inout_free(&outputs);
 
     if (ret < 0) {
-        qWarning() << "FilterGraph: avfilter_graph_parse_ptr failed for" << filterDesc;
+        char errbuf[128];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        qWarning() << "FilterGraph: avfilter_graph_parse_ptr failed for" << filterDesc
+                   << "error:" << errbuf;
+
+        // 诊断：直接用 avfilter_graph_create_filter 创建 movie filter，
+        // 绕开字符串解析层，确认是解析问题还是 movie filter 本身问题。
+        // 从 desc 里提取引号包裹的路径（形如 movie='path'[wm]; 或 movie=path[wm];）
+        QString path;
+        QRegularExpression re(R"(movie='?([^'\[;]+)'?\[)");
+        auto m = re.match(filterDesc);
+        if (m.hasMatch()) {
+            path = m.captured(1).trimmed();
+            AVFilterContext* testCtx = nullptr;
+            int r2 = avfilter_graph_create_filter(&testCtx,
+                avfilter_get_by_name("movie"), "probe",
+                path.toUtf8().constData(), nullptr, graph_);
+            if (r2 < 0) {
+                char eb2[128]; av_strerror(r2, eb2, sizeof(eb2));
+                qWarning() << "FilterGraph: direct movie create FAILED path=" << path
+                           << "error:" << eb2;
+            } else {
+                qInfo() << "FilterGraph: direct movie create OK path=" << path
+                        << "=> parse_ptr string parsing is the real issue";
+            }
+        }
+
         close(); return false;
     }
 
@@ -69,6 +96,7 @@ bool FilterGraph::init(int width, int height, AVPixelFormat pixFmt,
         close(); return false;
     }
 
+    qInfo() << "FilterGraph::init ok desc=" << filterDesc;
     return true;
 }
 

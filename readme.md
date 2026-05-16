@@ -56,6 +56,14 @@
 
 ---
 
+## 已知问题
+
+| 问题 | 状态 | 说明 |
+|------|:----:|------|
+| 水印不显示 | 🔴 待解决 | FFmpeg `movie` 滤镜无法正确解析含盘符的 Windows 绝对路径（`G:/...`）。盘符中的 `:` 经 `avfilter_graph_parse_ptr` → `av_get_token` → `avfilter_init_str` → `av_set_options_string` 四层解析后始终无法正确传递到 movie filter 的 `filename` 选项。`avformat_open_input` 直接打开文件正常（验证文件存在且可读），但通过滤镜图字符串传参时多层 `\` 转义均无法穿透。需研究 FFmpeg 源码中 `avfilter_graph_parse2` 对 movie 源滤镜的选项传递机制后再解决。 |
+
+---
+
 ## 环境
 
 | 项目 | 版本 / 路径 |

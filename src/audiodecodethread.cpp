@@ -43,6 +43,9 @@ bool AudioDecodeThread::init(AVCodecParameters* params,
     av_opt_set_sample_fmt(swrCtx_, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
     if (swr_init(swrCtx_) < 0) return false;
 
+    qInfo() << "AudioDecodeThread::init ok codec=" << codec->name
+            << "sampleRate=" << codecCtx_->sample_rate
+            << "channels=" << codecCtx_->ch_layout.nb_channels;
     return true;
 }
 
@@ -69,6 +72,7 @@ void AudioDecodeThread::setVolume(float v) { pendingVolume_.store(v); }
 // QAudioOutput 在此处创建，保证创建/start/write/stop 都在同一线程，满足 Qt 线程亲和性。
 // 时钟用 processedUSecs()（硬件实际播放量）而非解码位置，避免缓冲区超前导致视频跑飞。
 void AudioDecodeThread::run() {
+    qInfo() << "AudioDecodeThread::run start";
     QAudioFormat fmt;
     fmt.setSampleRate(44100);
     fmt.setChannelCount(2);
@@ -212,5 +216,6 @@ void AudioDecodeThread::run() {
     delete sink_;
     sink_ = nullptr;
     device_ = nullptr;
+    qInfo() << "AudioDecodeThread::run finished";
     emit finished();
 }
