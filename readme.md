@@ -17,7 +17,7 @@
 | 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
-| 功能5 — 屏幕录制 / 推流 | ✅ 完成 |
+| 功能5 — 推流播放内容（音视频双流，RTMP/SRT） | 🔄 重构中 |
 | 功能6 — 视频剪辑器 | ✅ 完成 |
 
 ---
@@ -53,7 +53,7 @@
 |------|------|
 | 硬件加速（D3D11VA） | 菜单 → 硬件加速（重新打开文件后生效） |
 | 视频滤镜（亮度/对比度/饱和度/水印） | 菜单 → 滤镜编辑器，实时预览 |
-| 屏幕录制 / RTMP 推流 | 菜单 → 推流，输入采集源和目标 URL |
+| 推流播放内容（RTMP / SRT） | 菜单 → 推流，输入目标地址，支持多路同时推流 |
 | 视频剪辑（无损剪切导出） | 菜单 → 剪辑模式（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
 
 ---
@@ -90,23 +90,23 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 
 ### 推流管线
 
+推流源直接来自播放器解码帧，不经过录屏，支持音视频双流和多路同时推流。
+
 ```
-MainWindow
-    │ streamCtrl_->start(source, url)
-    ▼
-StreamController
-    │  持有 rawFrameQ_ + encodedPacketQ_
-    ▼
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  CaptureThread   │ ──▶ │  EncodeThread    │ ──▶ │   MuxThread      │
-│  gdigrab/dshow   │     │  H.264 编码      │     │  FLV/RTMP 封装   │
-│  → AVFrame*(BGR0)│     │  → AVPacket*     │     │  → 本地/网络输出  │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-      rawFrameQ_              encodedPacketQ_
-      (cap 30)                (cap 60)
+VideoDecodeThread ──→ videoFrameQueue ──→ VideoRenderer（播放，不变）
+                  ↘ restreamVideoQ   ──→ EncodeThread（H.264，fan-out）─┐
+                                                                         ├→ MuxThread[0] → rtmp://...
+AudioDecodeThread ──→ QAudioOutput（播放，不变）                        ├→ MuxThread[1] → srt://:9000
+                  ↘ restreamAudioQ  ──→ AudioEncodeThread（AAC，fan-out）┘ → record.flv
 ```
 
-> 详细推流管线架构：[docs/推流管线架构2.html](docs/推流管线架构2.html)
+| 推流协议 | 地址格式 | 适用场景 |
+|----------|----------|----------|
+| RTMP | `rtmp://127.0.0.1:1935/live/test` | 在线平台（Twitch/B站）或本地 SRS 服务器 |
+| SRT | `srt://:9000` | 局域网直连（平板/手机用 VLC 拉流），无需服务器 |
+| 本地录制 | `C:/record.flv` | 录制当前播放内容到文件 |
+
+> 重构计划：[docs/superpowers/plans/2026-05-17-phase9-restream.md](docs/superpowers/plans/2026-05-17-phase9-restream.md)
 
 ### 核心组件
 
@@ -122,10 +122,10 @@ StreamController
 | `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏，滤镜面板 Dock |
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
-| `CaptureThread` | `src/capturethread.h/.cpp` | 桌面 (gdigrab) 或摄像头 (dshow) 采集，解码后输出 AVFrame* 到 FrameQueue |
-| `EncodeThread` | `src/encodethread.h/.cpp` | 消费原始帧队列，sws_scale 转 YUV420P，H.264 编码后输出 AVPacket* |
-| `MuxThread` | `src/muxthread.h/.cpp` | 消费编码包队列，av_interleaved_write_frame 写 FLV/RTMP，停止时 avio_closep 冲刷文件 |
-| `StreamController` | `src/streamcontroller.h/.cpp` | 持有 CaptureThread + EncodeThread + MuxThread 生命周期，管理启动/停止顺序 |
+| `EncodeThread` | `src/encodethread.h/.cpp` | 消费转推视频帧队列，sws_scale 转 YUV420P，H.264 编码，fan-out 输出到多路 MuxThread |
+| `AudioEncodeThread` | `src/audioencodethread.h/.cpp` | 消费转推音频帧队列，SwrContext 转 fltp，AVAudioFifo 缓冲至 1024 samples，AAC 编码，fan-out 输出 |
+| `MuxThread` | `src/muxthread.h/.cpp` | 消费音视频编码包，av_interleaved_write_frame 交错写；支持 RTMP（FLV）和 SRT（MPEGTS），PTS 自动归零 |
+| `StreamController` | `src/streamcontroller.h/.cpp` | 管理 EncodeThread + AudioEncodeThread + 多路 MuxThread 生命周期；向 PlayerController 提供分叉队列入口 |
 
 ---
 
@@ -169,12 +169,14 @@ RambosPlayer/
 
 ## 
 
-### 为什么一个"播放器"有录屏和推流？
+### 为什么一个"播放器"有推流和剪辑？
 
 传统播放器（VLC、PotPlayer、MPC-HC）只需解复用→解码→渲染，但本项目的学习目标是 **FFmpeg 全链路**：
 
 - **解码链路（播放）**：`av_read_frame` / `avcodec_send_packet` / `sws_scale` — 数据从文件流向屏幕
 
-- **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 数据从采集设备流向网络
+- **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 解码帧直接分叉进入编码管线，推送到 RTMP 服务器或 SRT 对端；音视频双流，支持多路同时推流
 
-  两条链路合在一起才构成完整的 FFmpeg 技能树。加上视频剪辑器（关键帧定位 + 无损剪切），覆盖了 `av_seek_frame` / `av_interleaved_write_frame` 的导出场景。所以定位更接近**"多媒体处理工具箱"**而非纯播放器。
+- **转封装链路（剪辑导出）**：`av_seek_frame` + `-c copy` 无损剪切，关键帧对齐，PTS 归零重写
+
+  三条链路合在一起才构成完整的 FFmpeg 技能树，所以定位更接近**"多媒体处理工具箱"**而非纯播放器。

@@ -62,7 +62,6 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
             qInfo() << "EncodeThread: using built-in H.264 encoder:" << codec->name;
     }
 
-    hwEnc_ = false;
     if (!codec) {
         qWarning() << "EncodeThread: NO H.264 encoder available!";
         qWarning() << "  -> Install: .\\vcpkg install ffmpeg[gpl,x264]  (recommended)";

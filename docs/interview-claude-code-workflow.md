@@ -26,7 +26,7 @@
 
 ### 关键收益（可量化的部分）
 
-- Phase 1–10（项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 硬件加速 → 视频滤镜 → 推流管线 → 视频剪辑器）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、D3D11VA 硬解、实时滤镜调参、桌面采集与 RTMP 推流、时间轴无损剪辑等完整多媒体功能
+- Phase 1–10（项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 硬件加速 → 视频滤镜 → 推流管线 → 视频剪辑器）通过这套流程完整实现，覆盖多线程架构、解码、音视频同步、seek、D3D11VA 硬解、实时滤镜调参、解码帧分叉音视频双流推流（RTMP/SRT）、时间轴无损剪辑等完整多媒体功能
 - 每个功能都有对应 spec 和 plan 文档，可追溯决策过程
 
 ---
@@ -552,45 +552,39 @@ class MainWindow : public QMainWindow {
 
 ---
 
-#### 10. 屏幕录制 / 推流：CaptureThread + EncodeThread + MuxThread + StreamController（Phase 9）
+#### 10. 推流播放内容：解码帧分叉 + 音视频双流 + 多目标 MuxThread（Phase 9 重构）
 
-**问题**：如何实现桌面采集 → H.264 编码 → FLV 封装 → 本地文件/RTMP 推流的完整管线？
+**问题**：如何将正在播放的视频内容（含滤镜效果）实时推流到直播平台、局域网设备或本地文件，且不影响播放器本身的性能？
 
-**核心设计**：六组件三级流水线
+**核心设计**：解码帧在 push 到播放队列的同时，clone 一份推入转推队列，完全复用已解码的数据
 
 ```
-StreamController (总控)
-  │  持有 rawFrameQ_ (cap 30) + encodedPacketQ_ (cap 60)
-  ▼
-CaptureThread          EncodeThread           MuxThread
-  gdigrab/dshow     →  H.264 编码         →  FLV/RTMP 输出
-  AVFrame*(BGR0)       AVPacket*             av_interleaved_write_frame
+VideoDecodeThread → videoFrameQueue  → VideoRenderer（播放，不变）
+                  ↘ restreamVideoQ  → EncodeThread（H.264, fan-out）─┐
+                                                                       ├→ MuxThread[N]
+AudioDecodeThread → QAudioOutput（播放，不变）                        │
+                  ↘ restreamAudioQ → AudioEncodeThread（AAC, fan-out）┘
 ```
 
 **设计决策解释**：
 
 | 决策项 | 选择 | 理由 |
 |--------|------|------|
-| **采集源支持** | gdigrab（桌面）+ dshow（摄像头） | gdigrab 无需额外硬件，dshow 是 Windows 通用摄像头接口 |
-| **编码器回退链** | h264_nvenc → libx264 → openh264 → 通用 H.264 | 覆盖 GPU 硬编、GPL 软编、BSD 软编、开源软编，最大化可用性 |
-| **编码器探测** | avcodec_find_encoder_by_name 逐个尝试 | FFmpeg 不提供"列出所有 H.264 编码器"的 API，只能逐个探测 |
-| **PTS 再映射** | av_packet_rescale_ts {1,fps} → {1,1000} | 编码器 PTS 是帧序号时间基，封装器期望毫秒时间基 |
-| **FLV 全局头** | AV_CODEC_FLAG_GLOBAL_HEADER | FLV 解码器需要 SPS/PPS 初始化；编码线程 init 时通过 avcodec_parameters_from_context 传给 mux 写 FLV header |
-| **缓冲冲刷** | stop 后 av_write_trailer + avio_closep | 本地 FLV 文件末尾数据在 libavformat 缓冲中，不主动冲刷会导致文件截断 |
-| **启动顺序** | mux → encode → capture（逆流启动） | 消费端先就位，生产端才不会被首帧背压阻塞 |
-| **停止顺序** | capture → encode → mux（顺流停止） | 先停源头不产新帧，编码器消费残留帧并 flush，最后封装/冲刷空队列 |
-| **停止超时** | capture 3s / encode 3s / mux 3s | 防止编码缓慢或 RTMP 网络延迟导致 wait() 永久阻塞 UI |
+| **推流源** | 解码帧直接分叉，而非录屏 | 避免"解码→显示→截图→重编码"的无意义往返；画质更高，CPU 更低；滤镜效果自动包含在推流内容中 |
+| **分叉方式** | `tryPush()`（非阻塞） | 推流慢时丢帧而非阻塞解码线程，播放器本身永远不受推流影响 |
+| **音频编码** | AAC + SwrContext + AVAudioFifo | AAC 编码器要求固定 1024 samples/帧，AVAudioFifo 做缓冲对齐；SwrContext 统一输入格式为 fltp |
+| **多目标 fan-out** | EncodeThread/AudioEncodeThread 各持 vector 输出队列 | 编码一次，av_packet_clone 分发到每路 MuxThread，支持同时推多个目标 |
+| **协议识别** | URL 前缀自动判断：rtmp:// → FLV，srt:// → MPEGTS，本地路径 → FLV | 对外接口统一为 URL 字符串，MuxThread 内部透明处理 |
+| **SRT 模式** | listener 模式 `srt://:port`，客户端主动连 | 无需服务器，平板 VLC 直接输入 `srt://PC的IP:9000` 即可拉流 |
+| **PTS 归零** | 记录首帧 PTS 为基准，后续包减去偏移 | 推流开始时解码帧 PTS 不为 0，不归零接收端会跳过前段内容 |
+| **UI 设计** | 三个可勾选场景（直播平台/局域网/本地录制），单选或多选 | 三种目标是独立的使用场景，用户按需组合，不强制全选 |
+| **启动顺序** | 所有 MuxThread → AudioEncodeThread → EncodeThread（逆流启动） | 消费端先就绪，生产端才不会被首帧背压阻塞 |
+| **停止顺序** | 先断分叉源头（setRestreamQueue(nullptr)），再逐级停止 | 断源后队列自然排空，编码/封装线程处理完残留数据后自然退出 |
 
-**RTMP 推流验证方法**：
-
-> 用 `ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/test -c copy received.flv` 充当临时 RTMP 服务器，无需 nginx-rtmp。推流停止后播放 received.flv 确认画面一致即通过。
-
-```
-RambosPlayer (推流端)            ffmpeg -listen 1 (接收端)
-  FLV over RTMP/TCP      ════▶   av_read_frame → av_interleaved_write → received.flv
-```
-
-**端对端验证**：本地 FLV 录制正常；RTMP 推流 → ffmpeg 接收文件内容一致。
+**端对端验证场景**：
+- 本地 FLV 录制：推流结束后播放文件，音视频同步，有声音
+- RTMP 推到本地 SRS：手机/平板 VLC 拉 `rtmp://PC_IP:1935/live/test` 正常播放
+- SRT 直连：平板 VLC 拉 `srt://PC_IP:9000` 正常播放，延迟 &lt; 3 秒
 
 ---
 

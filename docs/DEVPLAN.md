@@ -221,74 +221,55 @@ ffmpeg -f lavfi -i "testsrc=duration=2:size=320x240:rate=25" \
 
 ---
 
-## Phase 9 — 屏幕录制 / 推流（Task 17–20）
+## Phase 9 — 推流播放内容（Task 17–20 重构）
 
-**目标：** 能采集桌面或摄像头，编码后推流到本地 RTMP 服务。
+**目标：** 将正在播放的视频（含滤镜效果）和音频推流到 RTMP 服务（在线平台 / 本地 SRS）
+或通过 SRT 协议直连局域网设备，支持多路同时推流，不再依赖录屏。
 
-> 推流管线架构图：[docs/推流管线架构2.html](docs/推流管线架构2.html)
-
-**准备：** 本地启动一个 RTMP 服务（如 nginx-rtmp）监听 `rtmp://127.0.0.1:1935/live/test`。
-
-### Task 17 — CaptureThread
-
-- [x] 创建 `src/capturethread.h` / `src/capturethread.cpp`
-  - `init(source)` 其中 `source` 为 `"desktop"`（gdigrab）或设备名（dshow）
-  - `run()` 循环：`av_read_frame` from input → 解码 → clone → 推入 `FrameQueue<AVFrame*>`
-
-### Task 18 — EncodeThread
-
-- [x] 创建 `src/encodethread.h` / `src/encodethread.cpp`
-  - `init(width, height, fps, bitrate)` 打开编码器（优先 `h264_nvenc` → `libx264` → `libopenh264` → 通用 H.264）
-  - `run()` 从帧队列取 raw frame → `avcodec_send_frame` / `avcodec_receive_packet` → 推入输出包队列
-
-### Task 19 — MuxThread
-
-- [x] 创建 `src/muxthread.h` / `src/muxthread.cpp`
-  - `init(outputUrl)` 打开 `flv` 输出格式，`avio_open` 连接 RTMP URL
-  - `run()` 从编码包队列取包 → `av_interleaved_write_frame`
-
-### Task 20 — StreamController + 推流 UI + 端对端验收
-
-- [x] 创建 `src/streamcontroller.h` / `src/streamcontroller.cpp` 串联三者
-- [x] 在 `MainWindow` 菜单栏加"推流"菜单，弹出 URL 输入对话框，启动/停止推流
-- [x] 手动验证：本地 FLV 录制正常，RTMP 推流 → ffmpeg 接收文件内容一致
-- [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流（Phase 9）"`
-
-**RTMP 端对端验证方法：**
-
-本地无需搭建 nginx-rtmp，直接用 ffmpeg 自带 RTMP 服务进行测试。
-
-1. 终端 1 — 启动 RTMP 监听（服务端）：
-   ```powershell
-   ffmpeg -listen 1 -i rtmp://127.0.0.1:1935/live/test -c copy "G:\source\vscode\ffmpeg_pro\stage5\RambosPlayer\received.flv"
-   ```
-2. RambosPlayer → 菜单栏"推流(&S)..."：
-   - 输入源：`desktop`
-   - 输入目标：`rtmp://127.0.0.1:1935/live/test`
-3. 推流数秒后点"停止推流"，终端 1 Ctrl+C 结束
-4. 播放 `received.flv`，确认画面与推流内容一致
-
-#### RTMP 推流原理
+> 详细实现计划：[docs/superpowers/plans/2026-05-17-phase9-restream.md](superpowers/plans/2026-05-17-phase9-restream.md)
 
 ```
-RambosPlayer (推流端)                      ffmpeg -listen 1 (接收端)
-┌─────────────────────────┐               ┌──────────────────────────┐
-│  CaptureThread          │               │                          │
-│    ↓ rawFrameQ_         │               │  RTMP 协议握手            │
-│  EncodeThread           │   FLV over    │    ↓                     │
-│    ↓ encodedPacketQ_    │ ════════════▶ │  av_read_frame 解封装     │
-│  MuxThread              │   RTMP/TCP    │    ↓                     │
-│   av_interleaved_write  │               │  av_interleaved_write     │
-│   → 逐帧写 FLV 到 URL   │               │   → 保存为 received.flv   │
-└─────────────────────────┘               └──────────────────────────┘
+VideoDecodeThread → videoFrameQueue  → VideoRenderer（不变）
+                  ↘ restreamVideoQ  → VideoEncodeThread（H.264）─┐
+                                                                   ├→ MuxThread[N] → RTMP / SRT / .flv
+AudioDecodeThread → QAudioOutput（不变）                          │
+                  ↘ restreamAudioQ → AudioEncodeThread（AAC）  ──┘
 ```
 
-- `ffmpeg -listen 1 -i <url>` 让 ffmpeg 在指定 RTMP URL 上充当**服务端**，等待推流端连接
-- RambosPlayer 的 MuxThread 通过 `avio_open(url)` 发起 TCP 连接，完成 RTMP 握手后开始推送 FLV 封装的 H.264 数据
-- 接收端 `-c copy` 无损透传，不重编码，直接写文件
-- 最后的 `I/O error` 是推流端主动断开连接，接收端检测到 socket 关闭后正常退出，**不是异常**
+### Task 17 — 删除 CaptureThread / FrameQueue tryPush / 解码线程分叉
 
-**验收：** 本地 FLV 录制正常；RTMP 推流 → ffmpeg 接收文件内容一致，延迟 < 3 秒。
+- [ ] 删除 `src/capturethread.h` / `src/capturethread.cpp`
+- [ ] `framequeue.h` 新增 `tryPush()`（非阻塞，队列满时丢帧）
+- [ ] `VideoDecodeThread` 加 `setRestreamVideoQueue()`，run() 分叉 clone 帧
+- [ ] `AudioDecodeThread` 加 `setRestreamAudioQueue()`，swr_convert 前分叉 clone 帧
+
+### Task 18 — VideoEncodeThread fan-out / AudioEncodeThread（新建）
+
+- [ ] `EncodeThread` 将单路输出改为 `vector` fan-out（clone 推多路）
+- [ ] 新建 `src/audioencodethread.h/.cpp`
+  - `init(sampleRate, channels, bitrate)` 打开 AAC 编码器
+  - 内部 `SwrContext`（任意格式 → fltp）+ `AVAudioFifo`（缓冲至 1024 samples）
+  - fan-out：编码包 clone 推入所有输出队列
+
+### Task 19 — MuxThread 重构（音视频双流 + SRT + PTS 归零）
+
+- [ ] 添加音频流（`AVStream`），`init()` 接收音视频参数及 extradata
+- [ ] 协议自动识别：`rtmp://` → FLV，`srt://` → MPEGTS，本地路径 → FLV
+- [ ] SRT listener 模式支持（`srt://:9000`）
+- [ ] PTS 归零：记录首帧 pts 作基准，后续包减去基准值
+- [ ] run() 轮询音视频两个队列，`av_interleaved_write_frame` 交错写
+
+### Task 20 — StreamController 重构 + PlayerController 接口 + MainWindow UI
+
+- [ ] `StreamController` 删除 CaptureThread，管理多路 `MuxThread`（vector）
+  - `start(destinations, w, h, fps, sampleRate, channels)`
+  - `videoSourceQueue()` / `audioSourceQueue()` 供 PlayerController 连接
+- [ ] `PlayerController` 新增 `setRestreamVideoQueue()` / `setRestreamAudioQueue()` / 视频参数 getter
+- [ ] `MainWindow` 推流配置对话框：三个可勾选场景（直播平台/局域网设备/本地录制），单选或多选，每项独立配置（RTMP URL / SRT 端口默认 9000 / 本地文件路径），至少勾一项才可确认，`QSettings` 记忆上次填写内容
+- [ ] 端对端验收：本地 FLV / RTMP（SRS）/ SRT 三种场景全部验证
+- [ ] `git commit -m "feat: 推流重构 — 播放内容推流，音视频双流，RTMP/SRT 多目标"`
+
+**验收：** 推流内容与播放画面一致，有声音；平板 VLC 可通过 SRT 或 RTMP 拉流正常播放。
 - [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流（Phase 9）"`
 
 ### 环境依赖 — H.264 编码器

@@ -10,6 +10,7 @@
 |------|----------|
 | [2026-04-26-rambos-player-core.md](plans/2026-04-26-rambos-player-core.md) | Task 1–10：项目脚手架 → FrameQueue → AVSync → DemuxThread → 解码线程 → VideoRenderer → PlayerController → MainWindow → 集成验证 |
 | [2026-05-08-demuxthread.md](plans/2026-05-08-demuxthread.md) | Task 4 专项计划：`DemuxThread` av_read_frame 循环、stop/seek 支持 |
+| [2026-05-17-phase9-restream.md](plans/2026-05-17-phase9-restream.md) | Phase 9 重构：推流源改为解码帧分叉，音视频双流，RTMP/SRT/本地录制多目标，三选项可单多选 UI |
 
 ## specs/
 

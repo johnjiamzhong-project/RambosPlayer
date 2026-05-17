@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Phase 9 推流架构</title>
+<style>
+  body { margin: 0; background: #1e2330; display: flex; flex-direction: column;
+         align-items: center; padding: 28px; font-family: sans-serif; }
+  h2 { color: #cdd6f4; margin: 0 0 18px; font-size: 16px; letter-spacing: .5px; }
+</style>
+</head>
+<body>
+<h2>Phase 9 推流重构 — 解码帧直接分叉进编码管线（音视频双流 / RTMP / SRT / 多路 MuxThread）</h2>
+<svg width="1300" height="660" viewBox="0 0 1300 660"
+     xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="m-gray" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0,8 3,0 6" fill="#7f8ea3"/>
+  </marker>
+  <marker id="m-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0,8 3,0 6" fill="#e6822a"/>
+  </marker>
+  <marker id="m-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0,8 3,0 6" fill="#2aae72"/>
+  </marker>
+  <marker id="m-purple" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0,8 3,0 6" fill="#9b59b6"/>
+  </marker>
+  <marker id="m-dark" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0,8 3,0 6" fill="#34495e"/>
+  </marker>
+</defs>
+
+<!-- ===== Background ===== -->
+<rect width="1300" height="660" rx="10" fill="#f4f6fb"/>
+
+<!-- ===== PlayerController frame ===== -->
+<rect x="16" y="30" width="400" height="580" rx="10"
+      fill="#e8f0fe" stroke="#4a90d9" stroke-width="2"/>
+<text x="216" y="52" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="13" font-weight="bold" fill="#1a5296">
+  PlayerController
+</text>
+
+<!-- DemuxThread -->
+<rect x="108" y="62" width="216" height="42" rx="6" fill="#4a90d9"/>
+<text x="216" y="88" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="13" fill="white">DemuxThread</text>
+
+<!-- DemuxThread -> VideoDecodeThread -->
+<polyline points="178,104 145,130 145,168"
+          fill="none" stroke="#7f8ea3" stroke-width="1.5" marker-end="url(#m-gray)"/>
+<text x="100" y="140" font-family="'Courier New',monospace" font-size="9" fill="#546e7a">videoPacketQ</text>
+
+<!-- DemuxThread -> AudioDecodeThread -->
+<polyline points="256,104 290,155 290,168"
+          fill="none" stroke="#7f8ea3" stroke-width="1.5" marker-end="url(#m-gray)"/>
+<text x="270" y="148" font-family="'Courier New',monospace" font-size="9" fill="#546e7a">audioPacketQ</text>
+
+<!-- VideoDecodeThread -->
+<rect x="30" y="168" width="175" height="44" rx="6" fill="#2980b9"/>
+<text x="117" y="191" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">VideoDecodeThread</text>
+<text x="117" y="205" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="9" fill="#d6eaf8">(+setRestreamVideoQueue)</text>
+
+<!-- AudioDecodeThread -->
+<rect x="215" y="168" width="185" height="44" rx="6" fill="#2980b9"/>
+<text x="307" y="191" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">AudioDecodeThread</text>
+<text x="307" y="205" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="9" fill="#d6eaf8">(+setRestreamAudioQueue)</text>
+
+<!-- VideoDecodeThread -> VideoRenderer -->
+<line x1="117" y1="212" x2="117" y2="292"
+      stroke="#7f8ea3" stroke-width="1.5" marker-end="url(#m-gray)"/>
+<text x="72" y="258" font-family="'Courier New',monospace" font-size="9" fill="#546e7a">videoFrameQ</text>
+
+<!-- AudioDecodeThread -> QAudioOutput -->
+<line x1="307" y1="212" x2="307" y2="292"
+      stroke="#7f8ea3" stroke-width="1.5" marker-end="url(#m-gray)"/>
+
+<!-- VideoRenderer -->
+<rect x="30" y="292" width="175" height="44" rx="6" fill="#27ae60"/>
+<text x="117" y="318" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">VideoRenderer</text>
+
+<!-- QAudioOutput -->
+<rect x="215" y="292" width="185" height="44" rx="6" fill="#27ae60"/>
+<text x="307" y="313" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="11" fill="white">QAudioOutput</text>
+<text x="307" y="328" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="9" fill="#d5f5e3">(本地播放，不变)</text>
+
+<!-- AVSync -->
+<rect x="118" y="390" width="196" height="40" rx="6" fill="#607d8b"/>
+<text x="216" y="415" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">AVSync (音频时钟)</text>
+
+<!-- AVSync <-> VideoRenderer dashed -->
+<line x1="175" y1="390" x2="143" y2="336"
+      stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#m-gray)"/>
+<text x="122" y="370" font-family="'Courier New',monospace" font-size="8" fill="#78909c">videoDelay</text>
+<!-- QAudioOutput -> AVSync -->
+<line x1="290" y1="336" x2="264" y2="390"
+      stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#m-gray)"/>
+<text x="268" y="372" font-family="'Courier New',monospace" font-size="8" fill="#78909c">setClock</text>
+
+<!-- "unchanged" note -->
+<text x="216" y="478" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="11" fill="#1a5296">以上播放管线不变</text>
+
+<!-- ===== FORK ARROWS (dashed, breaking out of PlayerController) ===== -->
+
+<!-- Video fork: from VideoDecodeThread right edge (205, 183) going right -->
+<polyline points="205,183 418,183"
+          fill="none" stroke="#e6822a" stroke-width="2.2"
+          stroke-dasharray="7,4" marker-end="url(#m-orange)"/>
+<text x="265" y="175" font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#c0621a">视频帧 clone 分叉</text>
+
+<!-- Audio fork: from AudioDecodeThread bottom-right, exit down then right -->
+<polyline points="360,212 360,248 418,248"
+          fill="none" stroke="#2aae72" stroke-width="2.2"
+          stroke-dasharray="7,4" marker-end="url(#m-green)"/>
+<text x="310" y="265" font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#1a7d50">音频帧 clone 分叉</text>
+
+<!-- ===== Queue boxes (middle zone) ===== -->
+
+<!-- restreamVideoQ -->
+<rect x="418" y="165" width="152" height="32" rx="5"
+      fill="#fff8e1" stroke="#e6822a" stroke-width="1.8"/>
+<text x="494" y="185" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="10" fill="#bf360c">restreamVideoQ(30)</text>
+
+<!-- restreamAudioQ -->
+<rect x="418" y="232" width="152" height="32" rx="5"
+      fill="#e8f5e9" stroke="#2aae72" stroke-width="1.8"/>
+<text x="494" y="252" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="10" fill="#1b5e20">restreamAudioQ(60)</text>
+
+<!-- tryPush note -->
+<text x="494" y="282" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="9" fill="#78909c">tryPush() 满则丢帧，不阻塞播放</text>
+
+<!-- Queue -> EncodeThread arrow -->
+<line x1="570" y1="181" x2="614" y2="181"
+      stroke="#e6822a" stroke-width="2" marker-end="url(#m-orange)"/>
+<!-- Queue -> AudioEncodeThread arrow -->
+<line x1="570" y1="248" x2="614" y2="276"
+      stroke="#2aae72" stroke-width="2" marker-end="url(#m-green)"/>
+
+<!-- ===== StreamController frame ===== -->
+<rect x="584" y="30" width="700" height="580" rx="10"
+      fill="#fff8f0" stroke="#e6822a" stroke-width="2"/>
+<text x="934" y="52" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="13" font-weight="bold" fill="#bf360c">
+  StreamController
+</text>
+
+<!-- EncodeThread (H.264) -->
+<rect x="600" y="158" width="200" height="46" rx="6" fill="#e67e22"/>
+<text x="700" y="178" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">EncodeThread</text>
+<text x="700" y="195" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="9" fill="#fff3e0">H.264 (nvenc / libx264 / openh264)</text>
+
+<!-- AudioEncodeThread -->
+<rect x="600" y="252" width="200" height="46" rx="6" fill="#2ecc71"/>
+<text x="700" y="272" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">AudioEncodeThread</text>
+<text x="700" y="289" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="9" fill="#e8f8f5">AAC + SwrContext + AVAudioFifo(1024)</text>
+
+<!-- fan-out label -->
+<text x="700" y="340" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#95a5a6">av_packet_clone fan-out</text>
+
+<!-- ===== Fan-out bus lines ===== -->
+
+<!-- Orange bus (video): from EncodeThread right (800,181) → x=845 vertical bus → each MuxThread -->
+<line x1="800" y1="181" x2="845" y2="181"
+      stroke="#e67e22" stroke-width="1.8"/>
+<line x1="845" y1="110" x2="845" y2="415"
+      stroke="#e67e22" stroke-width="1.8" stroke-dasharray="3,2"/>
+<line x1="845" y1="110" x2="882" y2="110"
+      stroke="#e67e22" stroke-width="1.8" marker-end="url(#m-orange)"/>
+<line x1="845" y1="245" x2="882" y2="245"
+      stroke="#e67e22" stroke-width="1.8" marker-end="url(#m-orange)"/>
+<line x1="845" y1="380" x2="882" y2="380"
+      stroke="#e67e22" stroke-width="1.8" marker-end="url(#m-orange)"/>
+
+<!-- Green bus (audio): from AudioEncodeThread right (800,275) → x=862 vertical bus → each MuxThread -->
+<line x1="800" y1="275" x2="862" y2="275"
+      stroke="#2aae72" stroke-width="1.8"/>
+<line x1="862" y1="130" x2="862" y2="415"
+      stroke="#2aae72" stroke-width="1.8" stroke-dasharray="3,2"/>
+<line x1="862" y1="130" x2="882" y2="130"
+      stroke="#2aae72" stroke-width="1.8" marker-end="url(#m-green)"/>
+<line x1="862" y1="265" x2="882" y2="265"
+      stroke="#2aae72" stroke-width="1.8" marker-end="url(#m-green)"/>
+<line x1="862" y1="400" x2="882" y2="400"
+      stroke="#2aae72" stroke-width="1.8" marker-end="url(#m-green)"/>
+
+<!-- ===== MuxThread boxes ===== -->
+
+<!-- MuxThread[0] -->
+<rect x="882" y="88" width="178" height="56" rx="6" fill="#8e44ad"/>
+<text x="971" y="111" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">MuxThread[0]</text>
+<text x="971" y="128" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="10" fill="#e8daef">FLV / RTMP</text>
+
+<!-- MuxThread[1] -->
+<rect x="882" y="222" width="178" height="56" rx="6" fill="#8e44ad"/>
+<text x="971" y="245" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">MuxThread[1]</text>
+<text x="971" y="262" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="10" fill="#e8daef">MPEGTS / SRT</text>
+
+<!-- MuxThread[2] -->
+<rect x="882" y="356" width="178" height="56" rx="6" fill="#8e44ad"/>
+<text x="971" y="379" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="12" fill="white">MuxThread[2]</text>
+<text x="971" y="396" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="10" fill="#e8daef">FLV / 本地录制</text>
+
+<!-- ===== Destination labels ===== -->
+
+<!-- Dest 0 -->
+<rect x="1072" y="90" width="196" height="52" rx="6"
+      fill="#ede7f6" stroke="#7b1fa2" stroke-width="1.2"/>
+<text x="1170" y="111" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="11" fill="#4a148c">rtmp://server/live/xxx</text>
+<text x="1170" y="129" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#6a1b9a">Twitch / B站 / 本地 SRS</text>
+
+<!-- Dest 1 -->
+<rect x="1072" y="224" width="196" height="52" rx="6"
+      fill="#ede7f6" stroke="#7b1fa2" stroke-width="1.2"/>
+<text x="1170" y="245" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="11" fill="#4a148c">srt://:9000</text>
+<text x="1170" y="263" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#6a1b9a">平板 / 手机 VLC 局域网直连</text>
+
+<!-- Dest 2 -->
+<rect x="1072" y="358" width="196" height="52" rx="6"
+      fill="#ede7f6" stroke="#7b1fa2" stroke-width="1.2"/>
+<text x="1170" y="379" text-anchor="middle"
+      font-family="'Courier New',monospace" font-size="11" fill="#4a148c">C:/record.flv</text>
+<text x="1170" y="397" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#6a1b9a">本地录制文件</text>
+
+<!-- MuxThread -> Dest arrows -->
+<line x1="1060" y1="116" x2="1072" y2="116"
+      stroke="#34495e" stroke-width="1.5" marker-end="url(#m-dark)"/>
+<line x1="1060" y1="250" x2="1072" y2="250"
+      stroke="#34495e" stroke-width="1.5" marker-end="url(#m-dark)"/>
+<line x1="1060" y1="384" x2="1072" y2="384"
+      stroke="#34495e" stroke-width="1.5" marker-end="url(#m-dark)"/>
+
+<!-- ===== Legend ===== -->
+<rect x="584" y="462" width="700" height="128" rx="8"
+      fill="#f8f9fa" stroke="#cfd8dc" stroke-width="1"/>
+<text x="934" y="484" text-anchor="middle"
+      font-family="'Microsoft YaHei',sans-serif" font-size="12" font-weight="bold" fill="#37474f">图例</text>
+
+<!-- legend row 1 -->
+<line x1="606" y1="504" x2="660" y2="504"
+      stroke="#7f8ea3" stroke-width="2" marker-end="url(#m-gray)"/>
+<text x="668" y="508" font-family="'Microsoft YaHei',sans-serif" font-size="11" fill="#37474f">播放管线（不变）</text>
+
+<line x1="800" y1="504" x2="854" y2="504"
+      stroke="#e6822a" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#m-orange)"/>
+<text x="862" y="508" font-family="'Microsoft YaHei',sans-serif" font-size="11" fill="#e6822a">视频帧分叉 / H.264 fan-out</text>
+
+<!-- legend row 2 -->
+<line x1="606" y1="530" x2="660" y2="530"
+      stroke="#2aae72" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#m-green)"/>
+<text x="668" y="534" font-family="'Microsoft YaHei',sans-serif" font-size="11" fill="#2aae72">音频帧分叉 / AAC fan-out</text>
+
+<rect x="800" y="521" width="14" height="14" rx="2" fill="#8e44ad"/>
+<text x="820" y="533" font-family="'Microsoft YaHei',sans-serif" font-size="11" fill="#37474f">MuxThread（N 路可配置）</text>
+
+<!-- legend row 3 -->
+<text x="606" y="560" font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#78909c">
+  * restreamVideoQ / restreamAudioQ 均使用 tryPush()，满时丢帧，绝不阻塞解码线程
+</text>
+<text x="606" y="578" font-family="'Microsoft YaHei',sans-serif" font-size="10" fill="#78909c">
+  * EncodeThread / AudioEncodeThread 编码后 av_packet_clone，推入每路 MuxThread 独立队列
+</text>
+
+</svg>
+</body>
+</html>

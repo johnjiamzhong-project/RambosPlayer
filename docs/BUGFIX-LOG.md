@@ -176,6 +176,17 @@
 
 ---
 
+## #017 — 旧推流方案（CaptureThread 录屏）设计缺陷，已重构废弃
+
+- **日期**：2026-05-17
+- **现象**：Phase 9 初版推流使用 `CaptureThread`（gdigrab 录屏）采集桌面画面后编码推流；存在两个根本性缺陷：① vcpkg 默认 FFmpeg 不含任何 H.264 编码器（缺少 `ffmpeg[gpl,x264]`），推流静默失败无提示；② 录屏推流与播放器定位不符，属于 OBS 的功能而非媒体播放器应有的功能，且存在"解码→显示→截图→重编码"的无意义像素往返
+- **根因**：推流源选型错误，应直接从播放器解码管线分叉帧，而非重新采集屏幕
+- **修复方案**：Phase 9 整体重构，删除 `CaptureThread`，改为在 `VideoDecodeThread` / `AudioDecodeThread` 中分叉解码帧直接推入编码管线；新增 `AudioEncodeThread`（AAC），`MuxThread` 支持音视频双流、RTMP 和 SRT 协议、多路同时推流
+- **涉及文件**：删除 `src/capturethread.h/.cpp`；修改 `src/videodecodethread`、`src/audiodecodethread`、`src/encodethread`、`src/muxthread`、`src/streamcontroller`、`src/mainwindow`；新增 `src/audioencodethread`
+- **详细计划**：`docs/superpowers/plans/2026-05-17-phase9-restream.md`
+
+---
+
 ## #016 — 进度条拖拽失效：eventFilter 拦截手柄点击导致无法滑动
 
 - **日期**：2026-05-16
