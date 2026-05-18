@@ -123,11 +123,73 @@ int64_t PlayerController::duration() const {
 
 // 停止并等待所有线程退出（最多 3s），然后清空队列。
 // 顺序：先停解复用（生产方），再停解码（消费方），避免队列满导致线程卡死。
+// demux_.stop() 内部已调用 clearRestreamQueues()，断开所有推流分叉。
 void PlayerController::stopAllThreads() {
     demux_.stop();    demux_.wait(3000);
     videoDec_.stop(); videoDec_.wait(3000);
     audioDec_.stop(); audioDec_.wait(3000);
     videoPacketQ_.clear(); audioPacketQ_.clear(); videoFrameQ_.clear();
+}
+
+// 从 AVFormatContext 读取视频帧率，无法获取时返回 30
+int PlayerController::videoFps() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int vi = demux_.videoStreamIdx();
+    if (!fmt || vi < 0) return 30;
+    AVRational fr = fmt->streams[vi]->avg_frame_rate;
+    if (fr.den == 0) return 30;
+    int fps = (int)(av_q2d(fr) + 0.5);
+    return fps > 0 ? fps : 30;
+}
+
+// 从 AVFormatContext 读取音频采样率，无法获取时返回 44100
+int PlayerController::audioSampleRate() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int ai = demux_.audioStreamIdx();
+    if (!fmt || ai < 0) return 44100;
+    int sr = fmt->streams[ai]->codecpar->sample_rate;
+    return sr > 0 ? sr : 44100;
+}
+
+// 返回源视频流的 AVCodecParameters 指针（仅在 open() 成功后有效，不得释放）
+AVCodecParameters* PlayerController::videoCodecPar() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int vi = demux_.videoStreamIdx();
+    if (!fmt || vi < 0) return nullptr;
+    return fmt->streams[vi]->codecpar;
+}
+
+// 返回源音频流的 AVCodecParameters 指针
+AVCodecParameters* PlayerController::audioCodecPar() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int ai = demux_.audioStreamIdx();
+    if (!fmt || ai < 0) return nullptr;
+    return fmt->streams[ai]->codecpar;
+}
+
+// 返回源视频流的时间基（供 MuxThread PTS rescale 使用）
+AVRational PlayerController::videoStreamTimeBase() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int vi = demux_.videoStreamIdx();
+    if (!fmt || vi < 0) return {1, 30};
+    return fmt->streams[vi]->time_base;
+}
+
+// 返回源音频流的时间基
+AVRational PlayerController::audioStreamTimeBase() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int ai = demux_.audioStreamIdx();
+    if (!fmt || ai < 0) return {1, 44100};
+    return fmt->streams[ai]->time_base;
+}
+
+// 从 AVFormatContext 读取音频声道数，无法获取时返回 2
+int PlayerController::audioChannels() const {
+    AVFormatContext* fmt = demux_.formatContext();
+    int ai = demux_.audioStreamIdx();
+    if (!fmt || ai < 0) return 2;
+    int ch = fmt->streams[ai]->codecpar->ch_layout.nb_channels;
+    return ch > 0 ? ch : 2;
 }
 
 // 解复用线程结束回调：延迟 500ms 发出 playbackFinished，

@@ -1,5 +1,6 @@
 // src/demuxthread.cpp
 #include "demuxthread.h"
+#include "localrecorder.h"
 #include "logger.h"
 
 extern "C" {
@@ -63,12 +64,45 @@ bool DemuxThread::open(const QString& path,
     return true;
 }
 
-// 设置 abort_ 标志，并对两条队列调用 abort()，
-// 唤醒任何阻塞在 push/tryPop 的线程，使 run() 能在下次循环检查时退出。
+// 设置 abort_ 标志，并对所有队列调用 abort()，唤醒阻塞线程使 run() 能退出。
+// 同时中止所有推流分叉队列和本地录制器。
 void DemuxThread::stop() {
     abort_.store(true, std::memory_order_relaxed);
     if (videoQueue_) videoQueue_->abort();
     if (audioQueue_) audioQueue_->abort();
+    clearRestreamQueues();
+}
+
+// 线程安全地添加视频推流分叉队列（网络推流用 tryPush）
+void DemuxThread::addRestreamVideoQueue(FrameQueue<AVPacket*>* q) {
+    QMutexLocker lk(&restreamMtx_);
+    restreamVideoQueues_.push_back(q);
+    logNextRestreamVideo_.store(true, std::memory_order_relaxed);
+}
+
+// 线程安全地添加音频推流分叉队列
+void DemuxThread::addRestreamAudioQueue(FrameQueue<AVPacket*>* q) {
+    QMutexLocker lk(&restreamMtx_);
+    restreamAudioQueues_.push_back(q);
+}
+
+// 线程安全地添加本地录制器（直接写 FLV，不经过队列）
+void DemuxThread::addLocalRecorder(LocalRecorder* r) {
+    QMutexLocker lk(&restreamMtx_);
+    localRecorders_.push_back(r);
+    logNextRestreamVideo_.store(true, std::memory_order_relaxed);
+}
+
+// 中止并清空所有推流分叉队列和本地录制器；
+// run() 持互斥锁期间不会读取这些容器。
+void DemuxThread::clearRestreamQueues() {
+    QMutexLocker lk(&restreamMtx_);
+    for (auto* q : restreamVideoQueues_) q->abort();
+    for (auto* q : restreamAudioQueues_) q->abort();
+    for (auto* r : localRecorders_) r->stop();
+    restreamVideoQueues_.clear();
+    restreamAudioQueues_.clear();
+    localRecorders_.clear();
 }
 
 // 将 seek 目标原子写入 seekTarget_；实际跳转在 run() 下次循环顶部的 handleSeek() 中执行。
@@ -103,6 +137,22 @@ void DemuxThread::handleSeek() {
     while (audioQueue_->tryPop(p, 0)) { av_packet_free(&p); ++aclear; }
     qInfo() << "DemuxThread::handleSeek cleared" << vclear << "video" << aclear
             << "audio pkts from queues";
+
+    // seek 后清空推流队列，并各推一个 nullptr sentinel：
+    // MuxThread 收到 sentinel 后重置 PTS base，保证新位置的包从 0 重新计时。
+    // 本地录制器也停止旧录制，由上层重新 addLocalRecorder 启动新录制。
+    {
+        QMutexLocker lk(&restreamMtx_);
+        for (auto* q : restreamVideoQueues_) {
+            while (q->tryPop(p, 0)) av_packet_free(&p);
+            q->tryPush(nullptr);
+        }
+        for (auto* q : restreamAudioQueues_) {
+            while (q->tryPop(p, 0)) av_packet_free(&p);
+            q->tryPush(nullptr);
+        }
+        for (auto* r : localRecorders_) r->resetPtsBase();
+    }
 
     // 设置精确目标，run() 读取到 >= target 的包之前会丢弃中间帧
     seekExactTarget_.store(target, std::memory_order_relaxed);
@@ -165,6 +215,25 @@ void DemuxThread::run() {
         if (pkt->stream_index == videoIdx_) {
             AVPacket* p = av_packet_clone(pkt);
             videoQueue_->push(p);
+            QMutexLocker lk(&restreamMtx_);
+            // 首包日志
+            if (!restreamVideoQueues_.empty() || !localRecorders_.empty()) {
+                if (logNextRestreamVideo_.exchange(false, std::memory_order_relaxed)) {
+                    AVRational* stb = &fmtCtx_->streams[pkt->stream_index]->time_base;
+                    double pktSec = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts * av_q2d(*stb) : -1.0;
+                    qInfo() << "DemuxThread: first restream video fork PTS=" << pktSec
+                            << "s (DemuxThread read-ahead position)";
+                }
+            }
+            // 网络推流：tryPush，满则丢包
+            for (auto* q : restreamVideoQueues_) {
+                AVPacket* copy = av_packet_clone(pkt);
+                if (!q->tryPush(copy)) av_packet_free(&copy);
+            }
+            // 本地录制：直接写 FLV
+            for (auto* r : localRecorders_) {
+                r->writeVideoPacket(pkt);
+            }
         } else if (pkt->stream_index == audioIdx_) {
             if (logNextAudioPush_.exchange(false, std::memory_order_relaxed)) {
                 AVRational* stb = &fmtCtx_->streams[pkt->stream_index]->time_base;
@@ -174,6 +243,16 @@ void DemuxThread::run() {
             }
             AVPacket* p = av_packet_clone(pkt);
             audioQueue_->push(p);
+            QMutexLocker lk(&restreamMtx_);
+            // 网络推流
+            for (auto* q : restreamAudioQueues_) {
+                AVPacket* copy = av_packet_clone(pkt);
+                if (!q->tryPush(copy)) av_packet_free(&copy);
+            }
+            // 本地录制
+            for (auto* r : localRecorders_) {
+                r->writeAudioPacket(pkt);
+            }
         }
         av_packet_unref(pkt);
     }

@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include "streamcontroller.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -47,9 +48,11 @@ private slots:
     void onExportFinished(bool ok);
 
 private:
-    void openFile(const QString& path);         // 打开文件并更新最近记录
-    void updateRecentFiles(const QString& path); // 写入 QSettings，刷新菜单
-    void rebuildRecentMenu();                    // 用 QSettings 重建最近文件菜单条目
+    void openFile(const QString& path);                             // 打开文件并更新最近记录
+    void updateRecentFiles(const QString& path);                    // 写入 QSettings，刷新菜单
+    void rebuildRecentMenu();                                       // 用 QSettings 重建最近文件菜单条目
+    void startStreaming(const QList<StreamDestination>& dests);     // 启动推流管线（需文件已打开）
+    void reconnectStreaming();                                       // 恢复播放时重新接入推流
 
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权
@@ -65,6 +68,9 @@ private:
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     int64_t currentPos_ = 0;        // 当前播放位置（毫秒），键盘快进/快退用
     bool isFullscreen_ = false;     // 全屏状态标志
+    QList<StreamDestination> pendingDests_;        // 文件打开前预配置的推流目标，openFile 后自动启动
+    QList<StreamDestination> activeDests_;         // 当前正在推流的目标列表（暂停恢复时需要阻塞标志）
+    double streamAlignSec_ = 0.0;                 // 推流 seek 对齐的起始秒数，用于计算截止时长
 
     static constexpr int MaxRecentFiles = 10;   // 最近文件列表最大条数
     static QString formatTime(int64_t ms);      // 毫秒 → "MM:SS" 字符串

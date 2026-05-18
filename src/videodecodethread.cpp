@@ -59,7 +59,7 @@ bool VideoDecodeThread::init(AVCodecParameters* params, bool hwEnabled) {
 // 设置停止标志并 abort 两侧队列，解除 run() 阻塞
 void VideoDecodeThread::stop() {
     abort_ = true;
-    if (inputQueue_) inputQueue_->abort();
+    if (inputQueue_)  inputQueue_->abort();
     if (outputQueue_) outputQueue_->abort();
 }
 

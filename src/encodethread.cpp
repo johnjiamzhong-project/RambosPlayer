@@ -23,6 +23,7 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
     if (swsFrame_)  { av_frame_free(&swsFrame_);          }
 
     abort_.store(false, std::memory_order_relaxed);
+    ptsIdx_ = 0;
 
     const AVCodec* codec = nullptr;
 
@@ -111,18 +112,20 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
 // 设置停止标志并 abort 两侧队列
 void EncodeThread::stop() {
     abort_ = true;
-    if (inputQueue_)  inputQueue_->abort();
-    if (outputQueue_) outputQueue_->abort();
+    if (inputQueue_) inputQueue_->abort();
+    for (auto* q : outputQueues_) q->abort();
 }
 
-// 刷新编码器缓冲：发送空帧以排出残留包
+// 刷新编码器缓冲：发送空帧以排出残留包，fan-out 到所有输出队列
 void EncodeThread::flush() {
     if (!codecCtx_) return;
     avcodec_send_frame(codecCtx_, nullptr);
     AVPacket* pkt = av_packet_alloc();
     while (avcodec_receive_packet(codecCtx_, pkt) == 0) {
-        AVPacket* out = av_packet_clone(pkt);
-        outputQueue_->push(out);
+        for (auto* q : outputQueues_) {
+            AVPacket* copy = av_packet_clone(pkt);
+            q->push(copy);
+        }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
@@ -136,8 +139,7 @@ void EncodeThread::run() {
     while (!abort_.load(std::memory_order_relaxed)) {
         if (!inputQueue_->tryPop(frame, 20)) continue;
 
-        static int64_t idx = 0;
-        frame->pts = idx++;
+        frame->pts = ptsIdx_++;
 
         // gdigrab 输出 bgr0/bgra，libx264 要求 yuv420p，按需做像素格式转换
         AVFrame* encodeFrame = frame;
@@ -168,13 +170,13 @@ void EncodeThread::run() {
         }
         av_frame_free(&frame);
 
-        // 收已编码的包
+        // 收已编码的包，fan-out clone 到每路 MuxThread 输入队列
         AVPacket* pkt = av_packet_alloc();
         while (avcodec_receive_packet(codecCtx_, pkt) == 0) {
-            // pts/dts 由编码器按 frame->pts 填好，不覆写；
-            // 时间基转换留给 MuxThread 在写包前做（它知道 stream->time_base）
-            AVPacket* out = av_packet_clone(pkt);
-            outputQueue_->push(out);
+            for (auto* q : outputQueues_) {
+                AVPacket* copy = av_packet_clone(pkt);
+                q->push(copy);
+            }
             av_packet_unref(pkt);
         }
         av_packet_free(&pkt);

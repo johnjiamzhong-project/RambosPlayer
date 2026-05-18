@@ -49,8 +49,8 @@ private:
     QString buildFilterDesc() const;   // 拼装滤镜描述字符串
 
     AVCodecContext* codecCtx_ = nullptr;            // 解码器上下文
-    FrameQueue<AVPacket*>* inputQueue_ = nullptr;   // 输入：视频包队列
-    FrameQueue<AVFrame*>* outputQueue_ = nullptr;   // 输出：解码帧队列
+    FrameQueue<AVPacket*>* inputQueue_        = nullptr; // 输入：视频包队列
+    FrameQueue<AVFrame*>* outputQueue_       = nullptr; // 输出：解码帧队列
     std::atomic<bool> abort_{false};                // 停止标志
     std::atomic<bool> flush_{false};                // Seek 后清空解码器缓冲
     AVRational timeBase_{1, 1};                     // 时间基，用于外部查询

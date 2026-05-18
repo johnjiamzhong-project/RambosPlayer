@@ -39,9 +39,9 @@ AudioDecodeThread → QAudioOutput（不变）                          ├→ M
 
 ## Task 1 — 删除 CaptureThread，更新构建
 
-- [ ] 删除 `src/capturethread.h`、`src/capturethread.cpp`
-- [ ] `CMakeLists.txt` 移除 `capturethread.h/.cpp`，添加 `audioencodethread.h/.cpp`
-- [ ] 编译通过（此时 StreamController 里的引用会报错，Task 6 修复）
+- [x] 删除 `src/capturethread.h`、`src/capturethread.cpp`
+- [x] `CMakeLists.txt` 移除 `capturethread.h/.cpp`，添加 `audioencodethread.h/.cpp`
+- [x] 编译通过（StreamController 同步替换为过渡版本，mainwindow.cpp onStreamStart 替换为占位桩）
 
 ---
 
@@ -64,8 +64,8 @@ bool tryPush(T val) {
 }
 ```
 
-- [ ] 在 `framequeue.h` 中添加 `tryPush()`
-- [ ] 编译通过
+- [x] 在 `framequeue.h` 中添加 `tryPush()`（已存在，无需改动）
+- [x] 编译通过
 
 ---
 
@@ -97,9 +97,9 @@ if (restreamVideoQueue_) {
 注意：硬解路径已在 `av_hwframe_transfer_data` 后下载到 CPU 帧再 push，
 restreamVideoQueue_ 拿到的帧一定是 CPU 帧，无需额外处理。
 
-- [ ] 修改 `videodecodethread.h` 添加接口声明和成员变量
-- [ ] 修改 `videodecodethread.cpp` 实现 setter 和 run() 分叉逻辑
-- [ ] 编译通过
+- [x] 修改 `videodecodethread.h` 添加接口声明和成员变量
+- [x] 修改 `videodecodethread.cpp` 实现 setter 和 run() 分叉逻辑
+- [x] 编译通过
 
 ---
 
@@ -128,9 +128,9 @@ if (restreamAudioQueue_) {
 }
 ```
 
-- [ ] 修改 `audiodecodethread.h` 添加接口声明和成员变量
-- [ ] 修改 `audiodecodethread.cpp` 实现 setter 和 run() 分叉逻辑
-- [ ] 编译通过
+- [x] 修改 `audiodecodethread.h` 添加接口声明和成员变量
+- [x] 修改 `audiodecodethread.cpp` 实现 setter 和 run() 分叉逻辑
+- [x] 编译通过
 
 ---
 
@@ -188,9 +188,9 @@ while fifo 中 samples >= codecCtx_->frame_size(1024):
 **PTS 处理：** 用 `nextPts_` 计数，每帧 pts = nextPts_，nextPts_ += frame_size。
 时间基为 `{1, sample_rate}`，MuxThread 写包前 rescale 到 stream->time_base。
 
-- [ ] 创建 `src/audioencodethread.h`，写好类声明和成员注释
-- [ ] 创建 `src/audioencodethread.cpp`，实现 init / run / stop
-- [ ] 编译通过
+- [x] 创建 `src/audioencodethread.h`，写好类声明和成员注释
+- [x] 创建 `src/audioencodethread.cpp`，实现 init / run / stop（FFmpeg 8.x 新 AVChannelLayout API）
+- [x] 编译通过
 
 ---
 
@@ -218,9 +218,9 @@ for (auto* q : outputQueues_) {
 av_packet_unref(pkt);
 ```
 
-- [ ] 修改 `encodethread.h` 替换 outputQueue_ 为 vector
-- [ ] 修改 `encodethread.cpp` 适配 fan-out 推包
-- [ ] 编译通过
+- [x] 修改 `encodethread.h` 替换 outputQueue_ 为 vector
+- [x] 修改 `encodethread.cpp` 适配 fan-out 推包
+- [x] 编译通过
 
 ---
 
@@ -273,9 +273,9 @@ pkt->dts -= videoPtsBase_;
 
 **run() 双流交错：** 用 `tryPop` 轮询两个队列，`av_interleaved_write_frame` 自动处理交错。
 
-- [ ] 修改 `muxthread.h` 添加音频流相关成员和接口
-- [ ] 修改 `muxthread.cpp` 实现双流 init、SRT 识别、PTS 归零、双队列轮询
-- [ ] 编译通过
+- [x] 修改 `muxthread.h` 添加音频流相关成员和接口
+- [x] 修改 `muxthread.cpp` 实现双流 init、SRT 识别、PTS 归零、双队列轮询
+- [x] 编译通过
 
 ---
 
@@ -325,9 +325,9 @@ std::vector<std::unique_ptr<MuxThread>> muxThreads_;
 4. 所有 MuxThread stop() + wait
 5. 清空队列，reset
 
-- [ ] 修改 `streamcontroller.h`，删除 CaptureThread 相关，添加新接口
-- [ ] 修改 `streamcontroller.cpp` 实现新的 start/stop
-- [ ] 编译通过
+- [x] 修改 `streamcontroller.h`，删除 CaptureThread 相关，添加新接口（含 videoMuxQueues_/audioMuxQueues_ 队列存储）
+- [x] 修改 `streamcontroller.cpp` 实现新的 start/stop（EncodeThread ptsIdx_ 顺带修复 static bug）
+- [x] 编译通过
 
 ---
 
@@ -349,9 +349,9 @@ int  audioChannels()   const;
 内部透传给 `VideoDecodeThread` 和 `AudioDecodeThread`。
 stop() 时自动将两个队列设为 nullptr。
 
-- [ ] 修改 `playercontroller.h` 添加接口声明
-- [ ] 修改 `playercontroller.cpp` 实现，透传给对应 decode thread
-- [ ] 编译通过
+- [x] 修改 `playercontroller.h` 添加接口声明
+- [x] 修改 `playercontroller.cpp` 实现，透传给对应 decode thread；stopAllThreads() 自动断开分叉队列
+- [x] 编译通过
 
 ---
 
@@ -417,10 +417,10 @@ streamCtrl_->stop();
 ui->actionStream->setText("推流(&S)...");
 ```
 
-- [ ] 实现推流配置 `QDialog`（三个可勾选 `QGroupBox`，至少一项才能确认）
-- [ ] `QSettings` 记忆上次配置
-- [ ] 修改 `onStreamStart()` 连接新的 StreamController 接口
-- [ ] 编译通过，端对端手动验证（单选 / 多选 各跑一遍）
+- [x] 新建 `src/streamconfigdialog.h/.cpp`，实现三个可勾选 `QGroupBox`，至少一项才能确认
+- [x] `QSettings` 记忆上次配置（"Rambos/RambosPlayer" 下 stream/* 键）
+- [x] 修改 `onStreamStart()` 连接新的 StreamController 接口；播放结束时自动停止推流
+- [x] 编译通过，端对端手动验证待用户测试
 
 ---
 

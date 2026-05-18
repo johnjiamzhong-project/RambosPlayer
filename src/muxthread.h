@@ -1,14 +1,17 @@
-// MuxThread：封装推流线程
-// 消费 FrameQueue<AVPacket*> 输入队列，以 FLV 格式写出到 RTMP URL 或本地文件。
-// init(url) 打开输出容器；run() 循环取包 → av_interleaved_write_frame。
+// MuxThread：封装推流线程（音视频双流版）
+// 消费视频/音频两条 FrameQueue<AVPacket*>，以 FLV 或 MPEGTS 格式写出。
+// 协议自动识别：rtmp:// → FLV/RTMP，srt:// → MPEGTS/SRT，本地路径 → FLV 文件。
+// PTS 归零：记录首包 PTS 为基准，后续包减去偏移，避免接收端跳过前段内容。
 #pragma once
 #include <QThread>
+#include <QElapsedTimer>
 #include <atomic>
 #include <QString>
 #include "framequeue.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
 }
 
 class MuxThread : public QThread {
@@ -16,16 +19,31 @@ class MuxThread : public QThread {
 public:
     ~MuxThread() override;
 
-    // url: RTMP 地址或本地 .flv 文件路径
-    bool init(const QString& url, int width, int height, AVRational timeBase,
-              const uint8_t* extradata = nullptr, int extradataSize = 0);
+    // 直通模式初始化：直接复制源流编解码参数，无需重编码
+    bool init(const QString& url,
+              AVCodecParameters* vpar, AVRational vTimeBase,
+              AVCodecParameters* apar, AVRational aTimeBase);
     void stop();
-    void setInputQueue(FrameQueue<AVPacket*>* q) { inputQueue_ = q; }
+
+    void setVideoInputQueue(FrameQueue<AVPacket*>* q) { videoQueue_ = q; }
+    void setAudioInputQueue(FrameQueue<AVPacket*>* q) { audioQueue_ = q; }
+
+    // 设置推流起始时间（秒）：run() 会丢弃早于该时间的包，对齐播放器当前画面。
+    // 必须在 DemuxThread 开始推包之前调用（注册 restream 队列之前）。
+    void setStreamStartSeconds(double sec) { videoStartSec_.store(sec); audioStartSec_.store(sec); }
+
+    // 设置推流截止时长（秒，从流开始计）：run() 写包时超过该时长即截断退出。
+    // 在停止推流前调用，防止 DemuxThread 超前读包导致录制比实际多几秒。
+    void setStreamStopDuration(double durationSec) { stopDuration_.store(durationSec); }
+
+    // 控制"等待 sentinel"模式：true 时丢弃所有包直到收到 nullptr sentinel。
+    // 用于推流启动/恢复时防止 DemuxThread 超前读包混入流开头。
+    void setWaitingForStart(bool v) { waitingForStart_.store(v); }
 
     bool isConnected() const { return connected_; }
 
 signals:
-    void connected();              // 目标连接成功（RTMP 握手完成时发出）
+    void connected();
     void errorOccurred(const QString& msg);
     void finished();
 
@@ -33,12 +51,22 @@ protected:
     void run() override;
 
 private:
-    AVFormatContext*        fmtCtx_        = nullptr;   // 输出格式上下文 (FLV)
-    AVStream*               vStream_       = nullptr;   // 视频流指针
-    FrameQueue<AVPacket*>*  inputQueue_    = nullptr;   // 输入：编码包队列
-    AVRational              codecTimeBase_ = {1, 30};   // 编码器时间基，用于写包前 rescale
-    std::atomic<bool>       abort_{false};              // 停止标志
-    std::atomic<bool>       connected_{false};          // 连接状态
-    QString                 url_;                       // 推流目标地址
-    bool                    isRtmp_        = false;     // 是否为 RTMP 推流
+    AVFormatContext*       fmtCtx_         = nullptr;    // 输出格式上下文
+    AVStream*              vStream_        = nullptr;    // 视频流
+    AVStream*              aStream_        = nullptr;    // 音频流
+    FrameQueue<AVPacket*>* videoQueue_     = nullptr;    // 输入：H.264 包队列
+    FrameQueue<AVPacket*>* audioQueue_     = nullptr;    // 输入：AAC 包队列
+    AVRational             videoTimeBase_  = {1, 30};   // 视频编码器时间基
+    AVRational             audioTimeBase_  = {1, 44100};// 音频编码器时间基
+    int64_t                videoPtsBase_   = AV_NOPTS_VALUE; // 视频 PTS 归零基准
+    int64_t                audioPtsBase_   = AV_NOPTS_VALUE; // 音频 PTS 归零基准
+    std::atomic<double>    videoStartSec_{-1.0};        // 推流起始时间过滤（秒），-1 表示不过滤
+    std::atomic<double>    audioStartSec_{-1.0};
+    std::atomic<double>    stopDuration_{-1.0};         // 推流截止时长（秒，从流首包计），-1 表示不截断
+    std::atomic<bool>      waitingForStart_{true};      // 等待首个 sentinel，期间丢弃所有包
+    QElapsedTimer          streamClock_;                // sentinel 后启动，用于实时限速
+    bool                   clockStarted_ = false;       // streamClock_ 是否已启动
+    std::atomic<bool>      abort_{false};
+    std::atomic<bool>      connected_{false};
+    QString                url_;
 };

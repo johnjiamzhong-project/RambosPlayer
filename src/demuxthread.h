@@ -1,12 +1,16 @@
 // src/demuxthread.h
 #pragma once
 #include <QThread>
+#include <QMutex>
 #include <atomic>
+#include <vector>
 #include "framequeue.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
 }
+
+class LocalRecorder;
 
 // 解复用线程：在独立线程中循环调用 av_read_frame 读取媒体文件，
 // 按流索引将 AVPacket* 分发到视频队列（videoQueue）和音频队列（audioQueue）。
@@ -23,6 +27,13 @@ public:
               FrameQueue<AVPacket*>* audioQueue);
     void stop();
     void seek(double seconds);  // 秒；原子存储，run() 下次循环顶部生效
+
+    // 推流分叉接口（-c copy 模式）：网络推流用 tryPush 丢帧不阻塞播放
+    void addRestreamVideoQueue(FrameQueue<AVPacket*>* q);
+    void addRestreamAudioQueue(FrameQueue<AVPacket*>* q);
+    // 本地录制接口：DemuxThread 直接写 FLV，不用队列避免超前读
+    void addLocalRecorder(LocalRecorder* r);
+    void clearRestreamQueues();   // 中止并清空所有分叉队列和本地录制器
 
     int64_t duration()       const { return duration_; }   // 微秒
     int videoStreamIdx()     const { return videoIdx_; }
@@ -44,6 +55,13 @@ private:
     std::atomic<double>    seekTarget_{-1.0};       // seek 目标（秒），-1 表示无待处理 seek
     std::atomic<double>    seekExactTarget_{-1.0};  // 精确 seek 目标（秒），handleSeek 后置位，run() 跳过低于目标的包
     std::atomic<bool>      logNextAudioPush_{false}; // seek 完成后打印第一个推入音频包的 PTS
+
+    // 推流分叉（受 restreamMtx_ 保护，run() 持读侧，add/clear 持写侧）
+    mutable QMutex                          restreamMtx_;
+    std::vector<FrameQueue<AVPacket*>*>     restreamVideoQueues_;    // tryPush（网络推流）
+    std::vector<FrameQueue<AVPacket*>*>     restreamAudioQueues_;
+    std::vector<LocalRecorder*>             localRecorders_;        // 本地录制（直接写）
+    std::atomic<bool>                       logNextRestreamVideo_{false};
 
     void handleSeek();  // 在 run() 每次循环顶部检查并执行 seek
 };

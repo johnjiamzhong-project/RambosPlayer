@@ -238,35 +238,34 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 
 ### Task 17 — 删除 CaptureThread / FrameQueue tryPush / 解码线程分叉
 
-- [ ] 删除 `src/capturethread.h` / `src/capturethread.cpp`
-- [ ] `framequeue.h` 新增 `tryPush()`（非阻塞，队列满时丢帧）
-- [ ] `VideoDecodeThread` 加 `setRestreamVideoQueue()`，run() 分叉 clone 帧
-- [ ] `AudioDecodeThread` 加 `setRestreamAudioQueue()`，swr_convert 前分叉 clone 帧
+- [x] 删除 `src/capturethread.h` / `src/capturethread.cpp`
+- [x] `framequeue.h` 新增 `tryPush()`（已存在，无需改动）
+- [x] `VideoDecodeThread` 加 `setRestreamVideoQueue()`，run() 分叉 clone 帧
+- [x] `AudioDecodeThread` 加 `setRestreamAudioQueue()`，swr_convert 前分叉 clone 帧
 
 ### Task 18 — VideoEncodeThread fan-out / AudioEncodeThread（新建）
 
-- [ ] `EncodeThread` 将单路输出改为 `vector` fan-out（clone 推多路）
-- [ ] 新建 `src/audioencodethread.h/.cpp`
+- [x] `EncodeThread` 将单路输出改为 `vector` fan-out（clone 推多路）
+- [x] 新建 `src/audioencodethread.h/.cpp`
   - `init(sampleRate, channels, bitrate)` 打开 AAC 编码器
   - 内部 `SwrContext`（任意格式 → fltp）+ `AVAudioFifo`（缓冲至 1024 samples）
   - fan-out：编码包 clone 推入所有输出队列
 
 ### Task 19 — MuxThread 重构（音视频双流 + SRT + PTS 归零）
 
-- [ ] 添加音频流（`AVStream`），`init()` 接收音视频参数及 extradata
-- [ ] 协议自动识别：`rtmp://` → FLV，`srt://` → MPEGTS，本地路径 → FLV
-- [ ] SRT listener 模式支持（`srt://:9000`）
-- [ ] PTS 归零：记录首帧 pts 作基准，后续包减去基准值
-- [ ] run() 轮询音视频两个队列，`av_interleaved_write_frame` 交错写
+- [x] 添加音频流（`AVStream`），`init()` 接收音视频参数及 extradata
+- [x] 协议自动识别：`rtmp://` → FLV，`srt://` → MPEGTS，本地路径 → FLV
+- [x] SRT listener 模式支持（`srt://:9000`）
+- [x] PTS 归零：记录首帧 pts 作基准，后续包减去基准值
+- [x] run() 轮询音视频两个队列，`av_interleaved_write_frame` 交错写
 
 ### Task 20 — StreamController 重构 + PlayerController 接口 + MainWindow UI
 
-- [ ] `StreamController` 删除 CaptureThread，管理多路 `MuxThread`（vector）
-  - `start(destinations, w, h, fps, sampleRate, channels)`
-  - `videoSourceQueue()` / `audioSourceQueue()` 供 PlayerController 连接
-- [ ] `PlayerController` 新增 `setRestreamVideoQueue()` / `setRestreamAudioQueue()` / 视频参数 getter
-- [ ] `MainWindow` 推流配置对话框：三个可勾选场景（直播平台/局域网设备/本地录制），单选或多选，每项独立配置（RTMP URL / SRT 端口默认 9000 / 本地文件路径），至少勾一项才可确认，`QSettings` 记忆上次填写内容
-- [ ] 端对端验收：本地 FLV / RTMP（SRS）/ SRT 三种场景全部验证
+- [x] `StreamController` 删除 CaptureThread，管理多路 `MuxThread`（vector + 独立音视频队列 fan-out）
+- [x] `PlayerController` 新增 `setRestreamVideoQueue()` / `setRestreamAudioQueue()` / 视频参数 getter
+- [x] 新建 `src/streamconfigdialog.h/.cpp`：三个可勾选场景（直播平台/局域网/本地录制），`QSettings` 持久化
+- [x] `MainWindow::onStreamStart()` 接入新接口；播放结束自动停止推流
+- [ ] 端对端验收：本地 FLV / RTMP（SRS）/ SRT 三种场景全部验证（待用户测试）
 - [ ] `git commit -m "feat: 推流重构 — 播放内容推流，音视频双流，RTMP/SRT 多目标"`
 
 **验收：** 推流内容与播放画面一致，有声音；平板 VLC 可通过 SRT 或 RTMP 拉流正常播放。

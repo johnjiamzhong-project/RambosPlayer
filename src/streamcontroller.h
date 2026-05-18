@@ -1,17 +1,25 @@
 // StreamController：推流总控制器
-// 持有并管理 CaptureThread → EncodeThread → MuxThread 的生命周期。
-// 对外暴露 start(source, url) / stop()；内部通过两条 FrameQueue 串联三个线程。
-// 先输出到本地 FLV 验证编码链路，RTMP 推流需外部 RTMP 服务运行。
+// 网络推流目标（RTMP/SRT）：创建 MuxThread + FrameQueue 对，DemuxThread tryPush 分叉。
+// 本地录制目标（LocalFile）：创建 LocalRecorder，DemuxThread 直接同步写 FLV。
 #pragma once
 #include <QObject>
+#include <memory>
+#include <vector>
+#include <QList>
 #include "framequeue.h"
-#include "capturethread.h"
-#include "encodethread.h"
 #include "muxthread.h"
+#include "localrecorder.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 }
+
+struct StreamDestination {
+    enum Type { Rtmp, Srt, LocalFile };
+    Type    type;
+    QString url;  // RTMP: 完整 URL；SRT: "srt://:port"；LocalFile: 文件路径
+};
 
 class StreamController : public QObject {
     Q_OBJECT
@@ -19,26 +27,35 @@ public:
     explicit StreamController(QObject* parent = nullptr);
     ~StreamController() override;
 
-    // source: "desktop" 或摄像头设备名
-    // url: RTMP 地址或本地 .flv 路径
-    // width/height/fps/bitrate: 编码参数
-    bool start(const QString& source, const QString& url,
-               int width = 1920, int height = 1080, int fps = 30, int bitrate = 2000000);
+    // 启动推流：本地目标用 LocalRecorder，网络目标用 MuxThread
+    bool start(const QList<StreamDestination>& destinations,
+               AVCodecParameters* vpar, AVRational vTimeBase,
+               AVCodecParameters* apar, AVRational aTimeBase);
     void stop();
 
     bool isStreaming() const { return streaming_; }
 
+    // 网络推流队列（供 PlayerController 注册到 DemuxThread）
+    const std::vector<std::unique_ptr<FrameQueue<AVPacket*>>>& videoMuxQueues() const { return videoMuxQueues_; }
+    const std::vector<std::unique_ptr<FrameQueue<AVPacket*>>>& audioMuxQueues() const { return audioMuxQueues_; }
+
+    // 本地录制器（供 PlayerController 注册到 DemuxThread）
+    const std::vector<std::unique_ptr<LocalRecorder>>& recorders() const { return recorders_; }
+
+    // MuxThread 侧控制（仅对网络推流生效）
+    void setStreamStartSeconds(double sec);
+    void setStreamStopDuration(double durationSec);
+    void setWaitingForStart(bool v);
+
 signals:
-    void streamingStarted();           // 推流所有线程全部启动
-    void streamingStopped();           // 推流所有线程全部停止
+    void streamingStarted();
+    void streamingStopped();
     void errorOccurred(const QString& msg);
 
 private:
-    // 队列必须在成员之前声明，保证析构时队列活得比线程久（C++ 逆序析构）
-    FrameQueue<AVFrame*>  rawFrameQ_{30};       // 原始帧队列
-    FrameQueue<AVPacket*> encodedPacketQ_{60};  // 编码包队列
-    CaptureThread  capture_;
-    EncodeThread   encode_;
-    MuxThread      mux_;
-    bool           streaming_ = false;
+    std::vector<std::unique_ptr<MuxThread>>             muxThreads_;       // 网络推流线程
+    std::vector<std::unique_ptr<FrameQueue<AVPacket*>>> videoMuxQueues_;   // 视频包队列（网络）
+    std::vector<std::unique_ptr<FrameQueue<AVPacket*>>> audioMuxQueues_;   // 音频包队列（网络）
+    std::vector<std::unique_ptr<LocalRecorder>>         recorders_;        // 本地录制器
+    bool streaming_ = false;
 };

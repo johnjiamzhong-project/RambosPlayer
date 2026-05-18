@@ -4,57 +4,69 @@
 extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/error.h>
+#include <libavutil/channel_layout.h>
 }
 
 MuxThread::~MuxThread() {
     stop(); wait();
     if (fmtCtx_) {
-        if (fmtCtx_->pb) avio_close(fmtCtx_->pb);
+        if (fmtCtx_->pb) avio_closep(&fmtCtx_->pb);
         avformat_free_context(fmtCtx_);
     }
 }
 
-// 打开 FLV 输出：创建 AVFormatContext，添加 H.264 视频流并设 codecpar，avio 连接目标。
-// RTMP URL 走 librtmp 协议，本地 .flv 路径走文件写入。
-bool MuxThread::init(const QString& url, int width, int height, AVRational timeBase,
-                     const uint8_t* extradata, int extradataSize) {
-    // 重复调用时先关闭上一次的 IO 和格式上下文
+// 直通模式初始化：用 avcodec_parameters_copy 复制源流参数，无需重编码。
+// 协议自动识别：srt:// → MPEGTS，其余 → FLV（兼容 RTMP 和本地文件）。
+// 要求源视频为 H.264（FLV 容器限制），音频格式无限制（MPEGTS 更宽容）。
+bool MuxThread::init(const QString& url,
+                     AVCodecParameters* vpar, AVRational vTimeBase,
+                     AVCodecParameters* apar, AVRational aTimeBase) {
     if (fmtCtx_) {
         if (fmtCtx_->pb) avio_closep(&fmtCtx_->pb);
         avformat_free_context(fmtCtx_);
         fmtCtx_ = nullptr;
     }
-    vStream_ = nullptr;
-
+    vStream_ = aStream_ = nullptr;
+    videoPtsBase_ = audioPtsBase_ = AV_NOPTS_VALUE;
     abort_.store(false, std::memory_order_relaxed);
-    url_    = url;
-    isRtmp_ = url.startsWith(QStringLiteral("rtmp://"));
+    url_ = url;
 
-    if (avformat_alloc_output_context2(&fmtCtx_, nullptr, "flv", nullptr) < 0) {
-        qWarning() << "MuxThread: avformat_alloc_output_context2 failed"; return false;
+    bool isSrt = url.startsWith("srt://");
+    const char* fmt = isSrt ? "mpegts" : "flv";
+
+    // FLV 仅支持 H.264 视频；非 H.264 源给出明确错误
+    if (!isSrt && vpar && vpar->codec_id != AV_CODEC_ID_H264) {
+        qWarning() << "MuxThread: FLV requires H.264, source codec_id ="
+                   << vpar->codec_id << "(use SRT/MPEGTS for other codecs)";
+        return false;
     }
 
-    // 添加视频流并填充 codecpar（含 extradata = SPS/PPS）
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    if (!codec) { qWarning() << "MuxThread: H.264 codec not found"; return false; }
-    vStream_ = avformat_new_stream(fmtCtx_, codec);
-    if (!vStream_) { qWarning() << "MuxThread: avformat_new_stream failed"; return false; }
-
-    vStream_->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    vStream_->codecpar->codec_id   = AV_CODEC_ID_H264;
-    vStream_->codecpar->width      = width;
-    vStream_->codecpar->height     = height;
-    vStream_->time_base            = timeBase;
-    codecTimeBase_                 = timeBase;  // 保存编码器时间基，run() 中做 rescale
-
-    // 从编码器复制 extradata（H.264 SPS/PPS），否则 FLV 文件无法解码
-    if (extradata && extradataSize > 0) {
-        vStream_->codecpar->extradata = (uint8_t*)av_mallocz(extradataSize + AV_INPUT_BUFFER_PADDING_SIZE);
-        memcpy(vStream_->codecpar->extradata, extradata, extradataSize);
-        vStream_->codecpar->extradata_size = extradataSize;
+    if (avformat_alloc_output_context2(&fmtCtx_, nullptr, fmt, nullptr) < 0) {
+        qWarning() << "MuxThread: avformat_alloc_output_context2 failed";
+        return false;
     }
 
-    // 打开输出 IO
+    // ---- 视频流（直接复制源 codecpar）----
+    if (vpar) {
+        vStream_ = avformat_new_stream(fmtCtx_, nullptr);
+        if (!vStream_) return false;
+        avcodec_parameters_copy(vStream_->codecpar, vpar);
+        vStream_->codecpar->codec_tag = 0;  // 让封装器自动填写正确 tag
+        vStream_->time_base = vTimeBase;
+        videoTimeBase_      = vTimeBase;
+    }
+
+    // ---- 音频流（直接复制源 codecpar）----
+    if (apar) {
+        aStream_ = avformat_new_stream(fmtCtx_, nullptr);
+        if (!aStream_) return false;
+        avcodec_parameters_copy(aStream_->codecpar, apar);
+        aStream_->codecpar->codec_tag = 0;
+        aStream_->time_base = aTimeBase;
+        audioTimeBase_      = aTimeBase;
+    }
+
+    // ---- 打开输出 IO ----
     if (!(fmtCtx_->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&fmtCtx_->pb, url.toUtf8(), AVIO_FLAG_WRITE) < 0) {
             qWarning() << "MuxThread: avio_open failed" << url;
@@ -62,7 +74,6 @@ bool MuxThread::init(const QString& url, int width, int height, AVRational timeB
         }
     }
 
-    // 写文件头（RTMP 时写 FLV header）
     if (avformat_write_header(fmtCtx_, nullptr) < 0) {
         qWarning() << "MuxThread: avformat_write_header failed";
         return false;
@@ -70,45 +81,164 @@ bool MuxThread::init(const QString& url, int width, int height, AVRational timeB
 
     connected_ = true;
     emit connected();
-    qInfo() << "MuxThread::init ok url =" << url << "isRtmp =" << isRtmp_
-            << "size =" << width << "x" << height;
+    qInfo() << "MuxThread::init (copy) ok url=" << url << "fmt=" << fmt
+            << "vcodec=" << (vpar ? avcodec_get_name(vpar->codec_id) : "none")
+            << "acodec=" << (apar ? avcodec_get_name(apar->codec_id) : "none");
     return true;
 }
 
-// 设置停止标志并 abort 输入队列
 void MuxThread::stop() {
     abort_ = true;
-    if (inputQueue_) inputQueue_->abort();
+    if (videoQueue_) videoQueue_->abort();
+    if (audioQueue_) audioQueue_->abort();
 }
 
-// 主循环：从编码包队列取包 → av_interleaved_write_frame
+// 主循环：轮询视频/音频两个队列，PTS 归零后 av_interleaved_write_frame 交错写。
 void MuxThread::run() {
-    if (!fmtCtx_ || !inputQueue_) return;
+    if (!fmtCtx_) return;
 
-    AVPacket* pkt = nullptr;
-    int64_t frameCount = 0;
+    AVPacket* pkt  = nullptr;
+    int64_t frames = 0;
+    int64_t videoDiscarded = 0, audioDiscarded = 0;
+    int64_t videoRateLimitCount = 0, audioRateLimitCount = 0;
 
-    while (!abort_.load(std::memory_order_relaxed)) {
-        if (!inputQueue_->tryPop(pkt, 20)) continue;
+    while (!abort_) {
+        // 优先取视频包；若无则取音频包；均无则短暂等待
+        bool gotVideo = videoQueue_ && videoQueue_->tryPop(pkt, 0);
+        if (!gotVideo) {
+            bool gotAudio = audioQueue_ && audioQueue_->tryPop(pkt, 10);
+            if (!gotAudio) continue;
 
-        // 将 pts/dts/duration 从编码器时间基转换到 stream 时间基（FLV muxer 用 {1,1000}）
-        pkt->stream_index = vStream_->index;
-        av_packet_rescale_ts(pkt, codecTimeBase_, vStream_->time_base);
+            // seek sentinel：重置音频 PTS 基准，同时解除启动等待，重启实时时钟
+            if (!pkt) {
+                audioPtsBase_ = AV_NOPTS_VALUE;
+                waitingForStart_.store(false);
+                streamClock_.restart(); clockStarted_ = true;
+                qInfo() << "MuxThread: audio sentinel received, start writing";
+                continue;
+            }
 
-        if (av_interleaved_write_frame(fmtCtx_, pkt) < 0) {
-            av_packet_free(&pkt);
-            qWarning() << "MuxThread: write frame error, retrying";
-            continue;
+            // 等待 sentinel 期间丢弃所有包（防止 DemuxThread 超前包混入开头）
+            if (waitingForStart_.load()) { av_packet_free(&pkt); continue; }
+
+            // 丢弃早于推流起始时间的音频包，对齐播放器当前画面
+            {
+                double s = audioStartSec_.load();
+                if (s >= 0 && pkt->pts != AV_NOPTS_VALUE) {
+                    double pktSec = pkt->pts * av_q2d(audioTimeBase_);
+                    if (pktSec < s) {
+                        ++audioDiscarded;
+                        av_packet_free(&pkt); continue;
+                    }
+                    qInfo() << "MuxThread: audio filter done, discarded=" << audioDiscarded
+                            << "startSec=" << s << "firstPassPTS=" << pktSec;
+                    audioStartSec_.store(-1.0);
+                }
+            }
+
+            // 音频包 PTS 归零
+            if (audioPtsBase_ == AV_NOPTS_VALUE) {
+                audioPtsBase_ = pkt->pts;
+                qInfo() << "MuxThread: audio PTS base =" << audioPtsBase_;
+            }
+            pkt->pts -= audioPtsBase_;
+            pkt->dts -= audioPtsBase_;
+            // 实时限速：归零后 pts 对应录制时间轴秒数，超前实时 500ms 以上则等待
+            if (clockStarted_ && pkt->pts != AV_NOPTS_VALUE) {
+                double outputSec = pkt->pts * av_q2d(audioTimeBase_);
+                double elapsedSec = streamClock_.elapsed() / 1000.0;
+                if (outputSec > elapsedSec + 0.5) {
+                    int64_t sleepMs = (int64_t)((outputSec - elapsedSec - 0.5) * 1000);
+                    if (sleepMs > 5) {
+                        if (++audioRateLimitCount == 1)
+                            qInfo() << "MuxThread: audio rate-limit first sleep" << sleepMs << "ms output=" << outputSec << "elapsed=" << elapsedSec;
+                        QThread::msleep(qMin(sleepMs, (int64_t)2000));
+                    }
+                }
+            }
+            // 截断：归零后 pts * time_base = 录制已过秒数，超过截止时长则退出
+            {
+                double d = stopDuration_.load();
+                if (d >= 0 && pkt->pts * av_q2d(audioTimeBase_) > d + 0.1) {
+                    qInfo() << "MuxThread: audio stop at" << pkt->pts * av_q2d(audioTimeBase_)
+                            << "s (stopDuration=" << d << ")";
+                    av_packet_free(&pkt); abort_ = true; break;
+                }
+            }
+            pkt->stream_index = aStream_->index;
+            av_packet_rescale_ts(pkt, audioTimeBase_, aStream_->time_base);
+        } else {
+            // seek sentinel：重置视频 PTS 基准，同时解除启动等待，重启实时时钟
+            if (!pkt) {
+                videoPtsBase_ = AV_NOPTS_VALUE;
+                waitingForStart_.store(false);
+                streamClock_.restart(); clockStarted_ = true;
+                qInfo() << "MuxThread: video sentinel received, start writing";
+                continue;
+            }
+
+            // 等待 sentinel 期间丢弃所有包
+            if (waitingForStart_.load()) { av_packet_free(&pkt); continue; }
+
+            // 丢弃早于推流起始时间的视频包，对齐播放器当前画面
+            {
+                double s = videoStartSec_.load();
+                if (s >= 0 && pkt->pts != AV_NOPTS_VALUE) {
+                    double pktSec = pkt->pts * av_q2d(videoTimeBase_);
+                    if (pktSec < s) {
+                        ++videoDiscarded;
+                        av_packet_free(&pkt); continue;
+                    }
+                    qInfo() << "MuxThread: video filter done, discarded=" << videoDiscarded
+                            << "startSec=" << s << "firstPassPTS=" << pktSec;
+                    videoStartSec_.store(-1.0);
+                }
+            }
+
+            // 视频包 PTS 归零：用 dts 作基准，防止含 B 帧时 dts < pts 导致归零后出现负值
+            if (videoPtsBase_ == AV_NOPTS_VALUE) {
+                videoPtsBase_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+                qInfo() << "MuxThread: video PTS base =" << videoPtsBase_;
+            }
+            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= videoPtsBase_;
+            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= videoPtsBase_;
+            // 实时限速：确保视频写入速度不超过实时 + 500ms
+            if (clockStarted_ && pkt->pts != AV_NOPTS_VALUE) {
+                double outputSec = pkt->pts * av_q2d(videoTimeBase_);
+                double elapsedSec = streamClock_.elapsed() / 1000.0;
+                if (outputSec > elapsedSec + 0.5) {
+                    int64_t sleepMs = (int64_t)((outputSec - elapsedSec - 0.5) * 1000);
+                    if (sleepMs > 5) {
+                        if (++videoRateLimitCount == 1)
+                            qInfo() << "MuxThread: video rate-limit first sleep" << sleepMs << "ms output=" << outputSec << "elapsed=" << elapsedSec;
+                        QThread::msleep(qMin(sleepMs, (int64_t)2000));
+                    }
+                }
+            }
+            // 截断：超过截止时长则退出，避免 DemuxThread 超前导致多录
+            {
+                double d = stopDuration_.load();
+                if (d >= 0 && pkt->pts != AV_NOPTS_VALUE &&
+                    pkt->pts * av_q2d(videoTimeBase_) > d + 0.1) {
+                    qInfo() << "MuxThread: video stop at" << pkt->pts * av_q2d(videoTimeBase_)
+                            << "s (stopDuration=" << d << ")";
+                    av_packet_free(&pkt); abort_ = true; break;
+                }
+            }
+            pkt->stream_index = vStream_->index;
+            av_packet_rescale_ts(pkt, videoTimeBase_, vStream_->time_base);
         }
 
+        if (av_interleaved_write_frame(fmtCtx_, pkt) < 0)
+            qWarning() << "MuxThread: write frame error";
+
         av_packet_free(&pkt);
-        frameCount++;
+        frames++;
     }
 
-    // 推流结束：写封装尾后立即关闭 IO，确保缓冲区冲刷到磁盘文件
     av_write_trailer(fmtCtx_);
     if (fmtCtx_->pb) avio_closep(&fmtCtx_->pb);
     connected_ = false;
-    qInfo() << "MuxThread::run finished, frames written =" << frameCount;
+    qInfo() << "MuxThread::run finished frames=" << frames;
     emit finished();
 }

@@ -40,7 +40,7 @@ private:
     QIODevice* device_ = nullptr;          // QAudioOutput 写入设备（start() 返回值）
     AVSync* sync_ = nullptr;               // 音频时钟（解码后更新 PTS）
     AVRational timeBase_{1, 1};            // 时间基，用于 PTS → 秒
-    FrameQueue<AVPacket*>* inputQueue_ = nullptr; // 输入：音频包队列
+    FrameQueue<AVPacket*>* inputQueue_        = nullptr; // 输入：音频包队列
     std::atomic<bool> abort_{false};       // 停止标志
     std::atomic<bool> flush_{false};       // Seek 后清空缓冲
     std::atomic<int64_t> flushGen_{0};     // flush 世代计数器，防止旧帧在 seek 后更新时钟

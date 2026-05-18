@@ -29,10 +29,12 @@ add_executable(RambosPlayer WIN32
     src/playercontroller.cpp
     src/mainwindow.cpp
     src/filterpanel.cpp
-    src/capturethread.cpp
     src/encodethread.cpp
+    src/audioencodethread.cpp
     src/muxthread.cpp
     src/streamcontroller.cpp
+    src/streamconfigdialog.cpp
+    src/localrecorder.cpp
     src/thumbnailextractor.cpp
     src/timeline.cpp
     src/exportworker.cpp

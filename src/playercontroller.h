@@ -6,6 +6,7 @@
 #include "demuxthread.h"
 #include "videodecodethread.h"
 #include "audiodecodethread.h"
+#include "localrecorder.h"
 
 class QTimer;
 
@@ -41,8 +42,31 @@ public:
     void setSaturation(float v)     { videoDec_.setSaturation(v); }
     void setWatermark(const QString& path) { videoDec_.setWatermark(path); }
 
+    // 推流分叉接口（-c copy 模式，直接在 DemuxThread 层分叉原始 packet）。
+    void addRestreamVideoPacketQueue(FrameQueue<AVPacket*>* q)
+        { demux_.addRestreamVideoQueue(q); }
+    void addRestreamAudioPacketQueue(FrameQueue<AVPacket*>* q)
+        { demux_.addRestreamAudioQueue(q); }
+    // 本地录制接口：DemuxThread 直接写 FLV，不用队列+线程
+    void addLocalRecorder(LocalRecorder* r) { demux_.addLocalRecorder(r); }
+    void clearRestreamPacketQueues() { demux_.clearRestreamQueues(); }
+
+    // 源文件编解码参数，供 MuxThread::init 直接使用（-c copy 无需重编码）
+    AVCodecParameters* videoCodecPar()    const;
+    AVCodecParameters* audioCodecPar()    const;
+    AVRational         videoStreamTimeBase() const;
+    AVRational         audioStreamTimeBase() const;
+
+    int videoWidth()       const { return videoDec_.width(); }
+    int videoHeight()      const { return videoDec_.height(); }
+    int videoFps()         const;   // 从 AVFormatContext 读取，无法获取时返回 30
+    int audioSampleRate()  const;   // 从 AVFormatContext 读取
+    int audioChannels()    const;   // 从 AVFormatContext 读取
+
     int64_t duration() const;   // 毫秒
     bool isPlaying() const { return playing_; }
+    bool isOpened()  const { return demux_.formatContext() != nullptr; } // 文件已打开（含暂停状态）
+    double currentPositionSeconds() const { return sync_.audioClock(); } // 当前音频时钟（秒），用于推流对齐
 
 signals:
     void durationChanged(int64_t ms);
@@ -59,7 +83,7 @@ private:
     // 队列必须在线程成员之前声明，保证析构时队列比线程活得更久。
     // C++ 成员析构顺序为声明逆序：若队列在线程之后声明，
     // 队列先被销毁，线程析构时调 stop()->abort() 会访问已析构的队列（UAF 崩溃）。
-    FrameQueue<AVPacket*> videoPacketQ_{500};       // 视频包队列（硬解瞬间大量帧，需大容量防堵）
+    FrameQueue<AVPacket*> videoPacketQ_{30};        // 视频包队列（30≈1.2s@25fps；限制推流超前读）
     FrameQueue<AVPacket*> audioPacketQ_{400};       // 音频包队列（更大以应对音频帧小而密）
     FrameQueue<AVFrame*>  videoFrameQ_{50};         // 解码后视频帧队列（硬解 GOP 突发 ~30 帧）
     DemuxThread demux_;                             // 解复用线程

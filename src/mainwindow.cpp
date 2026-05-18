@@ -4,6 +4,7 @@
 #include "playercontroller.h"
 #include "filterpanel.h"
 #include "streamcontroller.h"
+#include "streamconfigdialog.h"
 #include "timeline.h"
 #include "thumbnailextractor.h"
 #include "exportworker.h"
@@ -141,7 +142,7 @@ MainWindow::~MainWindow() {
 }
 
 // 打开文件并开始播放，同时更新最近文件记录。供对话框和最近文件菜单共用。
-// 若剪辑模式已开启，自动提取缩略图。
+// 若剪辑模式已开启，自动提取缩略图；若有预配置推流目标，自动启动推流。
 void MainWindow::openFile(const QString& path) {
     player_->stop();
     if (player_->open(path)) {
@@ -150,6 +151,12 @@ void MainWindow::openFile(const QString& path) {
         updateRecentFiles(path);
         ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
         player_->play();
+
+        // 有预配置推流目标时，文件打开后自动启动推流
+        if (!pendingDests_.isEmpty()) {
+            startStreaming(pendingDests_);
+            pendingDests_.clear();
+        }
 
         // 剪辑模式下自动提取缩略图
         if (trimDock_->isVisible())
@@ -227,15 +234,44 @@ void MainWindow::onClearRecent() {
     rebuildRecentMenu();
 }
 
-// 播放/暂停切换，同步更新按钮文字。
+// 播放/暂停切换，同步更新按钮图标。
+// 推流进行中时：暂停→断开 restream 队列防止超前写入；恢复→重连并 seek 对齐。
 void MainWindow::onPlayPause() {
     if (player_->isPlaying()) {
         player_->pause();
         ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+        if (streamCtrl_->isStreaming()) {
+            player_->clearRestreamPacketQueues();
+            qInfo() << "MainWindow: restream disconnected on pause";
+        }
     } else {
+        if (streamCtrl_->isStreaming())
+            reconnectStreaming();
         player_->play();
         ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
     }
+}
+
+// 推流恢复：重置 MuxThread 等待标志，重新连接 restream 队列，seek 对齐当前画面位置。
+void MainWindow::reconnectStreaming() {
+    streamCtrl_->setWaitingForStart(true);
+    int localIdx = 0, remoteIdx = 0;
+    for (const auto& dest : activeDests_) {
+        if (dest.type == StreamDestination::LocalFile) {
+            player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
+        } else {
+            player_->addRestreamVideoPacketQueue(
+                streamCtrl_->videoMuxQueues()[remoteIdx].get());
+            player_->addRestreamAudioPacketQueue(
+                streamCtrl_->audioMuxQueues()[remoteIdx].get());
+            remoteIdx++;
+        }
+    }
+    double alignSec = player_->currentPositionSeconds();
+    if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
+    streamAlignSec_ = alignSec;
+    player_->seek(alignSec);
+    qInfo() << "MainWindow: restream reconnected, seek-align to" << alignSec << "s";
 }
 
 // 进度条拖拽时触发 seek，value 范围 0–1000 映射到 0–duration 秒。
@@ -265,9 +301,19 @@ void MainWindow::onPositionChanged(int64_t ms) {
     ui->timeLabel->setText(formatTime(ms) + " / " + formatTime(duration_));
 }
 
-// 播放结束后复位按钮为播放状态。
+// 播放结束：复位按钮，若正在推流则自动停止。
 void MainWindow::onPlaybackFinished() {
     ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+    if (streamCtrl_->isStreaming()) {
+        double stopSec = player_->currentPositionSeconds();
+        if (stopSec < 0.0) stopSec = currentPos_ / 1000.0;
+        streamCtrl_->setStreamStopDuration(stopSec - streamAlignSec_);
+        player_->clearRestreamPacketQueues();
+        streamCtrl_->stop();
+        activeDests_.clear();
+        ui->actionStream->setText("推流(&S)...");
+        statusBar()->showMessage("播放结束，推流已自动停止", 4000);
+    }
 }
 
 // 拦截进度条/音量条的鼠标点击，实现点哪跳哪而非 pageStep 步进。
@@ -351,30 +397,45 @@ void MainWindow::mouseDoubleClickEvent(QMouseEvent*) {
     isFullscreen_ ? showFullScreen() : showNormal();
 }
 
-// 推流设置对话框：输入源和目标 URL，启动/停止推流。
-// 启动中时再次点击变为停止。默认保存至 exe 同目录。
+// 推流配置对话框入口：
+// - 正在推流时：停止推流。
+// - 文件已打开：弹配置对话框，确认后立即启动推流管线。
+// - 尚未打开文件：弹配置对话框，确认后保存为预配置目标，打开文件时自动启动。
 void MainWindow::onStreamStart() {
     if (streamCtrl_->isStreaming()) {
+        double stopSec = player_->currentPositionSeconds();
+        if (stopSec < 0.0) stopSec = currentPos_ / 1000.0;
+        streamCtrl_->setStreamStopDuration(stopSec - streamAlignSec_);
+        player_->clearRestreamPacketQueues();
         streamCtrl_->stop();
+        activeDests_.clear();
         ui->actionStream->setText("推流(&S)...");
         return;
     }
 
-    QString source = QInputDialog::getText(this, "推流源",
-        "采集源 (desktop / 摄像头设备名):",
-        QLineEdit::Normal, "desktop");
-    if (source.isEmpty()) return;
+    // 取消预配置（已配置但还没开文件，再次点击则取消）
+    if (!pendingDests_.isEmpty()) {
+        pendingDests_.clear();
+        ui->actionStream->setText("推流(&S)...");
+        statusBar()->showMessage("推流预配置已取消", 3000);
+        return;
+    }
 
-    QString defaultPath = QCoreApplication::applicationDirPath() + "/record.flv";
-    QString url = QInputDialog::getText(this, "推流目标",
-        "RTMP URL 或本地 .flv 路径:",
-        QLineEdit::Normal, defaultPath);
-    if (url.isEmpty()) return;
+    StreamConfigDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted) return;
 
-    if (streamCtrl_->start(source, url)) {
-        ui->actionStream->setText("停止推流");
+    QList<StreamDestination> dests = dlg.destinations();
+    if (dests.isEmpty()) return;
+
+    if (player_->isOpened()) {
+        // 文件已打开，立即启动
+        startStreaming(dests);
     } else {
-        statusBar()->showMessage("推流启动失败，详见弹窗提示", 5000);
+        // 尚未打开文件，保存预配置，打开文件后自动启动
+        pendingDests_ = dests;
+        ui->actionStream->setText("取消预配置");
+        statusBar()->showMessage(
+            QString("推流已预配置 %1 路目标，打开文件后自动启动").arg(dests.size()), 0);
     }
 }
 
@@ -427,6 +488,61 @@ void MainWindow::onExportProgress(int64_t currentPts, int64_t totalPts) {
 void MainWindow::onExportFinished(bool ok) {
     statusBar()->showMessage(ok ? "导出完成" : "导出失败", 5000);
     ui->actionExport->setEnabled(true);
+}
+
+// 启动推流管线（-c copy 直通模式）：
+// 直接从 PlayerController 取源文件 AVCodecParameters，无需重编码。
+// MuxThread 启动后，将其输入队列注册到 DemuxThread 分叉列表，
+// DemuxThread 此后自动把每个原始 packet clone 一份推入推流队列。
+void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
+    AVCodecParameters* vpar = player_->videoCodecPar();
+    AVCodecParameters* apar = player_->audioCodecPar();
+    AVRational vtb = player_->videoStreamTimeBase();
+    AVRational atb = player_->audioStreamTimeBase();
+
+    if (!vpar) {
+        QMessageBox::warning(this, "推流", "无法读取视频流参数，请确认文件有效。");
+        return;
+    }
+
+    if (!streamCtrl_->start(dests, vpar, vtb, apar, atb)) {
+        statusBar()->showMessage("推流启动失败，详见弹窗提示", 5000);
+        return;
+    }
+
+    activeDests_ = dests;  // 保存目标列表，暂停恢复时用于区分本地/远程
+
+    // 根据目标类型分别注册到 DemuxThread：
+    // 本地录制 → addLocalRecorder（DemuxThread 直接写 FLV）
+    // 网络推流 → addRestreamVideoPacketQueue / addRestreamAudioPacketQueue（tryPush 分叉）
+    int localIdx = 0, remoteIdx = 0;
+    for (const auto& dest : dests) {
+        if (dest.type == StreamDestination::LocalFile) {
+            player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
+        } else {
+            player_->addRestreamVideoPacketQueue(
+                streamCtrl_->videoMuxQueues()[remoteIdx].get());
+            player_->addRestreamAudioPacketQueue(
+                streamCtrl_->audioMuxQueues()[remoteIdx].get());
+            remoteIdx++;
+        }
+    }
+
+    // 推流对齐：对当前播放位置做一次 seek。
+    // DemuxThread 会清空 restream 队列（推 sentinel 重置 MuxThread PTS base），
+    // 然后从当前播放位置重新读包，restream 收到的第一包就是当前画面对应的帧。
+    // audioClock 可能未就绪（返回 -1），回退到 currentPos_（进度条位置，单位 ms）。
+    double alignSec = player_->currentPositionSeconds();
+    if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
+    streamAlignSec_ = alignSec;
+    qInfo() << "MainWindow: stream seek-align to" << alignSec
+            << "s (audioClock=" << player_->currentPositionSeconds() << ")";
+    player_->seek(alignSec);
+
+    ui->actionStream->setText("停止推流");
+    statusBar()->showMessage(
+        QString("推流中（直通）→ %1 路目标  %2x%3")
+            .arg(dests.size()).arg(vpar->width).arg(vpar->height), 0);
 }
 
 // 毫秒转 "MM:SS" 字符串，用于时间标签显示。
