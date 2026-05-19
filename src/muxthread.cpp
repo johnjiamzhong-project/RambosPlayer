@@ -27,7 +27,9 @@ bool MuxThread::init(const QString& url,
         fmtCtx_ = nullptr;
     }
     vStream_ = aStream_ = nullptr;
-    videoPtsBase_ = audioPtsBase_ = AV_NOPTS_VALUE;
+    videoSegBase_ = audioSegBase_ = AV_NOPTS_VALUE;
+    videoAccumPts_ = audioAccumPts_ = 0;
+    videoLastOut_  = audioLastOut_  = 0;
     abort_.store(false, std::memory_order_relaxed);
     url_ = url;
 
@@ -109,12 +111,13 @@ void MuxThread::run() {
             bool gotAudio = audioQueue_ && audioQueue_->tryPop(pkt, 10);
             if (!gotAudio) continue;
 
-            // seek sentinel：重置音频 PTS 基准，同时解除启动等待，重启实时时钟
+            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零
             if (!pkt) {
-                audioPtsBase_ = AV_NOPTS_VALUE;
+                audioAccumPts_ = audioLastOut_;
+                audioSegBase_  = AV_NOPTS_VALUE;
                 waitingForStart_.store(false);
                 streamClock_.restart(); clockStarted_ = true;
-                qInfo() << "MuxThread: audio sentinel received, start writing";
+                qInfo() << "MuxThread: audio sentinel received, audioAccum=" << audioAccumPts_;
                 continue;
             }
 
@@ -136,13 +139,25 @@ void MuxThread::run() {
                 }
             }
 
-            // 音频包 PTS 归零
-            if (audioPtsBase_ == AV_NOPTS_VALUE) {
-                audioPtsBase_ = pkt->pts;
-                qInfo() << "MuxThread: audio PTS base =" << audioPtsBase_;
+            // seek 抑制期：等待视频关键帧落点（1e18），或等音频 PTS 追上关键帧
+            {
+                double sa = suppressAudioUntilSec_.load();
+                if (sa >= 0.0) {
+                    double srcSec = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts * av_q2d(audioTimeBase_) : -1.0;
+                    if (srcSec < sa) { av_packet_free(&pkt); continue; }
+                    qInfo() << "MuxThread: audio aligned after seek PTS=" << srcSec;
+                    suppressAudioUntilSec_.store(-1.0);
+                }
             }
-            pkt->pts -= audioPtsBase_;
-            pkt->dts -= audioPtsBase_;
+
+            // 音频包 PTS 连续输出：新段用 segBase 对齐，加上累积偏移续接上一段
+            if (audioSegBase_ == AV_NOPTS_VALUE) {
+                audioSegBase_ = pkt->pts;
+                qInfo() << "MuxThread: audio seg base=" << audioSegBase_ << "accum=" << audioAccumPts_;
+            }
+            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts = pkt->pts - audioSegBase_ + audioAccumPts_;
+            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts = pkt->dts - audioSegBase_ + audioAccumPts_;
+            if (pkt->pts != AV_NOPTS_VALUE) audioLastOut_ = pkt->pts;
             // 实时限速：归零后 pts 对应录制时间轴秒数，超前实时 500ms 以上则等待
             if (clockStarted_ && pkt->pts != AV_NOPTS_VALUE) {
                 double outputSec = pkt->pts * av_q2d(audioTimeBase_);
@@ -168,12 +183,13 @@ void MuxThread::run() {
             pkt->stream_index = aStream_->index;
             av_packet_rescale_ts(pkt, audioTimeBase_, aStream_->time_base);
         } else {
-            // seek sentinel：重置视频 PTS 基准，同时解除启动等待，重启实时时钟
+            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零
             if (!pkt) {
-                videoPtsBase_ = AV_NOPTS_VALUE;
+                videoAccumPts_ = videoLastOut_;
+                videoSegBase_  = AV_NOPTS_VALUE;
                 waitingForStart_.store(false);
                 streamClock_.restart(); clockStarted_ = true;
-                qInfo() << "MuxThread: video sentinel received, start writing";
+                qInfo() << "MuxThread: video sentinel received, videoAccum=" << videoAccumPts_;
                 continue;
             }
 
@@ -195,13 +211,27 @@ void MuxThread::run() {
                 }
             }
 
-            // 视频包 PTS 归零：用 dts 作基准，防止含 B 帧时 dts < pts 导致归零后出现负值
-            if (videoPtsBase_ == AV_NOPTS_VALUE) {
-                videoPtsBase_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
-                qInfo() << "MuxThread: video PTS base =" << videoPtsBase_;
+            // seek 抑制期：丢弃 PTS < targetSec 的帧，等首个 >= targetSec 的关键帧退出
+            {
+                double sv = suppressVideoUntilSec_.load();
+                if (sv >= 0.0) {
+                    double srcSec = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts * av_q2d(videoTimeBase_) : -1.0;
+                    bool isKey    = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+                    if (srcSec < sv || !isKey) { av_packet_free(&pkt); continue; }
+                    qInfo() << "MuxThread: seek keyframe found PTS=" << srcSec << "target=" << sv;
+                    suppressVideoUntilSec_.store(-1.0);
+                    suppressAudioUntilSec_.store(srcSec); // 音频对齐到此关键帧
+                }
             }
-            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= videoPtsBase_;
-            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= videoPtsBase_;
+
+            // 视频包 PTS 连续输出：用 dts 作 segBase 防止 B 帧导致负值，加累积偏移续接上一段
+            if (videoSegBase_ == AV_NOPTS_VALUE) {
+                videoSegBase_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
+                qInfo() << "MuxThread: video seg base=" << videoSegBase_ << "accum=" << videoAccumPts_;
+            }
+            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts = pkt->pts - videoSegBase_ + videoAccumPts_;
+            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts = pkt->dts - videoSegBase_ + videoAccumPts_;
+            if (pkt->pts != AV_NOPTS_VALUE) videoLastOut_ = pkt->pts;
             // 实时限速：确保视频写入速度不超过实时 + 500ms
             if (clockStarted_ && pkt->pts != AV_NOPTS_VALUE) {
                 double outputSec = pkt->pts * av_q2d(videoTimeBase_);

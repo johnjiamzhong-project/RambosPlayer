@@ -46,6 +46,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_filtergraph.cpp")
     target_sources(TstFilterGraph PRIVATE ${CMAKE_SOURCE_DIR}/src/filtergraph.cpp)
 endif()
 
+# Task 9 - Seek Recording
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_seekrecord.cpp")
+    add_qt_test(TstSeekRecord tst_seekrecord.cpp)
+    target_sources(TstSeekRecord PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/demuxthread.cpp
+        ${CMAKE_SOURCE_DIR}/src/localrecorder.cpp
+    )
+endif()
+
 # Task 13 - HWAccel
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_hwaccel.cpp")
     add_qt_test(TstHWAccel tst_hwaccel.cpp)

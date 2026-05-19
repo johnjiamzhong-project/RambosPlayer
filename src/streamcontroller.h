@@ -41,6 +41,8 @@ public:
 
     // 本地录制器（供 PlayerController 注册到 DemuxThread）
     const std::vector<std::unique_ptr<LocalRecorder>>& recorders() const { return recorders_; }
+    // 网络推流线程（供 PlayerController 注册到 DemuxThread，用于 seek 抑制通知）
+    const std::vector<std::unique_ptr<MuxThread>>& muxThreads() const { return muxThreads_; }
 
     // MuxThread 侧控制（仅对网络推流生效）
     void setStreamStartSeconds(double sec);

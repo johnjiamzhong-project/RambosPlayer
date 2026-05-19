@@ -7,6 +7,7 @@
 #include "videodecodethread.h"
 #include "audiodecodethread.h"
 #include "localrecorder.h"
+#include "muxthread.h"
 
 class QTimer;
 
@@ -49,6 +50,8 @@ public:
         { demux_.addRestreamAudioQueue(q); }
     // 本地录制接口：DemuxThread 直接写 FLV，不用队列+线程
     void addLocalRecorder(LocalRecorder* r) { demux_.addLocalRecorder(r); }
+    // 网络推流线程注册：seek 时 DemuxThread 通知 MuxThread 进入关键帧抑制期
+    void addMuxThread(MuxThread* m) { demux_.addMuxThread(m); }
     void clearRestreamPacketQueues() { demux_.clearRestreamQueues(); }
 
     // 源文件编解码参数，供 MuxThread::init 直接使用（-c copy 无需重编码）
@@ -83,9 +86,9 @@ private:
     // 队列必须在线程成员之前声明，保证析构时队列比线程活得更久。
     // C++ 成员析构顺序为声明逆序：若队列在线程之后声明，
     // 队列先被销毁，线程析构时调 stop()->abort() 会访问已析构的队列（UAF 崩溃）。
-    FrameQueue<AVPacket*> videoPacketQ_{30};        // 视频包队列（30≈1.2s@25fps；限制推流超前读）
-    FrameQueue<AVPacket*> audioPacketQ_{400};       // 音频包队列（更大以应对音频帧小而密）
-    FrameQueue<AVFrame*>  videoFrameQ_{50};         // 解码后视频帧队列（硬解 GOP 突发 ~30 帧）
+    FrameQueue<AVPacket*> videoPacketQ_{8};          // 视频包队列（8≈0.33s@24fps；限制录制超前读）
+    FrameQueue<AVPacket*> audioPacketQ_{35};         // 音频包队列（≈0.8s，须大于视频总管道深度）
+    FrameQueue<AVFrame*>  videoFrameQ_{10};          // 解码后视频帧队列（0.42s@24fps）
     DemuxThread demux_;                             // 解复用线程
     VideoDecodeThread videoDec_;                    // 视频解码线程
     AudioDecodeThread audioDec_;                    // 音频解码线程

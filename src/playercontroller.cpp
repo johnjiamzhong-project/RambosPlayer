@@ -92,12 +92,16 @@ void PlayerController::stop() {
 // 旧帧 diff ≈ 0 不会被丢弃，videoFrameQ 堵满 → DemuxThread 无法执行 seek。
 // 清除包队列以唤醒可能阻塞在 push 上的 DemuxThread，避免 handleSeek 延迟。
 void PlayerController::seek(double seconds) {
-    qInfo() << "PlayerController::seek target =" << seconds << "audioClock was" << sync_.audioClock();
+    // 在 setAudioClock 覆盖之前捕获当前播放位置，传给 DemuxThread 用于录制器精确截断
+    double fromSec = sync_.audioClock();
+    qInfo() << "PlayerController::seek target =" << seconds << "audioClock was" << fromSec;
     sync_.setAudioClock(seconds);
     renderer_->flushPendingFrame();
-    demux_.seek(seconds);
-    videoPacketQ_.clear();  // 唤醒 DemuxThread 阻塞的 push，使其尽快执行 handleSeek
-    audioPacketQ_.clear();
+    demux_.seek(seconds, fromSec);
+    // 排空播放包队列并释放 AVPacket*，同时唤醒可能阻塞在 push 上的 DemuxThread
+    AVPacket* tmp;
+    while (videoPacketQ_.tryPop(tmp, 0)) av_packet_free(&tmp);
+    while (audioPacketQ_.tryPop(tmp, 0)) av_packet_free(&tmp);
     videoDec_.flush();
     audioDec_.flush(seconds);
     qInfo() << "PlayerController::seek flushes done";

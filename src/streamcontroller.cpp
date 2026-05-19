@@ -91,8 +91,8 @@ void StreamController::stop() {
     videoMuxQueues_.clear();
     audioMuxQueues_.clear();
 
-    // 完成本地录制文件
-    for (auto& rec : recorders_) { rec->finish(); }
+    // 停止写入并完成本地录制文件
+    for (auto& rec : recorders_) { rec->stop(); rec->finish(); }
     recorders_.clear();
 
     emit streamingStopped();

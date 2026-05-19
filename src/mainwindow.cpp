@@ -254,6 +254,10 @@ void MainWindow::onPlayPause() {
 
 // 推流恢复：重置 MuxThread 等待标志，重新连接 restream 队列，seek 对齐当前画面位置。
 void MainWindow::reconnectStreaming() {
+    qInfo() << "MainWindow: reconnectStreaming local=" << streamCtrl_->recorders().size()
+            << "remote=" << streamCtrl_->videoMuxQueues().size();
+    // 先清掉 DemuxThread 中已有的录制器/队列，防止 startStreaming 后立即 resume 导致重复添加
+    player_->clearRestreamPacketQueues();
     streamCtrl_->setWaitingForStart(true);
     int localIdx = 0, remoteIdx = 0;
     for (const auto& dest : activeDests_) {
@@ -264,6 +268,7 @@ void MainWindow::reconnectStreaming() {
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
             player_->addRestreamAudioPacketQueue(
                 streamCtrl_->audioMuxQueues()[remoteIdx].get());
+            player_->addMuxThread(streamCtrl_->muxThreads()[remoteIdx].get());
             remoteIdx++;
         }
     }
@@ -524,6 +529,7 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
             player_->addRestreamAudioPacketQueue(
                 streamCtrl_->audioMuxQueues()[remoteIdx].get());
+            player_->addMuxThread(streamCtrl_->muxThreads()[remoteIdx].get());
             remoteIdx++;
         }
     }
