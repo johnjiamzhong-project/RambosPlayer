@@ -17,7 +17,7 @@
 | 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
-| 功能5 — 推流播放内容（音视频双流，RTMP/SRT） | 🔄 重构中 |
+| 功能5 — 推流播放内容（音视频双流，RTMP/SRT） | ✅ 完成 |
 | 功能6 — 视频剪辑器 | ✅ 完成 |
 
 ---
@@ -90,14 +90,13 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 
 ### 推流管线
 
-推流源直接来自播放器解码帧，不经过录屏，支持音视频双流和多路同时推流。
+推流在解复用层直接分叉压缩包（`-c copy` 直通模式），无需解码再编码，与播放管线完全并行互不影响。
 
 ```
-VideoDecodeThread ──→ videoFrameQueue ──→ VideoRenderer（播放，不变）
-                  ↘ restreamVideoQ   ──→ EncodeThread（H.264，fan-out）─┐
-                                                                         ├→ MuxThread[0] → rtmp://...
-AudioDecodeThread ──→ QAudioOutput（播放，不变）                        ├→ MuxThread[1] → srt://:9000
-                  ↘ restreamAudioQ  ──→ AudioEncodeThread（AAC，fan-out）┘ → record.flv
+DemuxThread ──→ videoPacketQueue ──→ VideoDecodeThread ──→ VideoRenderer（播放）
+            ──→ audioPacketQueue ──→ AudioDecodeThread ──→ QAudioOutput（播放）
+            ↘ restreamVideoQ ──→ MuxThread[0] → rtmp://...（RTMP/SRS）
+            ↘ restreamAudioQ ──→ MuxThread[1] → record.flv（本地录制）
 ```
 
 | 推流协议 | 地址格式 | 适用场景 |
@@ -122,10 +121,8 @@ AudioDecodeThread ──→ QAudioOutput（播放，不变）                   
 | `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏，滤镜面板 Dock |
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
-| `EncodeThread` | `src/encodethread.h/.cpp` | 消费转推视频帧队列，sws_scale 转 YUV420P，H.264 编码，fan-out 输出到多路 MuxThread |
-| `AudioEncodeThread` | `src/audioencodethread.h/.cpp` | 消费转推音频帧队列，SwrContext 转 fltp，AVAudioFifo 缓冲至 1024 samples，AAC 编码，fan-out 输出 |
-| `MuxThread` | `src/muxthread.h/.cpp` | 消费音视频编码包，av_interleaved_write_frame 交错写；支持 RTMP（FLV）和 SRT（MPEGTS），PTS 自动归零 |
-| `StreamController` | `src/streamcontroller.h/.cpp` | 管理 EncodeThread + AudioEncodeThread + 多路 MuxThread 生命周期；向 PlayerController 提供分叉队列入口 |
+| `MuxThread` | `src/muxthread.h/.cpp` | 消费音视频压缩包（`-c copy` 直通），`av_write_frame` 写出；支持 RTMP（FLV）和 SRT（MPEGTS），seek 后 PTS 续接保证单调递增 |
+| `StreamController` | `src/streamcontroller.h/.cpp` | 管理多路 MuxThread 生命周期；向 DemuxThread 提供 restream 分叉队列入口 |
 
 ---
 

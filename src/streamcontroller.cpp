@@ -32,8 +32,10 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
             qInfo() << "StreamController: local recorder ready path=" << dest.url;
         } else {
             // 网络推流：MuxThread + 队列对
-            auto vQ = std::make_unique<FrameQueue<AVPacket*>>(10);
-            auto aQ = std::make_unique<FrameQueue<AVPacket*>>(20);
+            // 容量控制预读深度：30 帧 ≈ 1.25s，seek 时最多清掉这么多内容。
+            // 太小（旧值 10）tryPush 失败率高；太大（200）seek 时丢失内容多。
+            auto vQ = std::make_unique<FrameQueue<AVPacket*>>(30);
+            auto aQ = std::make_unique<FrameQueue<AVPacket*>>(60);
             auto mux = std::make_unique<MuxThread>();
             connect(mux.get(), &MuxThread::errorOccurred,
                     this, &StreamController::errorOccurred);

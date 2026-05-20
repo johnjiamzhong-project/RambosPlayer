@@ -187,6 +187,26 @@
 
 ---
 
+## #018 — 推流时关闭窗口 UAF 崩溃：FrameQueue 先于 DemuxThread 解除引用
+
+- **日期**：2026-05-20
+- **现象**：推流进行中直接关闭窗口，崩溃于 `FrameQueue::abort()` 内的 `QMutexLocker lk(&mutex_)`，异常码 `W32/0xC0000005`，读地址 `0xFFFFFFFFFFFFFFFF`
+- **根因**：`~MainWindow()` 析构顺序错误：先调 `streamCtrl_->stop()` 销毁 `videoMuxQueues_`（`unique_ptr` 容器 `clear()`，`FrameQueue` 对象释放），再 `delete player_` 触发 `PlayerController` 析构 → `DemuxThread::stop()` → `clearRestreamQueues()` → `q->abort()`，此时 `q` 指向已释放的 `FrameQueue`，访问其内部 `mutex_` 发生 Use-After-Free
+- **修复**：在 `~MainWindow()` 中，`streamCtrl_->stop()` 之前先调 `player_->clearRestreamPacketQueues()`，让 DemuxThread 在队列对象仍存活时解除引用并 abort；之后 `streamCtrl_->stop()` 销毁队列时已无人持有裸指针
+- **涉及文件**：`src/mainwindow.cpp`
+
+---
+
+## #019 — MuxThread 视频 PTS 单调性检查误报 B 帧，掩盖真实 DTS 异常
+
+- **日期**：2026-05-20
+- **现象**：推流含 B 帧的 H.264 视频时，日志持续输出大量 `video PTS non-monotonic` 警告，干扰真实问题排查
+- **根因**：MuxThread 监控 `videoLastOut_`（PTS）的单调性，但 FLV/RTMP 按 DTS 顺序传输包，B 帧的 PTS 天然非单调（如 IBBP 序列 PTS 顺序为 0 3 1 4 2），属正常编码特性，不代表传输异常。真正需要保证单调递增的是 DTS，PTS 非单调对 FLV 容器完全合法
+- **修复**：将检查变量从 PTS（`videoLastOut_` 存 `pkt->pts`）改为 DTS（`videoLastOut_` 存 `pkt->dts`），日志文案同步改为 `video DTS non-monotonic`；仅在 DTS 回跳时才报警，消除 B 帧误报
+- **涉及文件**：`src/muxthread.cpp`
+
+---
+
 ## #016 — 进度条拖拽失效：eventFilter 拦截手柄点击导致无法滑动
 
 - **日期**：2026-05-16

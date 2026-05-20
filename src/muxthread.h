@@ -63,7 +63,8 @@ private:
     FrameQueue<AVPacket*>* audioQueue_     = nullptr;    // 输入：AAC 包队列
     AVRational             videoTimeBase_  = {1, 30};   // 视频编码器时间基
     AVRational             audioTimeBase_  = {1, 44100};// 音频编码器时间基
-    // 每段的起始源 PTS（sentinel 到来时重置），配合 accumPts 实现跨 seek 连续输出
+    // 每段的起始源 DTS（sentinel 到来时重置），配合 accumPts 实现跨 seek 连续输出
+    // PTS 与 DTS 使用同一 segBase，确保 pts >= dts（FFmpeg 硬校验，否则报 EINVAL）
     int64_t                videoSegBase_   = AV_NOPTS_VALUE;
     int64_t                audioSegBase_   = AV_NOPTS_VALUE;
     // 上一段最后写出的输出 PTS，seek 后新段从此续接

@@ -289,7 +289,13 @@ void DemuxThread::run() {
                 }
                 for (auto* q : restreamVideoQueues_) {
                     AVPacket* copy = av_packet_clone(pkt);
-                    if (!q->tryPush(copy)) av_packet_free(&copy);
+                    if (!q->tryPush(copy)) {
+                        av_packet_free(&copy);
+                        ++restreamDropCount_;
+                        if (restreamDropCount_ == 1 || restreamDropCount_ % 100 == 0)
+                            qWarning() << "DemuxThread: restream tryPush drop #" << restreamDropCount_
+                                       << "mux queue full — consider tcp_nodelay or larger queue";
+                    }
                 }
                 if (preTarget && preTargetVideoCount <= 3 && !restreamVideoQueues_.empty()) {
                     double pktSec = (pkt->pts != AV_NOPTS_VALUE)

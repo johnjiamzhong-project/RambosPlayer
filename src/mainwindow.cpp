@@ -132,6 +132,9 @@ MainWindow::MainWindow(QWidget* parent)
 // player_->stop() 会调用 renderer_->stopRendering()，renderer_ 是 ui 内的 promoted widget，
 // 若先 delete ui 则 renderer_ 已销毁，player_ 析构时再访问它会触发 UAF 崩溃。
 MainWindow::~MainWindow() {
+    // clearRestreamPacketQueues 先让 DemuxThread 解除对队列的引用（abort + clear 裸指针），
+    // 必须在 streamCtrl_->stop() 销毁 FrameQueue 对象之前调用，否则触发 UAF 崩溃。
+    player_->clearRestreamPacketQueues();
     streamCtrl_->stop();
     delete streamCtrl_;
     delete thumbExtractor_;
@@ -258,6 +261,12 @@ void MainWindow::reconnectStreaming() {
             << "remote=" << streamCtrl_->videoMuxQueues().size();
     // 先清掉 DemuxThread 中已有的录制器/队列，防止 startStreaming 后立即 resume 导致重复添加
     player_->clearRestreamPacketQueues();
+    // clearRestreamPacketQueues 内部调用了 q->abort()，使队列进入 aborted 状态。
+    // abort 后 tryPush 直接 return false（不检查容量），导致重连后 sentinel 推不进去，
+    // MuxThread 的 waitingForStart 永远不能清除，所有包被丢弃。
+    // 必须在重新注册到 DemuxThread 前 reset，清除 aborted 标志并清空残留包。
+    for (const auto& q : streamCtrl_->videoMuxQueues()) q->reset();
+    for (const auto& q : streamCtrl_->audioMuxQueues()) q->reset();
     streamCtrl_->setWaitingForStart(true);
     int localIdx = 0, remoteIdx = 0;
     for (const auto& dest : activeDests_) {

@@ -460,6 +460,15 @@ A: FFmpeg libavfilter 不支持对已配置的滤镜链修改参数，必须 clo
 **Q24: 水印为什么用 movie + overlay 而不是 drawtext？**  
 A: drawtext 只能渲染文字，不支持图片。movie 滤镜可以加载任意图片作为第二视频流，overlay 将两个流合成。但 drawtext 在本构建中同样不可用（编译时未启用 libfreetype）。
 
+**Q28b: 推流为什么选择在 DemuxThread 层分叉，而不是在解码层分叉解码帧？**
+A: 直通模式（-c copy）不需要解码再编码，DemuxThread 读出的压缩包直接 tryPush 给 MuxThread 封装写出，全程无解码无重编码。CPU 占用极低，画质也是原始文件的质量。如果未来需要转码推流（指定码率/分辨率），才需要在解码层分叉 AVFrame 进行重编码。
+
+**Q28c: seek 时 MuxThread 如何保证推流时间戳不回跳？**
+A: 每段记录 `videoSegBase_`（本段首包 DTS）和 `videoAccumPts_`（上段末尾的输出 DTS）。每个输出包的时间戳 = 原始 DTS - segBase + accumPts，保证跨 seek 的输出 DTS 始终单调递增。seek 时 DemuxThread 向 restream 队列推一个 `nullptr` sentinel，MuxThread 收到后 `accumPts = lastOut`，新段从上段末尾续接。
+
+**Q28d: 推流中关闭窗口为什么会崩溃，怎么修复？**
+A: `~MainWindow()` 原来先调 `streamCtrl_->stop()`，这一步会销毁 `videoMuxQueues_` 里的 `FrameQueue` 对象。但此时 DemuxThread 仍持有指向这些已销毁队列的裸指针，随后 `delete player_` 触发 `DemuxThread::stop()` → `clearRestreamQueues()` → `q->abort()`，访问已释放的 mutex，UAF 崩溃。修复是在 `streamCtrl_->stop()` 之前先调 `player_->clearRestreamPacketQueues()`，让 DemuxThread 在队列对象仍存活时解除引用。
+
 **Q25: Seek 时为什么不能只推送 PTS ≥ target 的视频包，跳过关键帧到目标之间的包？**  
 A: H.264 使用帧间预测，P/B 帧依赖前面的参考帧解码。`avcodec_flush_buffers` 重置解码器后，若第一个收到的包是 P/B 帧（关键帧已被跳过），解码器内部找不到参考帧，持续返回 `EAGAIN`，直到收到下一个 IDR 帧才能恢复输出。实测 GOP 间隔 2–8 秒的视频会冻结对应时长。正确做法是从 `av_seek_frame` 跳到的关键帧 K 起推送全部视频包，让解码器从 K 正常解码；VideoRenderer 凭 `diff < -0.4s` 丢弃 K→target 的旧帧，开销远小于等待下一个 IDR。
 
@@ -552,39 +561,40 @@ class MainWindow : public QMainWindow {
 
 ---
 
-#### 10. 推流播放内容：解码帧分叉 + 音视频双流 + 多目标 MuxThread（Phase 9 重构）
+#### 10. 推流播放内容：解复用层直通分叉 + 多目标 MuxThread（Phase 9 重构）
 
-**问题**：如何将正在播放的视频内容（含滤镜效果）实时推流到直播平台、局域网设备或本地文件，且不影响播放器本身的性能？
+**问题**：如何将正在播放的视频内容实时推流到直播平台或本地文件，且不影响播放器本身的性能？
 
-**核心设计**：解码帧在 push 到播放队列的同时，clone 一份推入转推队列，完全复用已解码的数据
+**核心设计**：`-c copy` 直通模式。DemuxThread 读出压缩包（H.264 + AAC）后，在推入播放队列的同时 `tryPush` 到 restream 队列，MuxThread 直接封装写出，全程无解码无重编码。
 
 ```
-VideoDecodeThread → videoFrameQueue  → VideoRenderer（播放，不变）
-                  ↘ restreamVideoQ  → EncodeThread（H.264, fan-out）─┐
-                                                                       ├→ MuxThread[N]
-AudioDecodeThread → QAudioOutput（播放，不变）                        │
-                  ↘ restreamAudioQ → AudioEncodeThread（AAC, fan-out）┘
+DemuxThread → videoPacketQueue → VideoDecodeThread → VideoRenderer（播放）
+            → audioPacketQueue → AudioDecodeThread → QAudioOutput（播放）
+            ↘ restreamVideoQ  → MuxThread[N] → RTMP / FLV
+            ↘ restreamAudioQ  → MuxThread[N]
 ```
 
 **设计决策解释**：
 
 | 决策项 | 选择 | 理由 |
 |--------|------|------|
-| **推流源** | 解码帧直接分叉，而非录屏 | 避免"解码→显示→截图→重编码"的无意义往返；画质更高，CPU 更低；滤镜效果自动包含在推流内容中 |
-| **分叉方式** | `tryPush()`（非阻塞） | 推流慢时丢帧而非阻塞解码线程，播放器本身永远不受推流影响 |
-| **音频编码** | AAC + SwrContext + AVAudioFifo | AAC 编码器要求固定 1024 samples/帧，AVAudioFifo 做缓冲对齐；SwrContext 统一输入格式为 fltp |
-| **多目标 fan-out** | EncodeThread/AudioEncodeThread 各持 vector 输出队列 | 编码一次，av_packet_clone 分发到每路 MuxThread，支持同时推多个目标 |
+| **推流层级** | DemuxThread 层分叉压缩包 | 直通无需解码再编码，CPU 占用极低；源文件 H.264/AAC 原样转发，画质无损 |
+| **分叉方式** | `tryPush()`（非阻塞） | 推流慢时丢帧而非阻塞 DemuxThread，播放管线永远不受推流影响 |
 | **协议识别** | URL 前缀自动判断：rtmp:// → FLV，srt:// → MPEGTS，本地路径 → FLV | 对外接口统一为 URL 字符串，MuxThread 内部透明处理 |
-| **SRT 模式** | listener 模式 `srt://:port`，客户端主动连 | 无需服务器，平板 VLC 直接输入 `srt://PC的IP:9000` 即可拉流 |
-| **PTS 归零** | 记录首帧 PTS 为基准，后续包减去偏移 | 推流开始时解码帧 PTS 不为 0，不归零接收端会跳过前段内容 |
-| **UI 设计** | 三个可勾选场景（直播平台/局域网/本地录制），单选或多选 | 三种目标是独立的使用场景，用户按需组合，不强制全选 |
-| **启动顺序** | 所有 MuxThread → AudioEncodeThread → EncodeThread（逆流启动） | 消费端先就绪，生产端才不会被首帧背压阻塞 |
-| **停止顺序** | 先断分叉源头（setRestreamQueue(nullptr)），再逐级停止 | 断源后队列自然排空，编码/封装线程处理完残留数据后自然退出 |
+| **seek 后 PTS 续接** | 每段记录 segBase 和 accumPts，seek sentinel 到来时 accumPts = lastOut，新段从 accumPts 续接 | seek 会造成源包 PTS 回跳；不处理则接收端解码器报错或画面跳变 |
+| **B 帧 DTS 监控** | 只检查 DTS 单调性，不检查 PTS | FLV 按 DTS 传输，B 帧 PTS 天然非单调；检查 PTS 会误报，检查 DTS 才能发现真实问题 |
+| **MuxThread 写帧** | `av_write_frame` 而非 `av_interleaved_write_frame` | FLV/RTMP 音视频独立传输，interleaved 的内部缓冲区遇到音频迟到时报 EINVAL |
+| **UI 设计** | 可勾选的推流目标（RTMP / 本地录制） | 用户按需组合，不强制全选 |
+| **关窗安全停止** | `~MainWindow` 先调 `clearRestreamPacketQueues()` 再 `streamCtrl_->stop()` | 必须先让 DemuxThread 解除对 FrameQueue 的引用，再销毁队列对象，否则 UAF 崩溃 |
 
-**端对端验证场景**：
-- 本地 FLV 录制：推流结束后播放文件，音视频同步，有声音
-- RTMP 推到本地 SRS：手机/平板 VLC 拉 `rtmp://PC_IP:1935/live/test` 正常播放
-- SRT 直连：平板 VLC 拉 `srt://PC_IP:9000` 正常播放，延迟 &lt; 3 秒
+**端对端验证结果**：
+
+| 场景 | 结果 |
+|------|:--:|
+| RTMP 推本地 SRS，ffplay 拉流正常播放 | ✅ |
+| seek 后 ffplay 画面自动恢复，无需手动操作 | ✅ |
+| ffprobe 验证本地 FLV 文件 DTS 单调递增 | ✅ |
+| 推流中直接关闭窗口，无 UAF 崩溃 | ✅ |
 
 ---
 

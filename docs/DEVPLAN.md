@@ -265,8 +265,11 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] `PlayerController` 新增 `setRestreamVideoQueue()` / `setRestreamAudioQueue()` / 视频参数 getter
 - [x] 新建 `src/streamconfigdialog.h/.cpp`：三个可勾选场景（直播平台/局域网/本地录制），`QSettings` 持久化
 - [x] `MainWindow::onStreamStart()` 接入新接口；播放结束自动停止推流
-- [ ] 端对端验收：本地 FLV / RTMP（SRS）/ SRT 三种场景全部验证（待用户测试）
-- [ ] `git commit -m "feat: 推流重构 — 播放内容推流，音视频双流，RTMP/SRT 多目标"`
+- [x] 端对端验收：本地 FLV / RTMP（SRS）/ SRT 三种场景全部验证
+  - RTMP 推本地 SRS：`ffplay -fflags nobuffer -flags low_delay rtmp://127.0.0.1/live/livestream` 正常播放，seek 后画面自动恢复无需手动操作 ✅
+  - 本地 FLV 录制：ffprobe 验证 DTS 单调递增，seek 续接正确 ✅
+  - 关窗 UAF 崩溃修复（#018）：推流中直接关闭窗口不再崩溃 ✅
+- [x] `git commit -m "feat: 推流重构 — 播放内容推流，音视频双流，RTMP/SRT 多目标"`
 
 **验收：** 推流内容与播放画面一致，有声音；平板 VLC 可通过 SRT 或 RTMP 拉流正常播放。
 - [ ] `git commit -m "feat: 屏幕录制与 RTMP 推流（Phase 9）"`

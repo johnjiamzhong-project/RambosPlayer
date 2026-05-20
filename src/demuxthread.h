@@ -69,6 +69,7 @@ private:
     std::vector<LocalRecorder*>             localRecorders_;        // 本地录制（直接写）
     std::vector<MuxThread*>                 muxThreads_;            // 网络推流线程（seek 抑制通知）
     std::atomic<bool>                       logNextRestreamVideo_{false};
+    int64_t                                 restreamDropCount_{0};  // tryPush 丢包累计数（仅 run() 写，无需原子）
 
     void handleSeek();  // 在 run() 每次循环顶部检查并执行 seek
 };
