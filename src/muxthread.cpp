@@ -37,6 +37,18 @@ bool MuxThread::init(const QString& url,
     bool isSrt = url.startsWith("srt://");
     const char* fmt = isSrt ? "mpegts" : "flv";
 
+    // SRT listener 模式：PC 监听端口等待客户端连接，必须显式加 mode=listener，
+    // 否则 FFmpeg 默认 caller 模式（主动连接），找不到对端直接报 I/O error。
+    // srt://:9000 → srt://:9000?mode=listener
+    // srt://:9000 → srt://0.0.0.0:9000?mode=listener
+    // 空主机部分（srt://:port）SRT 库报 Bad parameters，必须显式写 0.0.0.0
+    if (isSrt && !url.contains("mode=")) {
+        url_ = url;
+        url_.replace("srt://:", "srt://0.0.0.0:");
+        url_ += (url_.contains('?') ? "&" : "?");
+        url_ += "mode=listener&latency=50";
+    }
+
     // FLV 仅支持 H.264 视频；非 H.264 源给出明确错误
     if (!isSrt && vpar && vpar->codec_id != AV_CODEC_ID_H264) {
         qWarning() << "MuxThread: FLV requires H.264, source codec_id ="
@@ -69,37 +81,8 @@ bool MuxThread::init(const QString& url,
         audioTimeBase_      = aTimeBase;
     }
 
-    // ---- 打开输出 IO ----
-    // tcp_nodelay=1：禁用 Nagle 算法，让 RTMP 每个 chunk 立即发出，避免小包被合并延迟
-    // 30ms → Nagle 延迟时 MuxThread 写入速率退化到 ~10fps，mux 队列满、DemuxThread 大量丢包。
-    if (!(fmtCtx_->oformat->flags & AVFMT_NOFILE)) {
-        AVDictionary* ioOpts = nullptr;
-        av_dict_set(&ioOpts, "tcp_nodelay", "1", 0);
-        int ret = avio_open2(&fmtCtx_->pb, url.toUtf8(), AVIO_FLAG_WRITE, nullptr, &ioOpts);
-        av_dict_free(&ioOpts);
-        if (ret < 0) {
-            char errbuf[AV_ERROR_MAX_STRING_SIZE];
-            av_strerror(ret, errbuf, sizeof(errbuf));
-            qWarning() << "MuxThread: avio_open2 failed" << url << errbuf;
-            return false;
-        }
-    }
-
-    if (avformat_write_header(fmtCtx_, nullptr) < 0) {
-        qWarning() << "MuxThread: avformat_write_header failed";
-        return false;
-    }
-
-    // 注册中断回调：abort_ 置位后所有阻塞 I/O（含 av_write_trailer）立即返回，
-    // 避免向已关闭的 RTMP 连接写数据时触发 TCP 60s 超时卡挂。
-    fmtCtx_->interrupt_callback.callback = [](void* ctx) -> int {
-        return static_cast<MuxThread*>(ctx)->abort_.load(std::memory_order_relaxed) ? 1 : 0;
-    };
-    fmtCtx_->interrupt_callback.opaque = this;
-
-    connected_ = true;
-    emit connected();
-    qInfo() << "MuxThread::init (copy) ok url=" << url << "fmt=" << fmt
+    isSrt_ = isSrt;
+    qInfo() << "MuxThread::init ok url=" << url_ << "fmt=" << fmt
             << "vcodec=" << (vpar ? avcodec_get_name(vpar->codec_id) : "none")
             << "acodec=" << (apar ? avcodec_get_name(apar->codec_id) : "none");
     return true;
@@ -117,6 +100,38 @@ void MuxThread::stop() {
 // 新方案：比较两路的原始 DTS，始终选时间戳更小的那路写入，自然达到正确的 1:2 音视频比。
 void MuxThread::run() {
     if (!fmtCtx_) return;
+
+    // ---- 打开输出 IO（在后台线程执行，SRT listener 会阻塞等待客户端连接）----
+    // 中断回调先于 avio_open2 注册，确保 stop() 能中断阻塞中的 SRT accept。
+    fmtCtx_->interrupt_callback.callback = [](void* ctx) -> int {
+        return static_cast<MuxThread*>(ctx)->abort_.load(std::memory_order_relaxed) ? 1 : 0;
+    };
+    fmtCtx_->interrupt_callback.opaque = this;
+
+    if (!(fmtCtx_->oformat->flags & AVFMT_NOFILE)) {
+        AVDictionary* ioOpts = nullptr;
+        if (!isSrt_) av_dict_set(&ioOpts, "tcp_nodelay", "1", 0);
+        qInfo() << "MuxThread: opening" << url_ << (isSrt_ ? "(waiting for client...)" : "");
+        int ret = avio_open2(&fmtCtx_->pb, url_.toUtf8(), AVIO_FLAG_WRITE, nullptr, &ioOpts);
+        av_dict_free(&ioOpts);
+        if (ret < 0) {
+            char errbuf[AV_ERROR_MAX_STRING_SIZE];
+            av_strerror(ret, errbuf, sizeof(errbuf));
+            qWarning() << "MuxThread: avio_open2 failed" << url_ << errbuf;
+            emit errorOccurred(QString("推流连接失败: %1").arg(errbuf));
+            return;
+        }
+    }
+
+    if (avformat_write_header(fmtCtx_, nullptr) < 0) {
+        qWarning() << "MuxThread: avformat_write_header failed";
+        emit errorOccurred("写入流头失败");
+        return;
+    }
+
+    connected_ = true;
+    emit connected();
+    qInfo() << "MuxThread: connected url=" << url_;
 
     AVPacket* pkt  = nullptr;
     int64_t frames = 0, videoFrames = 0, audioFrames = 0;

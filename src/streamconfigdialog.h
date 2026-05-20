@@ -9,6 +9,7 @@ class QGroupBox;
 class QLineEdit;
 class QSpinBox;
 class QPushButton;
+class QLabel;
 class QDialogButtonBox;
 
 class StreamConfigDialog : public QDialog {
@@ -33,6 +34,7 @@ private:
 
     QGroupBox*       srtGroup_;      // 局域网设备 (SRT)
     QSpinBox*        srtPortSpin_;
+    QLabel*          srtHintLabel_;  // 显示 srt://IP:端口 供用户复制
 
     QGroupBox*       localGroup_;    // 本地录制
     QLineEdit*       localFileEdit_;

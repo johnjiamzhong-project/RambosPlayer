@@ -1,4 +1,4 @@
-# 推流测试指南（本地 SRS）
+# 推流测试指南（RTMP/SRS + SRT）
 
 ## 为什么用 SRS，而不是 ffplay listen
 
@@ -127,3 +127,78 @@ Write-Host "Done"
 
 > 注意：`video PTS non-monotonic` 日志对 B 帧内容是正常现象，不代表推流有问题。
 > MuxThread 监控的是 DTS 单调性，PTS 非单调是 B 帧编码特性，FLV 协议本身支持。
+
+---
+
+## SRT 局域网推流测试
+
+SRT 是点对点协议，PC 直接监听端口，手机/平板用播放器连接，无需 SRS 等中继服务器。
+
+### 环境准备
+
+**确认 vcpkg FFmpeg 含 SRT 支持：**
+```powershell
+E:\vcpkg\vcpkg.exe list ffmpeg
+# 列表中应包含 ffmpeg[srt]:x64-windows
+```
+
+若无，安装（耗时约 30-40 分钟）：
+```powershell
+E:\vcpkg\vcpkg.exe install ffmpeg[srt] --recurse
+```
+
+安装后重新 `cmake --preset default && cmake --build build --config Debug`。
+
+### 推流配置
+
+RambosPlayer 推流配置填写：
+```
+srt://:9000
+```
+
+代码会自动转换为 `srt://0.0.0.0:9000?mode=listener&latency=50`（空主机 SRT 库不支持，必须显式写 0.0.0.0）。
+
+### 测试流程
+
+**第一步：PC 端先开始推流**（SRT listener 模式，PC 等待客户端连接）
+
+日志出现以下内容表示正在等待：
+```
+MuxThread: opening srt://0.0.0.0:9000?mode=listener&latency=50 (waiting for client...)
+```
+
+**第二步：客户端连接**
+
+同一局域网下，用以下任一方式拉流：
+
+```powershell
+# PC 本机回环验证（最快）
+ffplay -fflags nobuffer -flags low_delay srt://127.0.0.1:9000
+
+# 另一台设备（替换为 PC 的局域网 IP）
+ffplay srt://192.168.x.x:9000
+```
+
+连接成功后日志出现：
+```
+MuxThread: connected url= srt://0.0.0.0:9000?mode=listener&latency=50
+```
+
+### 延迟说明
+
+| 客户端 | 典型延迟 |
+|--------|---------|
+| ffplay -fflags nobuffer | ~50ms |
+| ffplay 默认 | 1-3s |
+| VLC 默认 | 1-2s |
+
+`latency=50` 控制 SRT 协议层缓冲，客户端缓冲由播放器自身决定。局域网下总延迟 1-2 秒属正常，可接受。
+
+### 踩坑记录
+
+| 错误 | 原因 | 修复 |
+|------|------|------|
+| `Protocol not found` | vcpkg FFmpeg 未编译 SRT | `vcpkg install ffmpeg[srt] --recurse` |
+| `Bad parameters` | URL 用 `srt://:9000`，空主机 SRT 库不支持 | 改为 `srt://0.0.0.0:9000` |
+| `Unknown error occurred` | `tcp_nodelay` 选项传给 SRT 报错 | SRT 分支不传 `tcp_nodelay` |
+| UI 卡死 | `avio_open2` SRT listener 阻塞了主线程 | 移入 `run()` 后台线程执行 |

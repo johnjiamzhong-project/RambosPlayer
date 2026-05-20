@@ -11,6 +11,9 @@
 #include <QFileDialog>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QNetworkInterface>
+#include <QClipboard>
+#include <QApplication>
 
 StreamConfigDialog::StreamConfigDialog(QWidget* parent)
     : QDialog(parent)
@@ -40,14 +43,47 @@ void StreamConfigDialog::buildUi() {
     srtGroup_ = new QGroupBox("局域网设备 (SRT)", this);
     srtGroup_->setCheckable(true);
     srtGroup_->setChecked(false);
-    auto* srtLayout = new QHBoxLayout(srtGroup_);
-    srtLayout->addWidget(new QLabel("监听端口:"));
+    auto* srtLayout = new QFormLayout(srtGroup_);
     srtPortSpin_ = new QSpinBox(srtGroup_);
     srtPortSpin_->setRange(1024, 65535);
     srtPortSpin_->setValue(9000);
-    srtLayout->addWidget(srtPortSpin_);
-    srtLayout->addWidget(new QLabel("（平板/手机 VLC 输入 srt://本机IP:端口）"));
-    srtLayout->addStretch();
+    srtLayout->addRow("监听端口:", srtPortSpin_);
+
+    // 获取局域网 IP，显示完整拉流地址供用户复制
+    QString lanIp = "未知";
+    for (const auto& iface : QNetworkInterface::allInterfaces()) {
+        if (iface.flags() & QNetworkInterface::IsLoopBack) continue;
+        if (!(iface.flags() & QNetworkInterface::IsUp)) continue;
+        for (const auto& entry : iface.addressEntries()) {
+            QString ip = entry.ip().toString();
+            if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                lanIp = ip; break;
+            }
+        }
+        if (lanIp != "未知") break;
+    }
+    srtHintLabel_ = new QLabel(srtGroup_);
+    srtHintLabel_->setText(QString("srt://%1:%2").arg(lanIp).arg(srtPortSpin_->value()));
+    srtHintLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    srtHintLabel_->setStyleSheet("color: #888; font-size: 12px;");
+
+    auto* srtHintRow = new QHBoxLayout;
+    srtHintRow->addWidget(new QLabel("VLC 拉流地址:"));
+    srtHintRow->addWidget(srtHintLabel_);
+    auto* copyBtn = new QPushButton("复制", srtGroup_);
+    copyBtn->setFixedWidth(48);
+    connect(copyBtn, &QPushButton::clicked, this, [this]{
+        QApplication::clipboard()->setText(srtHintLabel_->text());
+    });
+    srtHintRow->addWidget(copyBtn);
+    srtHintRow->addStretch();
+    srtLayout->addRow(srtHintRow);
+
+    // 端口变化时同步更新提示
+    connect(srtPortSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, lanIp](int port){
+        srtHintLabel_->setText(QString("srt://%1:%2").arg(lanIp).arg(port));
+    });
+
     root->addWidget(srtGroup_);
 
     // ---- 本地录制 ----

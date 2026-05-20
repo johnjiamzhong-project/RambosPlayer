@@ -41,9 +41,11 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
                     this, &StreamController::errorOccurred);
 
             if (!mux->init(dest.url, vpar, vTimeBase, apar, aTimeBase)) {
-                emit errorOccurred(QString("推流目标连接失败: %1").arg(dest.url));
+                emit errorOccurred(QString("推流初始化失败: %1").arg(dest.url));
                 return false;
             }
+            // 连接本身在 run() 后台线程执行（SRT listener 会阻塞等待客户端）
+            // 连接失败通过 errorOccurred 信号异步上报
 
             mux->setVideoInputQueue(vQ.get());
             mux->setAudioInputQueue(aQ.get());

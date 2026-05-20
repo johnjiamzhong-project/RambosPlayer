@@ -65,7 +65,7 @@
 | IDE | VSCode + CMake Tools |
 | 构建系统 | CMake 3.16+，preset: `default` |
 | UI 框架 | Qt 5.14.2（`E:\Qt\Qt5.14.2\5.14.2\msvc2017_64`） |
-| FFmpeg | vcpkg，toolchain `D:\vcpkg\scripts\buildsystems\vcpkg.cmake` |
+| FFmpeg | vcpkg，toolchain `E:\vcpkg\scripts\buildsystems\vcpkg.cmake` |
 | 编译器 | MSVC 2017 x64 |
 
 ---

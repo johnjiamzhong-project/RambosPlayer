@@ -84,4 +84,5 @@ private:
     std::atomic<bool>      abort_{false};
     std::atomic<bool>      connected_{false};
     QString                url_;
+    bool                   isSrt_ = false;  // run() 打开 IO 时需要区分协议
 };
