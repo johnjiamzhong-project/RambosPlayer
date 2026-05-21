@@ -136,6 +136,8 @@ void MuxThread::run() {
     AVPacket* pkt  = nullptr;
     int64_t frames = 0, videoFrames = 0, audioFrames = 0;
     int64_t videoDiscarded = 0, audioDiscarded = 0;
+    int64_t suppressVideoDiscarded = 0;  // seek 抑制期丢弃的视频帧数
+    bool    loggedWaiting = false;       // waitingForStart_ 首次丢包日志标志
 
     // 双队列暂存：每次从各自队列最多预取一包，比较 DTS 后决定处理哪路
     bool hasPV = false; AVPacket* pV = nullptr; // 暂存的视频包
@@ -168,18 +170,28 @@ void MuxThread::run() {
             hasPA = false; pkt = pA; pA = nullptr;
             bool gotAudio = true; (void)gotAudio;
 
-            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零
+            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零。
+            // +1ms 保证新段首帧 DTS > 上段末帧，消除 FLV/SRT non-monotonic DTS 问题。
             if (!pkt) {
-                audioAccumPts_ = audioLastOut_;
+                int64_t oneMsA = av_rescale_q(1, {1, 1000}, audioTimeBase_);
+                if (oneMsA < 1) oneMsA = 1;
+                audioAccumPts_ = audioLastOut_ + oneMsA;
                 audioSegBase_  = AV_NOPTS_VALUE;
                 waitingForStart_.store(false);
+                loggedWaiting = false;
                 streamClock_.restart(); clockStarted_ = true;
                 qInfo() << "MuxThread: audio sentinel received, audioAccum=" << audioAccumPts_;
                 continue;
             }
 
             // 等待 sentinel 期间丢弃所有包（防止 DemuxThread 超前包混入开头）
-            if (waitingForStart_.load()) { av_packet_free(&pkt); continue; }
+            if (waitingForStart_.load()) {
+                if (!loggedWaiting) {
+                    qInfo() << "MuxThread: waitingForStart=true, dropping audio until sentinel";
+                    loggedWaiting = true;
+                }
+                av_packet_free(&pkt); continue;
+            }
 
             // 丢弃早于推流起始时间的音频包，对齐播放器当前画面
             {
@@ -244,18 +256,28 @@ void MuxThread::run() {
             av_packet_rescale_ts(pkt, audioTimeBase_, aStream_->time_base);
         } else {
             hasPV = false; pkt = pV; pV = nullptr;
-            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零
+            // seek sentinel：保存上段末尾 PTS 作为累积偏移，新段续接而非归零。
+            // +1ms 保证新段首帧 DTS > 上段末帧，消除 FLV/SRT non-monotonic DTS 问题。
             if (!pkt) {
-                videoAccumPts_ = videoLastOut_;
+                int64_t oneMsV = av_rescale_q(1, {1, 1000}, videoTimeBase_);
+                if (oneMsV < 1) oneMsV = 1;
+                videoAccumPts_ = videoLastOut_ + oneMsV;
                 videoSegBase_  = AV_NOPTS_VALUE;
                 waitingForStart_.store(false);
+                loggedWaiting = false;
                 streamClock_.restart(); clockStarted_ = true;
                 qInfo() << "MuxThread: video sentinel received, videoAccum=" << videoAccumPts_;
                 continue;
             }
 
             // 等待 sentinel 期间丢弃所有包
-            if (waitingForStart_.load()) { av_packet_free(&pkt); continue; }
+            if (waitingForStart_.load()) {
+                if (!loggedWaiting) {
+                    qInfo() << "MuxThread: waitingForStart=true, dropping video until sentinel";
+                    loggedWaiting = true;
+                }
+                av_packet_free(&pkt); continue;
+            }
 
             // 丢弃早于推流起始时间的视频包，对齐播放器当前画面
             {
@@ -280,8 +302,19 @@ void MuxThread::run() {
                 if (sv >= 0.0) {
                     double srcSec = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts * av_q2d(videoTimeBase_) : -1.0;
                     bool isKey    = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
-                    if (srcSec < sv || !isKey) { av_packet_free(&pkt); continue; }
-                    qInfo() << "MuxThread: seek keyframe found PTS=" << srcSec << "target=" << sv;
+                    if (srcSec < sv || !isKey) {
+                        ++suppressVideoDiscarded;
+                        if (suppressVideoDiscarded == 1)
+                            qInfo() << "MuxThread: suppress enter target=" << sv
+                                    << "first drop PTS=" << srcSec << "isKey=" << isKey;
+                        else if (suppressVideoDiscarded % 30 == 0)
+                            qInfo() << "MuxThread: suppress ongoing discarded=" << suppressVideoDiscarded
+                                    << "cur PTS=" << srcSec << "target=" << sv << "isKey=" << isKey;
+                        av_packet_free(&pkt); continue;
+                    }
+                    qInfo() << "MuxThread: suppress exit keyframe PTS=" << srcSec
+                            << "target=" << sv << "discarded=" << suppressVideoDiscarded;
+                    suppressVideoDiscarded = 0;
                     suppressVideoUntilSec_.store(-1.0);
                     suppressAudioUntilSec_.store(srcSec); // 音频对齐到此关键帧
                 }
@@ -323,12 +356,15 @@ void MuxThread::run() {
 
         // FLV/RTMP 音视频独立传输，不需要全局 DTS 排序，用 av_write_frame 直接写
         // av_interleaved_write_frame 的内部缓冲区会在音频迟到时报 EINVAL
+        double pktPtsSec = (pkt && pkt->pts != AV_NOPTS_VALUE)
+            ? pkt->pts * av_q2d(pickVideo ? videoTimeBase_ : audioTimeBase_) : -1.0;
         int writeRet = av_write_frame(fmtCtx_, pkt);
         av_packet_free(&pkt);
         if (writeRet < 0) {
             char errbuf[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(writeRet, errbuf, sizeof(errbuf));
-            qWarning() << "MuxThread: write frame error:" << errbuf;
+            qWarning() << "MuxThread: write frame error:" << errbuf
+                       << (pickVideo ? "video" : "audio") << "PTS=" << pktPtsSec << "s";
             abort_ = true;
             break;
         }

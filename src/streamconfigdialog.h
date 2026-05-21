@@ -40,5 +40,9 @@ private:
     QLineEdit*       localFileEdit_;
     QPushButton*     browseBtn_;
 
+    QGroupBox*       httpFlvGroup_;      // 局域网浏览器 (HTTP-FLV)
+    QSpinBox*        httpFlvPortSpin_;
+    QLabel*          httpFlvHintLabel_;  // 显示 http://IP:PORT/player.html
+
     QDialogButtonBox* btnBox_;
 };

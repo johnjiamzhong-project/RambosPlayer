@@ -30,6 +30,20 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
             }
             recorders_.push_back(std::move(rec));
             qInfo() << "StreamController: local recorder ready path=" << dest.url;
+        } else if (dest.type == StreamDestination::HttpFlv) {
+            // HTTP-FLV 内置服务器
+            auto srv = std::make_unique<HttpFlvServer>();
+            connect(srv.get(), &HttpFlvServer::errorOccurred,
+                    this, &StreamController::errorOccurred);
+            connect(srv.get(), &HttpFlvServer::firewallHint, this, [](const QString& cmd) {
+                qWarning() << "HttpFlvServer: firewall rule needed, run as admin:" << cmd;
+            });
+            if (!srv->init(dest.port, vpar, vTimeBase, apar, aTimeBase)) {
+                emit errorOccurred(QString("HTTP-FLV 服务初始化失败（端口 %1）").arg(dest.port));
+                return false;
+            }
+            httpFlvServers_.push_back(std::move(srv));
+            qInfo() << "StreamController: HTTP-FLV server ready port=" << dest.port;
         } else {
             // 网络推流：MuxThread + 队列对
             // 容量控制预读深度：30 帧 ≈ 1.25s，seek 时最多清掉这么多内容。
@@ -57,8 +71,9 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
         }
     }
 
-    // 启动网络推流线程
+    // 启动网络推流线程和 HTTP-FLV 服务器
     for (auto& mux : muxThreads_) mux->start();
+    for (auto& srv : httpFlvServers_) srv->start();
 
     streaming_ = true;
     emit streamingStarted();
@@ -94,6 +109,10 @@ void StreamController::stop() {
     muxThreads_.clear();
     videoMuxQueues_.clear();
     audioMuxQueues_.clear();
+
+    // 停止 HTTP-FLV 服务器
+    for (auto& srv : httpFlvServers_) { srv->stop(); srv->wait(3000); }
+    httpFlvServers_.clear();
 
     // 停止写入并完成本地录制文件
     for (auto& rec : recorders_) { rec->stop(); rec->finish(); }

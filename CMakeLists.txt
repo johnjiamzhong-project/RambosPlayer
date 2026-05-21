@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia Svg)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Multimedia Svg Network)
 find_package(FFMPEG REQUIRED)
 
 add_executable(RambosPlayer WIN32
@@ -38,6 +38,7 @@ add_executable(RambosPlayer WIN32
     src/thumbnailextractor.cpp
     src/timeline.cpp
     src/exportworker.cpp
+    src/httpflvserver.cpp
 )
 
 target_include_directories(RambosPlayer PRIVATE
@@ -51,6 +52,7 @@ target_link_libraries(RambosPlayer PRIVATE
     Qt5::Widgets
     Qt5::Multimedia
     Qt5::Svg
+    Qt5::Network
     ${FFMPEG_LIBRARIES}
 )
 
