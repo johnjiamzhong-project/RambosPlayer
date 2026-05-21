@@ -4,6 +4,36 @@
 
 ---
 
+## #022 — HTTP-FLV seek 后声画偏差 0.5s
+
+- **日期**：2026-05-21
+- **现象**：快进后画面与声音同步，但声音整体落后画面约 0.5 秒
+- **根因**：`av_seek_frame(BACKWARD)` 落到 seek 目标前的关键帧（如目标 60s 落到 59.5s），视频从 59.5s 开始输出，但 DemuxThread 的 `seekExactAudioTarget_` 将音频过滤到目标点（60s）。两路都重映射到相同的 `accumPts`（T），但 `videoSegBase_=59.5s`、`audioSegBase_=60s`，同一输出 PTS T 对应的源内容相差 0.5s，导致持续偏差
+- **修复**：在 `HttpFlvServer` 中，首个关键帧通过门控时记录其源 PTS（`firstKeyframeSrcSec_`）；首帧音频到来时计算 `gapSec = audioSrcSec - firstKeyframeSrcSec_`，将 `audioAccumPts_` 向后偏移相同量，使同一源时刻的音视频输出 PTS 完全一致
+- **涉及文件**：`src/httpflvserver.cpp`、`src/httpflvserver.h`
+
+---
+
+## #021 — HTTP-FLV 初次推流音频落后画面约 5 秒
+
+- **日期**：2026-05-21
+- **现象**：网页加载直播流后，声音比画面晚出 5 秒左右
+- **根因**：音频未参与 `needsKeyframe_` 门控，在首个视频关键帧到达前持续写入 FLV 流。等待期间约 5 秒的音频数据（PTS 0→5s）被写入 `flvHeader_`；而视频从首帧关键帧（PTS≈1ms）开始，导致 flv.js 看到 audio PTS≈5s、video PTS≈1ms，等视频追上音频需要 5 秒——表现为声音"慢了 5 秒"
+- **修复**：音频与视频统一门控（`needsKeyframe_` 条件下丢弃音频帧），等首个视频关键帧确认后再开放音频写入。`flvHeader_` 冻结点改为"首帧音频写入后"而非"首帧关键帧前"，确保 `flvHeader_` 含 AVC 序列头 + I 帧 + AAC 序列头，音视频 PTS 均从 ~1ms 起步
+- **涉及文件**：`src/httpflvserver.cpp`
+
+---
+
+## #020 — 网页推流播放器默认静音无声音
+
+- **日期**：2026-05-21
+- **现象**：局域网浏览器打开推流页面，只有画面没有声音
+- **根因**：HTML `<video autoplay muted>` 的 `muted` 属性是浏览器 autoplay 策略要求（去掉则 `play()` 被拒绝导致完全无画面），但导致播放器永远静音
+- **修复**：保留 `muted` 保证自动播放，`play().then()` 成功后若 `v.muted === true` 则在右上角显示"🔊 点击开声音"按钮，用户点击后执行 `v.muted=false; v.volume=1`
+- **涉及文件**：`src/httpflvserver.cpp`（`buildPlayerHtml()`）
+
+---
+
 ## #001 — .ui 文件 contentsMargins 格式不兼容 Qt 5.14.2
 
 - **日期**：2026-05-09

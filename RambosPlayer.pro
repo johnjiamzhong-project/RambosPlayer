@@ -63,7 +63,8 @@ SOURCES += \
     src/localrecorder.cpp \
     src/thumbnailextractor.cpp \
     src/timeline.cpp \
-    src/exportworker.cpp
+    src/exportworker.cpp \
+    src/httpflvserver.cpp
 
 HEADERS += \
     src/framequeue.h \
@@ -86,7 +87,8 @@ HEADERS += \
     src/localrecorder.h \
     src/thumbnailextractor.h \
     src/timeline.h \
-    src/exportworker.h
+    src/exportworker.h \
+    src/httpflvserver.h
 
 FORMS += \
     src/mainwindow.ui \

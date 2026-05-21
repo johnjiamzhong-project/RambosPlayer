@@ -161,22 +161,31 @@ void DemuxThread::handleSeek() {
     // 本地录制器调用 resetPtsBase 保持 PTS 连续（不停止录制）。
     {
         QMutexLocker lk(&restreamMtx_);
-        int vsClear = 0, asClear = 0;
+        int vsClear = 0, asClear = 0, vSentinelFail = 0, aSentinelFail = 0;
         for (auto* q : restreamVideoQueues_) {
             while (q->tryPop(p, 0)) { av_packet_free(&p); ++vsClear; }
-            q->tryPush(nullptr);
+            if (!q->tryPush(nullptr)) ++vSentinelFail;
         }
         for (auto* q : restreamAudioQueues_) {
             while (q->tryPop(p, 0)) { av_packet_free(&p); ++asClear; }
-            q->tryPush(nullptr);
+            if (!q->tryPush(nullptr)) ++aSentinelFail;
         }
         qInfo() << "DemuxThread::handleSeek sentinel pushed to"
                 << restreamVideoQueues_.size() << "vQueues,"
                 << restreamAudioQueues_.size() << "aQueues"
                 << "(cleared" << vsClear << "vPkts," << asClear << "aPkts"
                 << "recorders=" << localRecorders_.size()
-                << "muxThreads=" << muxThreads_.size() << ")";
-        for (auto* m : muxThreads_) m->setSuppressUntilKeyframe(target);
+                << "muxThreads=" << muxThreads_.size() << ")"
+                << "sentinelFail v=" << vSentinelFail << "a=" << aSentinelFail;
+        if (vSentinelFail || aSentinelFail)
+            qWarning() << "DemuxThread::handleSeek sentinel tryPush FAILED"
+                       << "vFail=" << vSentinelFail << "aFail=" << aSentinelFail
+                       << "— MuxThread waitingForStart will never clear!";
+        for (auto* m : muxThreads_) {
+            m->setSuppressUntilKeyframe(target);
+            qInfo() << "DemuxThread: setSuppressUntilKeyframe target=" << target
+                    << "MuxThread=" << (void*)m;
+        }
         for (auto* r : localRecorders_) r->resetPtsBase(fromPos, target);
     }
 

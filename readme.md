@@ -17,7 +17,7 @@
 | 功能2 — 完整播放器集成 | ✅ 完成 |
 | 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
-| 功能5 — 推流播放内容（音视频双流，RTMP/SRT） | ✅ 完成 |
+| 功能5 — 推流播放内容（音视频双流，RTMP/SRT/HTTP-FLV） | ✅ 完成 |
 | 功能6 — 视频剪辑器 | ✅ 完成 |
 
 ---
@@ -53,7 +53,7 @@
 |------|------|
 | 硬件加速（D3D11VA） | 菜单 → 硬件加速（重新打开文件后生效） |
 | 视频滤镜（亮度/对比度/饱和度/水印） | 菜单 → 滤镜编辑器，实时预览 |
-| 推流播放内容（RTMP / SRT） | 菜单 → 推流，输入目标地址，支持多路同时推流 |
+| 推流播放内容（RTMP / SRT / HTTP-FLV） | 菜单 → 推流，支持多路同时推流；HTTP-FLV 无需外部服务器，局域网浏览器直接打开链接收看 |
 | 视频剪辑（无损剪切导出） | 菜单 → 剪辑模式（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
 
 ---
@@ -95,14 +95,17 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 ```
 DemuxThread ──→ videoPacketQueue ──→ VideoDecodeThread ──→ VideoRenderer（播放）
             ──→ audioPacketQueue ──→ AudioDecodeThread ──→ QAudioOutput（播放）
-            ↘ restreamVideoQ ──→ MuxThread[0] → rtmp://...（RTMP/SRS）
-            ↘ restreamAudioQ ──→ MuxThread[1] → record.flv（本地录制）
+            ↘ restreamVideoQ ──→ MuxThread[0]       → rtmp://...（RTMP/SRS）
+            ↘ restreamAudioQ ──→ MuxThread[1]       → record.flv（本地录制）
+            ↘ httpFlvVideoQ  ──→ HttpFlvServer → HTTP → 浏览器（局域网）
+            ↘ httpFlvAudioQ  ──┘
 ```
 
 | 推流协议 | 地址格式 | 适用场景 |
 |----------|----------|----------|
 | RTMP | `rtmp://127.0.0.1:1935/live/test` | 在线平台（Twitch/B站）或本地 SRS 服务器 |
 | SRT | `srt://:9000` | 局域网直连（平板/手机用 VLC 拉流），无需服务器 |
+| HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端 |
 | 本地录制 | `C:/record.flv` | 录制当前播放内容到文件 |
 
 > 重构计划：[docs/superpowers/plans/2026-05-17-phase9-restream.md](docs/superpowers/plans/2026-05-17-phase9-restream.md)
@@ -122,7 +125,8 @@ DemuxThread ──→ videoPacketQueue ──→ VideoDecodeThread ──→ Vid
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
 | `MuxThread` | `src/muxthread.h/.cpp` | 消费音视频压缩包（`-c copy` 直通），`av_write_frame` 写出；支持 RTMP（FLV）和 SRT（MPEGTS），seek 后 PTS 续接保证单调递增 |
-| `StreamController` | `src/streamcontroller.h/.cpp` | 管理多路 MuxThread 生命周期；向 DemuxThread 提供 restream 分叉队列入口 |
+| `HttpFlvServer` | `src/httpflvserver.h/.cpp` | 内置 HTTP-FLV 流媒体服务器；FFmpeg FLV muxer 通过自定义 avio 将数据广播给所有已连接的浏览器客户端；含音视频 PTS 对齐、关键帧门控、内嵌 flv.js 播放页 |
+| `StreamController` | `src/streamcontroller.h/.cpp` | 管理多路 MuxThread / HttpFlvServer 生命周期；向 DemuxThread 提供 restream 分叉队列入口 |
 
 ---
 

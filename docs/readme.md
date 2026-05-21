@@ -10,6 +10,7 @@
 | `BUGFIX-LOG.md` | 开发计划之外的 bug 修复记录，含日期、现象、根因、修复方案 |
 | `interview-claude-code-workflow.md` | 面试总结：各模块设计决策、TDD 案例、Q&A 积累 |
 | `seek-recording-fix.md` | seek 期间推流/录制内容错乱问题的完整修复说明，含根因分析与各模块改动详情 |
+| `streaming-test-guide.md` | HTTP-FLV / SRT 推流测试指南，含防火墙配置与浏览器验证步骤 |
 
 ### seek 推流问题简述
 

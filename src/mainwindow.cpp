@@ -255,7 +255,9 @@ void MainWindow::onPlayPause() {
     }
 }
 
-// 推流恢复：重置 MuxThread 等待标志，重新连接 restream 队列，seek 对齐当前画面位置。
+// 推流恢复：重新连接 restream 队列。
+// 不做 seek：暂停期间 DemuxThread 被满的播放队列阻塞，文件读取位置漂移极小，
+// seek 反而会触发 pre-target 帧跳过，导致播放管线长时间无帧输出、画面冻结。
 void MainWindow::reconnectStreaming() {
     qInfo() << "MainWindow: reconnectStreaming local=" << streamCtrl_->recorders().size()
             << "remote=" << streamCtrl_->videoMuxQueues().size();
@@ -267,11 +269,30 @@ void MainWindow::reconnectStreaming() {
     // 必须在重新注册到 DemuxThread 前 reset，清除 aborted 标志并清空残留包。
     for (const auto& q : streamCtrl_->videoMuxQueues()) q->reset();
     for (const auto& q : streamCtrl_->audioMuxQueues()) q->reset();
+    // HttpFlvServer 的队列同样需要 reset，否则 abort 后 tryPush 永远返回 false
+    for (const auto& srv : streamCtrl_->httpFlvServers()) {
+        srv->videoQueue()->reset();
+        srv->audioQueue()->reset();
+    }
     streamCtrl_->setWaitingForStart(true);
-    int localIdx = 0, remoteIdx = 0;
+    // 直接推 sentinel 到 restream 队列（重置 PTS + 触发关键帧门控），
+    // 必须在 add* 之前，否则 DemuxThread 可能抢先推入帧，sentinel 被排到后面。
+    for (const auto& srv : streamCtrl_->httpFlvServers()) {
+        srv->videoQueue()->tryPush(nullptr);
+        srv->audioQueue()->tryPush(nullptr);
+    }
+    for (int i = 0; i < (int)streamCtrl_->videoMuxQueues().size(); ++i) {
+        streamCtrl_->videoMuxQueues()[i]->tryPush(nullptr);
+        streamCtrl_->audioMuxQueues()[i]->tryPush(nullptr);
+    }
+    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0;
     for (const auto& dest : activeDests_) {
         if (dest.type == StreamDestination::LocalFile) {
             player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
+        } else if (dest.type == StreamDestination::HttpFlv) {
+            auto* srv = streamCtrl_->httpFlvServers()[httpFlvIdx++].get();
+            player_->addRestreamVideoPacketQueue(srv->videoQueue());
+            player_->addRestreamAudioPacketQueue(srv->audioQueue());
         } else {
             player_->addRestreamVideoPacketQueue(
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
@@ -284,8 +305,7 @@ void MainWindow::reconnectStreaming() {
     double alignSec = player_->currentPositionSeconds();
     if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
     streamAlignSec_ = alignSec;
-    player_->seek(alignSec);
-    qInfo() << "MainWindow: restream reconnected, seek-align to" << alignSec << "s";
+    qInfo() << "MainWindow: restream reconnected, align=" << alignSec << "s";
 }
 
 // 进度条拖拽时触发 seek，value 范围 0–1000 映射到 0–duration 秒。
@@ -526,13 +546,24 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
 
     activeDests_ = dests;  // 保存目标列表，暂停恢复时用于区分本地/远程
 
-    // 根据目标类型分别注册到 DemuxThread：
-    // 本地录制 → addLocalRecorder（DemuxThread 直接写 FLV）
-    // 网络推流 → addRestreamVideoPacketQueue / addRestreamAudioPacketQueue（tryPush 分叉）
-    int localIdx = 0, remoteIdx = 0;
+    // 直接推 sentinel 到 restream 队列（重置 PTS + 触发关键帧门控）
+    for (const auto& srv : streamCtrl_->httpFlvServers()) {
+        srv->videoQueue()->tryPush(nullptr);
+        srv->audioQueue()->tryPush(nullptr);
+    }
+    for (int i = 0; i < (int)streamCtrl_->videoMuxQueues().size(); ++i) {
+        streamCtrl_->videoMuxQueues()[i]->tryPush(nullptr);
+        streamCtrl_->audioMuxQueues()[i]->tryPush(nullptr);
+    }
+    // 根据目标类型分别注册到 DemuxThread
+    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0;
     for (const auto& dest : dests) {
         if (dest.type == StreamDestination::LocalFile) {
             player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
+        } else if (dest.type == StreamDestination::HttpFlv) {
+            auto* srv = streamCtrl_->httpFlvServers()[httpFlvIdx++].get();
+            player_->addRestreamVideoPacketQueue(srv->videoQueue());
+            player_->addRestreamAudioPacketQueue(srv->audioQueue());
         } else {
             player_->addRestreamVideoPacketQueue(
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
@@ -543,16 +574,14 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
         }
     }
 
-    // 推流对齐：对当前播放位置做一次 seek。
-    // DemuxThread 会清空 restream 队列（推 sentinel 重置 MuxThread PTS base），
-    // 然后从当前播放位置重新读包，restream 收到的第一包就是当前画面对应的帧。
-    // audioClock 可能未就绪（返回 -1），回退到 currentPos_（进度条位置，单位 ms）。
+    // 推流启动对齐：记录起始位置用于停止时的时长计算。
+    // 不做 seek：DemuxThread 已在目标位置附近，seek 会触发 pre-target 帧跳过导致延迟。
+    // HttpFlvServer/MuxThread 首个收到的帧自动设置 PTS base，无需 sentinel。
     double alignSec = player_->currentPositionSeconds();
     if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
     streamAlignSec_ = alignSec;
-    qInfo() << "MainWindow: stream seek-align to" << alignSec
+    qInfo() << "MainWindow: stream started, align=" << alignSec
             << "s (audioClock=" << player_->currentPositionSeconds() << ")";
-    player_->seek(alignSec);
 
     ui->actionStream->setText("停止推流");
     statusBar()->showMessage(
