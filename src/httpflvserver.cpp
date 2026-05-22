@@ -105,10 +105,22 @@ void HttpFlvServer::cleanupMuxer() {
 }
 
 // FFmpeg 写数据回调：追加 FLV 头缓冲 + 广播给所有客户端
+// headerFrozen_ 后同步维护 currentGopBytes_；newGopStarting_ 为 true 时先清空再追加
 int HttpFlvServer::writeCallback(void* opaque, const uint8_t* buf, int size) {
     auto* self = static_cast<HttpFlvServer*>(opaque);
     QByteArray data(reinterpret_cast<const char*>(buf), size);
-    if (!self->headerFrozen_) self->flvHeader_.append(data);
+    if (!self->headerFrozen_) {
+        self->flvHeader_.append(data);
+    } else {
+        if (self->newGopStarting_) {
+            qInfo() << "HttpFlvServer: GOP buffer reset"
+                    << "old size=" << self->currentGopBytes_.size()
+                    << "bytes, clients=" << self->streamClients_.size();
+            self->newGopStarting_ = false;
+            self->currentGopBytes_.clear();
+        }
+        self->currentGopBytes_.append(data);
+    }
     self->broadcastData(data);
     return size;
 }
@@ -230,7 +242,9 @@ void HttpFlvServer::serveFlvJs(QTcpSocket* socket) {
     socket->disconnectFromHost();
 }
 
-// 将客户端加入推流列表，先发 FLV 文件头，后续实时广播
+// 将客户端加入推流列表，先发初始数据，后续实时广播。
+// 晚连优化：headerFrozen_ 后发"编解码配置+当前GOP"，PTS 从最近关键帧起步，
+// 无需等待下一个关键帧，消除长时间白屏。
 void HttpFlvServer::startStreaming(QTcpSocket* socket) {
     socket->write("HTTP/1.1 200 OK\r\n"
                   "Content-Type: video/x-flv\r\n"
@@ -238,14 +252,25 @@ void HttpFlvServer::startStreaming(QTcpSocket* socket) {
                   "Access-Control-Allow-Origin: *\r\n"
                   "Connection: keep-alive\r\n"
                   "\r\n");
-    if (!flvHeader_.isEmpty()) socket->write(flvHeader_);
+    if (!codecConfigHeader_.isEmpty()) {
+        // 晚连路径：发编解码配置（无帧PTS）+ 当前GOP（最近关键帧起），不发旧时间戳帧
+        socket->write(codecConfigHeader_);
+        if (!currentGopBytes_.isEmpty()) socket->write(currentGopBytes_);
+        qInfo() << "HttpFlvServer: client connected (late-join)"
+                << "total=" << streamClients_.size() + 1
+                << "codecConfig=" << codecConfigHeader_.size() << "bytes"
+                << "gopBytes=" << currentGopBytes_.size() << "bytes"
+                << "audioFrames=" << audioFrameCount_
+                << "videoFrames=" << videoFrameCount_;
+    } else {
+        // 早连路径：推流刚启动，直接发原始 flvHeader_（可能为空，后续靠广播接收）
+        if (!flvHeader_.isEmpty()) socket->write(flvHeader_);
+        qInfo() << "HttpFlvServer: client connected (early-join)"
+                << "total=" << streamClients_.size() + 1
+                << "header=" << flvHeader_.size() << "bytes";
+    }
     streamClients_.append(socket);
     emit clientConnected(streamClients_.size());
-    qInfo() << "HttpFlvServer: client connected"
-            << "total=" << streamClients_.size()
-            << "header=" << flvHeader_.size() << "bytes"
-            << "audioFrames=" << audioFrameCount_
-            << "videoFrames=" << videoFrameCount_;
 }
 
 void HttpFlvServer::removeClient(QTcpSocket* socket) {
@@ -300,6 +325,15 @@ void HttpFlvServer::processPackets() {
 
                 if (vStream_) {
                     int rawSize = pkt->size;
+                    // 关键帧通知 writeCallback 重置 GOP 缓冲，新客户端将从此帧开始解码
+                    if (headerFrozen_ && (pkt->flags & AV_PKT_FLAG_KEY)) {
+                        double kfSec = (pkt->pts != AV_NOPTS_VALUE)
+                            ? pkt->pts * av_q2d(videoTb_) : -1.0;
+                        qInfo() << "HttpFlvServer: keyframe detected PTS="
+                                << kfSec << "s gopBytes=" << currentGopBytes_.size()
+                                << "videoFrames=" << videoFrameCount_;
+                        newGopStarting_ = true;
+                    }
                     pkt->stream_index = vStream_->index;
                     av_packet_rescale_ts(pkt, videoTb_, vStream_->time_base);
                     int ret = av_write_frame(fmtCtx_, pkt);
@@ -392,8 +426,12 @@ void HttpFlvServer::processPackets() {
                             // 视频和音频 PTS 均从 ~1ms 起步，无时间戳偏差
                             if (!headerFrozen_) {
                                 headerFrozen_ = true;
+                                codecConfigHeader_ = buildCodecConfigHeader();
+                                currentGopBytes_   = extractInitialGopFrames();
                                 qInfo() << "HttpFlvServer: FLV header frozen after first audio+video, size="
                                         << flvHeader_.size()
+                                        << "codecConfig=" << codecConfigHeader_.size()
+                                        << "initialGop=" << currentGopBytes_.size()
                                         << "videoFrames=" << videoFrameCount_
                                         << "audioPTS=" << apkt->pts;
                             }
@@ -408,6 +446,7 @@ void HttpFlvServer::processPackets() {
                                     << "video_frames=" << videoFrameCount_
                                     << "video_bytes=" << videoByteCount_
                                     << "broadcast_total=" << broadcastByteCount_
+                                    << "gopBytes=" << currentGopBytes_.size()
                                     << "clients=" << streamClients_.size();
                         }
                     }
@@ -504,12 +543,18 @@ function connect(){
   destroy();clearTimeout(retryTimer);
   if(!window.flvjs||!flvjs.isSupported()){setMsg('浏览器不支持FLV，请用Chrome/Edge');return;}
   player=flvjs.createPlayer({type:'flv',url:'/stream.flv',isLive:true,
-    enableStashBuffer:false,stashInitialSize:128});
+    enableStashBuffer:false,stashInitialSize:128,
+    liveBufferLatencyChasing:true,
+    liveBufferLatencyMaxLatency:2.0,
+    liveBufferLatencyMinRemain:0.5,
+    liveBufferLatencyChaseOffset:0.1,
+    autoCleanupSourceBuffer:true,
+    autoCleanupMaxBackwardDuration:3,
+    autoCleanupMinBackwardDuration:2});
   player.attachMediaElement(v);
   player.on(flvjs.Events.ERROR,function(){setMsg('断开，2秒后重连...');retryTimer=setTimeout(connect,2000);});
   player.load();
   player.play().then(function(){
-    // autoplay 成功后显示取消静音按钮（浏览器要求 muted 才能 autoplay）
     if(v.muted) unmuteBtn.style.display='block';
   }).catch(function(){});
   setMsg('播放中');
@@ -525,4 +570,66 @@ connect();
 </script>
 </body>
 </html>)HTML";
+}
+
+// 从 flvHeader_ 中提取仅含编解码配置的字节：
+// FLV 文件头(13字节) + onMetaData tag + AVC 序列头 tag + AAC 序列头 tag，无帧数据。
+// 晚连客户端用此 + currentGopBytes_ 替代含旧 PTS 的 flvHeader_，消除时间戳跳变白屏。
+QByteArray HttpFlvServer::buildCodecConfigHeader() const {
+    const QByteArray& h = flvHeader_;
+    QByteArray result;
+    if (h.size() < 13) return result;
+
+    // FLV 签名(9字节) + PreviousTagSize0(4字节)
+    result.append(h.left(13));
+
+    int pos = 13;
+    while (pos + 11 <= h.size()) {
+        uint8_t tagType  = (uint8_t)h[pos];
+        int dataSize = ((uint8_t)h[pos+1] << 16) | ((uint8_t)h[pos+2] << 8) | (uint8_t)h[pos+3];
+        int totalSize = 11 + dataSize + 4;
+        if (pos + totalSize > h.size()) break;
+
+        bool keep = false;
+        if (tagType == 0x12) {
+            keep = true;  // script data (onMetaData)
+        } else if (tagType == 0x09 && dataSize >= 2) {
+            // 视频 tag：h[pos+12] = AVC packet type；0=序列头，1=NALU
+            keep = ((uint8_t)h[pos + 12] == 0);
+        } else if (tagType == 0x08 && dataSize >= 2) {
+            // 音频 tag：h[pos+12] = AAC packet type；0=序列头，1=原始数据
+            keep = ((uint8_t)h[pos + 12] == 0);
+        }
+        if (keep) result.append(h.mid(pos, totalSize));
+        pos += totalSize;
+    }
+    qInfo() << "HttpFlvServer: buildCodecConfigHeader size=" << result.size();
+    return result;
+}
+
+// 从 flvHeader_ 中提取第一个 GOP 的帧数据（AVC NALU + AAC raw），
+// 作为 currentGopBytes_ 初始值，保证首帧 currentGopBytes_ 包含关键帧。
+QByteArray HttpFlvServer::extractInitialGopFrames() const {
+    const QByteArray& h = flvHeader_;
+    QByteArray result;
+    if (h.size() < 13) return result;
+
+    int pos = 13;
+    while (pos + 11 <= h.size()) {
+        uint8_t tagType  = (uint8_t)h[pos];
+        int dataSize = ((uint8_t)h[pos+1] << 16) | ((uint8_t)h[pos+2] << 8) | (uint8_t)h[pos+3];
+        int totalSize = 11 + dataSize + 4;
+        if (pos + totalSize > h.size()) break;
+
+        bool include = false;
+        if (tagType == 0x09 && dataSize >= 2) {
+            include = ((uint8_t)h[pos + 12] == 1);  // AVC NALU
+        } else if (tagType == 0x08 && dataSize >= 2) {
+            include = ((uint8_t)h[pos + 12] == 1);  // AAC raw
+        }
+        if (include) result.append(h.mid(pos, totalSize));
+        pos += totalSize;
+    }
+    qInfo() << "HttpFlvServer: extractInitialGopFrames size=" << result.size();
+    return result;
 }

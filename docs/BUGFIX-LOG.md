@@ -237,6 +237,21 @@
 
 ---
 
+## #023 — HTTP-FLV 晚连接客户端白屏 6 秒 + 修复后无声音
+
+- **日期**：2026-05-22
+- **现象**：推流已运行数秒后，在平板浏览器打开直播页面，开头白屏约 6 秒才出现画面，且画面内容滞后桌面约 6 秒；按上述方案修复后白屏消失，但完全无声音
+- **根因（白屏/延迟）**：`flvHeader_` 在推流启动时冻结，含第一帧 PTS≈0ms。晚连客户端收到 `flvHeader_`（PTS=0）后紧接收到直播数据（PTS≈N×1000ms），flv.js 要"快进"跳过 N 秒时间轴，表现为白屏等待；此外 flv.js 默认不主动追直播边缘，浏览器缓冲持续积压导致稳态延迟
+- **根因（无声音）**：为减少延迟新增了 JS `setInterval` 每 2 秒执行 `v.currentTime = bufferedEnd - 0.2`，直接修改 `currentTime` 在移动端 WebView（iOS/Android）会重置音频解码器状态导致静音；同时 `liveBufferLatencyChaseOffset: 0.2`（1.2x 倍速）在部分移动浏览器会触发音频静音策略
+- **修复（白屏）**：
+  1. `headerFrozen_` 后调 `buildCodecConfigHeader()` 将 `flvHeader_` 解析为仅含 FLV 文件头 + metadata + AVC 序列头 + AAC 序列头的 `codecConfigHeader_`（无帧 PTS 数据）
+  2. 每次检测到关键帧时设 `newGopStarting_=true`，`writeCallback` 据此清空并重建 `currentGopBytes_`，始终保存最近一个 I 帧起的全部 FLV tag 字节
+  3. `startStreaming()` 晚连路径改为发送 `codecConfigHeader_` + `currentGopBytes_`，客户端直接从最新关键帧起步，无时间戳跳变
+- **修复（无声音）**：删除手动 `v.currentTime` 跳帧的 `setInterval`，完全依赖 flv.js 内置追帧机制；将 `liveBufferLatencyChaseOffset` 从 0.2 降至 0.1（1.1x 倍速，移动端安全上限）；新增 `autoCleanupSourceBuffer:true` 防止历史缓冲膨胀
+- **涉及文件**：`src/httpflvserver.cpp`、`src/httpflvserver.h`
+
+---
+
 ## #016 — 进度条拖拽失效：eventFilter 拦截手柄点击导致无法滑动
 
 - **日期**：2026-05-16

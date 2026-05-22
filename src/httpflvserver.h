@@ -77,6 +77,15 @@ private:
     QByteArray        flvHeader_;
     bool              headerFrozen_ = false; // 第一个关键帧后冻结，不再追加
 
+    // 延迟接入优化：只发编解码配置（无帧数据）+ 当前 GOP，避免 6s 空白
+    QByteArray        codecConfigHeader_;   // FLV头+metadata+AVC序列头+AAC序列头（无帧）
+    QByteArray        currentGopBytes_;     // 最近一个关键帧起至今的 FLV tag 字节
+    bool              newGopStarting_ = false; // processPackets 通知 writeCallback 重置 GOP 缓冲
+
+    // 从 flvHeader_ 中提取各部分
+    QByteArray buildCodecConfigHeader() const;   // 仅保留序列头 tag
+    QByteArray extractInitialGopFrames() const;  // 仅保留帧数据 tag
+
     // PTS 续接（与 MuxThread 逻辑一致）
     int64_t videoSegBase_  = AV_NOPTS_VALUE;
     int64_t audioSegBase_  = AV_NOPTS_VALUE;
