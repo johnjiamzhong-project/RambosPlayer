@@ -124,13 +124,17 @@ MainWindow::MainWindow(QWidget* parent)
     connect(exportWorker_, &ExportWorker::errorOccurred, this, [](const QString& msg) {
         QMessageBox::warning(nullptr, "导出错误", msg);
     });
+    connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
 
     rebuildRecentMenu();
 }
 
-// 析构函数：必须先 delete player_ 再 delete ui。
-// player_->stop() 会调用 renderer_->stopRendering()，renderer_ 是 ui 内的 promoted widget，
-// 若先 delete ui 则 renderer_ 已销毁，player_ 析构时再访问它会触发 UAF 崩溃。
+// 析构函数：必须严格按顺序销毁，防止各组件通过裸指针互相访问已释放的对象。
+// 1. filterDock_（含 filterPanel_）持有 player_ 裸指针，必须在 delete player_ 之前先删；
+//    否则 Qt 基类析构时才删 Dock，彼时 player_ 已释放，FilterPanel slot 触发即 UAF。
+// 2. trimDock_（含 timeline_）同理，须在 delete player_ 之前删除。
+// 3. player_->stop() 调用 renderer_->stopRendering()，renderer_ 是 ui 内的 promoted widget，
+//    必须先 delete player_ 再 delete ui，否则 renderer_ 已析构，player_ 析构时访问触发 UAF。
 MainWindow::~MainWindow() {
     // clearRestreamPacketQueues 先让 DemuxThread 解除对队列的引用（abort + clear 裸指针），
     // 必须在 streamCtrl_->stop() 销毁 FrameQueue 对象之前调用，否则触发 UAF 崩溃。
@@ -139,6 +143,12 @@ MainWindow::~MainWindow() {
     delete streamCtrl_;
     delete thumbExtractor_;
     delete exportWorker_;
+
+    // filterDock_ 和 trimDock_ 作为 addDockWidget 子控件默认由 QMainWindow 基类析构删除，
+    // 但它们内部持有 player_ 裸指针，必须在 delete player_ 之前手动提前删除。
+    delete filterDock_;  filterDock_  = nullptr;
+    delete trimDock_;    trimDock_    = nullptr;
+
     delete player_;
     player_ = nullptr;
     delete ui;
@@ -604,4 +614,32 @@ QString MainWindow::formatTime(int64_t ms) {
     return QString("%1:%2")
         .arg(s / 60, 2, 10, QChar('0'))
         .arg(s % 60, 2, 10, QChar('0'));
+}
+
+// 显示"关于"对话框：版本信息、快捷键列表、GitHub 主页链接。
+// 使用 open()（非阻塞）而非 exec()，避免嵌套事件循环导致 Qt slot 对象 UAF 崩溃。
+void MainWindow::onAbout() {
+    auto* dlg = new QMessageBox(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle("关于 RambosPlayer");
+    dlg->setTextFormat(Qt::RichText);
+    dlg->setText(
+        "<b>RambosPlayer v1.0.0</b><br>"
+        "基于 FFmpeg + Qt 的多媒体播放器<br><br>"
+        "<b>基本操作</b><br>"
+        "<table cellspacing='4'>"
+        "<tr><td><b>Ctrl+O</b></td><td>打开文件</td></tr>"
+        "<tr><td><b>空格</b></td><td>播放 / 暂停</td></tr>"
+        "<tr><td><b>← / →</b></td><td>快退 / 快进 5 秒</td></tr>"
+        "<tr><td><b>双击视频</b></td><td>切换全屏</td></tr>"
+        "<tr><td><b>Esc</b></td><td>退出全屏</td></tr>"
+        "<tr><td><b>Ctrl+Shift+S</b></td><td>推流设置（HTTP-FLV / SRT / 本地录制）</td></tr>"
+        "<tr><td><b>Ctrl+T</b></td><td>剪辑模式</td></tr>"
+        "<tr><td><b>Ctrl+E</b></td><td>导出片段</td></tr>"
+        "</table><br>"
+        "<a href='https://github.com/johnjiamzhong-project/RambosPlayer'>"
+        "https://github.com/johnjiamzhong-project/RambosPlayer</a>"
+    );
+    dlg->setStandardButtons(QMessageBox::Ok);
+    dlg->open();
 }

@@ -46,6 +46,7 @@ private slots:
     void onThumbnailsReady(const QList<QImage>& images);
     void onExportProgress(int64_t currentPts, int64_t totalPts);
     void onExportFinished(bool ok);
+    void onAbout();
 
 private:
     void openFile(const QString& path);                             // 打开文件并更新最近记录

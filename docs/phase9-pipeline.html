@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phase 9 推流架构</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      font-family: "PingFang SC", "Microsoft YaHei", "SimHei", sans-serif;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.10);
+      padding: 32px 36px 24px;
+      max-width: 1000px;
+      width: 100%;
+    }
+    h1 { font-size: 18px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+    p.sub { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+    svg { display: block; width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Phase 9 — 推流 / 录制架构（数据流全链路）</h1>
+  <p class="sub">每读到一包额外复制一份 → 播放、本地录制、网络推流三路并行，互不干扰</p>
+
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 492">
+    <defs>
+      <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0,10 3.5,0 7" fill="#64748b"/>
+      </marker>
+      <!-- 过滤器留足边距，避免裁剪 -->
+      <filter id="sh" x="-8%" y="-30%" width="116%" height="170%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.09)"/>
+      </filter>
+    </defs>
+
+    <!-- 底色 -->
+    <rect width="960" height="492" fill="#fafbfc"/>
+
+    <!-- ═══ 分组背景 ═══ -->
+    <!-- 播放侧 -->
+    <rect x="192" y="56" width="450" height="156" rx="10"
+          fill="#f0fdf4" stroke="#86efac" stroke-width="1.2" stroke-dasharray="5,3"/>
+    <text x="654" y="70" font-size="11" font-weight="700" fill="#15803d"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">← 播放侧</text>
+
+    <!-- 本地录制 -->
+    <rect x="192" y="260" width="300" height="54" rx="10"
+          fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2" stroke-dasharray="5,3"/>
+    <text x="504" y="274" font-size="11" font-weight="700" fill="#1d4ed8"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">← 本地录制</text>
+
+    <!-- 网络推流 -->
+    <rect x="192" y="352" width="452" height="54" rx="10"
+          fill="#fdf4ff" stroke="#d8b4fe" stroke-width="1.2" stroke-dasharray="5,3"/>
+    <text x="656" y="366" font-size="11" font-weight="700" fill="#7e22ce"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">← 网络推流</text>
+
+    <!-- 分割线 + 注释 -->
+    <line x1="192" y1="234" x2="660" y2="234"
+          stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,3"/>
+    <rect x="270" y="238" width="206" height="16" rx="4" fill="#f8fafc"/>
+    <text x="373" y="250" text-anchor="middle" font-size="10" fill="#94a3b8"
+          font-style="italic" font-family="PingFang SC,Microsoft YaHei,sans-serif">每读到一包，额外复制一份 ↓</text>
+
+    <!-- ═══ 解复用线程（左侧垂直居中） ═══ -->
+    <rect x="14" y="210" width="142" height="44" rx="8"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="85" y="228" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">解复用线程</text>
+    <text x="85" y="245" text-anchor="middle" font-size="10"
+          fill="#ea580c" font-family="PingFang SC,Microsoft YaHei,sans-serif">持续读包</text>
+
+    <!-- ═══ 视频轨 (cy=88) ═══ -->
+    <rect x="200" y="70" width="120" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="260" y="92" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">视频包队列</text>
+
+    <rect x="368" y="70" width="128" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="432" y="92" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">视频解码线程</text>
+
+    <rect x="546" y="70" width="84" height="36" rx="7"
+          fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="588" y="92" text-anchor="middle" font-size="13" font-weight="700"
+          fill="#6d28d9" font-family="PingFang SC,Microsoft YaHei,sans-serif">渲染</text>
+
+    <!-- ═══ 音频轨 (cy=180) ═══ -->
+    <rect x="200" y="162" width="120" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="260" y="184" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">音频包队列</text>
+
+    <rect x="368" y="162" width="128" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="432" y="184" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">音频解码线程</text>
+
+    <rect x="546" y="162" width="84" height="36" rx="7"
+          fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="588" y="184" text-anchor="middle" font-size="13" font-weight="700"
+          fill="#6d28d9" font-family="PingFang SC,Microsoft YaHei,sans-serif">声卡</text>
+
+    <!-- ═══ 本地录制轨 (cy=288) ═══ -->
+    <rect x="200" y="270" width="106" height="36" rx="7"
+          fill="#e0f2fe" stroke="#0ea5e9" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="253" y="292" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#0369a1" font-family="PingFang SC,Microsoft YaHei,sans-serif">直接写入</text>
+
+    <rect x="354" y="270" width="126" height="36" rx="7"
+          fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="417" y="292" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#1d4ed8" font-family="PingFang SC,Microsoft YaHei,sans-serif">本地 FLV 文件</text>
+
+    <!-- ═══ 推流轨 (cy=380) ═══ -->
+    <rect x="200" y="362" width="110" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="255" y="384" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">推流队列</text>
+
+    <rect x="358" y="362" width="110" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="413" y="384" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">推流线程</text>
+
+    <rect x="516" y="362" width="116" height="36" rx="7"
+          fill="#fae8ff" stroke="#c026d3" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="574" y="384" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#86198f" font-family="PingFang SC,Microsoft YaHei,sans-serif">RTMP / SRT</text>
+
+    <!-- ═══ 连接线 ═══ -->
+
+    <!-- 解复用线程 → 竖主干 -->
+    <line x1="156" y1="232" x2="178" y2="232" stroke="#64748b" stroke-width="1.8"/>
+
+    <!-- 竖主干 spine x=178, y=88~380 -->
+    <line x1="178" y1="88" x2="178" y2="380" stroke="#64748b" stroke-width="1.8"/>
+
+    <!-- T 形节点圆点 -->
+    <circle cx="178" cy="88"  r="4" fill="#64748b"/>
+    <circle cx="178" cy="180" r="4" fill="#64748b"/>
+    <circle cx="178" cy="232" r="4" fill="#64748b"/>
+    <circle cx="178" cy="288" r="4" fill="#64748b"/>
+    <circle cx="178" cy="380" r="4" fill="#64748b"/>
+
+    <!-- 主干 → 各轨入口 -->
+    <line x1="178" y1="88"  x2="200" y2="88"  stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="178" y1="180" x2="200" y2="180" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="178" y1="288" x2="200" y2="288" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="178" y1="380" x2="200" y2="380" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 视频链路 -->
+    <line x1="320" y1="88"  x2="368" y2="88"  stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="496" y1="88"  x2="546" y2="88"  stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 音频链路 -->
+    <line x1="320" y1="180" x2="368" y2="180" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="496" y1="180" x2="546" y2="180" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 本地录制链路 -->
+    <line x1="306" y1="288" x2="354" y2="288" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 推流链路 -->
+    <line x1="310" y1="380" x2="358" y2="380" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="468" y1="380" x2="516" y2="380" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- ═══ 图例 ═══ -->
+    <rect x="12" y="424" width="936" height="56" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="28" y="442" font-size="11" font-weight="700" fill="#475569"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">图例</text>
+
+    <rect x="60"  y="432" width="13" height="13" rx="3" fill="#ffedd5" stroke="#f97316" stroke-width="1.2"/>
+    <text x="79"  y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">处理线程</text>
+
+    <rect x="152" y="432" width="13" height="13" rx="3" fill="#dcfce7" stroke="#22c55e" stroke-width="1.2"/>
+    <text x="171" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">缓冲队列</text>
+
+    <rect x="244" y="432" width="13" height="13" rx="3" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.2"/>
+    <text x="263" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">渲染 / 声卡</text>
+
+    <rect x="352" y="432" width="13" height="13" rx="3" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="1.2"/>
+    <text x="371" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">直写操作</text>
+
+    <rect x="440" y="432" width="13" height="13" rx="3" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="459" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">本地文件</text>
+
+    <rect x="530" y="432" width="13" height="13" rx="3" fill="#fae8ff" stroke="#c026d3" stroke-width="1.2"/>
+    <text x="549" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">网络推流端</text>
+
+    <line x1="634" y1="439" x2="662" y2="439" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+    <text x="668" y="443" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">数据流</text>
+
+    <!-- 注释行 -->
+    <text x="28" y="466" font-size="11" fill="#94a3b8"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">
+      注：seek 时仅清空播放侧两条队列；录制与推流不感知 seek，写入连续不中断。推流线程异常不影响播放。
+    </text>
+  </svg>
+</div>
+</body>
+</html>

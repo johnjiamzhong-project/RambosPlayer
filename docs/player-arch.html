@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RambosPlayer 架构图</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 32px;
+      font-family: "PingFang SC", "Microsoft YaHei", "SimHei", sans-serif;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.10);
+      padding: 36px 40px 28px;
+      max-width: 1040px;
+      width: 100%;
+    }
+    h1 { font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+    p.sub { font-size: 13px; color: #64748b; margin-bottom: 28px; }
+    svg { display: block; width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>RambosPlayer — 多媒体播放器数据流架构</h1>
+  <p class="sub">生产者-消费者管道 &nbsp;·&nbsp; 音频时钟驱动视频同步 &nbsp;·&nbsp; 跨线程通信仅通过 FrameQueue&lt;T&gt;</p>
+
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 458">
+    <defs>
+      <!-- 普通箭头 -->
+      <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0,10 3.5,0 7" fill="#64748b"/>
+      </marker>
+      <!-- 时钟同步箭头（红色） -->
+      <marker id="arr-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0,10 3.5,0 7" fill="#ef4444"/>
+      </marker>
+      <!-- 投影滤镜（边界留足空间避免裁剪） -->
+      <filter id="sh" x="-8%" y="-30%" width="116%" height="170%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.09)"/>
+      </filter>
+    </defs>
+
+    <!-- 背景底色 -->
+    <rect width="960" height="458" fill="#fafbfc"/>
+
+    <!-- 视频轨道底色条 -->
+    <rect x="178" y="60" width="768" height="52" rx="8" fill="#f0fdf4" opacity="0.8"/>
+    <text x="945" y="84" text-anchor="end" font-size="10" font-weight="700"
+          fill="#4ade80" font-family="PingFang SC,Microsoft YaHei,sans-serif">VIDEO</text>
+
+    <!-- 音频轨道底色条 -->
+    <rect x="178" y="192" width="450" height="52" rx="8" fill="#eff6ff" opacity="0.8"/>
+    <text x="628" y="216" text-anchor="end" font-size="10" font-weight="700"
+          fill="#60a5fa" font-family="PingFang SC,Microsoft YaHei,sans-serif">AUDIO</text>
+
+    <!-- ════════════════ 节点 ════════════════ -->
+
+    <!-- 视频文件（蓝，输入） -->
+    <rect x="25" y="12" width="110" height="36" rx="7"
+          fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="80" y="34" text-anchor="middle" font-size="13" font-weight="700"
+          fill="#1d4ed8" font-family="PingFang SC,Microsoft YaHei,sans-serif">视频文件</text>
+
+    <!-- 解复用线程（橙，线程） -->
+    <rect x="15" y="114" width="130" height="40" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="80" y="131" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">解复用线程</text>
+    <text x="80" y="147" text-anchor="middle" font-size="10"
+          fill="#ea580c" font-family="PingFang SC,Microsoft YaHei,sans-serif">持续读包</text>
+
+    <!-- 视频包队列（绿，队列） -->
+    <rect x="183" y="68" width="120" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="243" y="85" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">视频包队列</text>
+    <text x="243" y="98" text-anchor="middle" font-size="10"
+          fill="#16a34a" font-family="PingFang SC,Microsoft YaHei,sans-serif">cap: 100</text>
+
+    <!-- 视频解码线程（橙，线程） -->
+    <rect x="350" y="68" width="126" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="413" y="90" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">视频解码线程</text>
+
+    <!-- 帧队列（绿，队列） -->
+    <rect x="520" y="68" width="100" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="570" y="85" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">帧队列</text>
+    <text x="570" y="98" text-anchor="middle" font-size="10"
+          fill="#16a34a" font-family="PingFang SC,Microsoft YaHei,sans-serif">cap: 15</text>
+
+    <!-- 渲染模块（橙，线程） -->
+    <rect x="672" y="68" width="116" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="730" y="85" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">渲染模块</text>
+    <text x="730" y="98" text-anchor="middle" font-size="10"
+          fill="#ea580c" font-family="PingFang SC,Microsoft YaHei,sans-serif">QTimer 1ms</text>
+
+    <!-- 屏幕（紫，输出） -->
+    <rect x="836" y="68" width="90" height="36" rx="7"
+          fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="881" y="90" text-anchor="middle" font-size="14" font-weight="700"
+          fill="#6d28d9" font-family="PingFang SC,Microsoft YaHei,sans-serif">屏幕</text>
+
+    <!-- 音频包队列（绿，队列） -->
+    <rect x="183" y="198" width="120" height="36" rx="7"
+          fill="#dcfce7" stroke="#22c55e" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="243" y="215" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#15803d" font-family="PingFang SC,Microsoft YaHei,sans-serif">音频包队列</text>
+    <text x="243" y="228" text-anchor="middle" font-size="10"
+          fill="#16a34a" font-family="PingFang SC,Microsoft YaHei,sans-serif">cap: 400</text>
+
+    <!-- 音频解码线程（橙，线程） -->
+    <rect x="350" y="198" width="126" height="36" rx="7"
+          fill="#ffedd5" stroke="#f97316" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="413" y="220" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#c2410c" font-family="PingFang SC,Microsoft YaHei,sans-serif">音频解码线程</text>
+
+    <!-- 声卡输出（紫，输出） -->
+    <rect x="520" y="198" width="100" height="36" rx="7"
+          fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="570" y="220" text-anchor="middle" font-size="12" font-weight="700"
+          fill="#6d28d9" font-family="PingFang SC,Microsoft YaHei,sans-serif">声卡输出</text>
+
+    <!-- 音频时钟（红，主时钟） -->
+    <rect x="460" y="328" width="130" height="42" rx="8"
+          fill="#fee2e2" stroke="#ef4444" stroke-width="2" filter="url(#sh)"/>
+    <text x="525" y="347" text-anchor="middle" font-size="13" font-weight="700"
+          fill="#b91c1c" font-family="PingFang SC,Microsoft YaHei,sans-serif">音频时钟</text>
+    <text x="525" y="362" text-anchor="middle" font-size="10"
+          fill="#dc2626" font-family="PingFang SC,Microsoft YaHei,sans-serif">播放进度基准</text>
+
+    <!-- ════════════════ 箭头 ════════════════ -->
+
+    <!-- 视频文件 → 解复用线程 -->
+    <line x1="80" y1="48" x2="80" y2="114"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 解复用线程 → 视频包队列（上叉） -->
+    <path d="M 145,126 L 162,126 L 162,86 L 183,86"
+          fill="none" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 解复用线程 → 音频包队列（下叉） -->
+    <path d="M 145,142 L 162,142 L 162,216 L 183,216"
+          fill="none" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 视频包队列 → 视频解码线程 -->
+    <line x1="303" y1="86" x2="350" y2="86"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 视频解码线程 → 帧队列 -->
+    <line x1="476" y1="86" x2="520" y2="86"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 帧队列 → 渲染模块 -->
+    <line x1="620" y1="86" x2="672" y2="86"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 渲染模块 → 屏幕 -->
+    <line x1="788" y1="86" x2="836" y2="86"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 音频包队列 → 音频解码线程 -->
+    <line x1="303" y1="216" x2="350" y2="216"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 音频解码线程 → 声卡输出 -->
+    <line x1="476" y1="216" x2="520" y2="216"
+          stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 音频解码线程 → 音频时钟（向下） -->
+    <path d="M 413,234 L 413,306 L 525,306 L 525,328"
+          fill="none" stroke="#64748b" stroke-width="1.8" marker-end="url(#arr)"/>
+
+    <!-- 音频时钟 → 渲染模块（虚线，时钟同步） -->
+    <path d="M 590,349 L 730,349 L 730,104"
+          fill="none" stroke="#ef4444" stroke-width="1.8"
+          stroke-dasharray="7,4" marker-end="url(#arr-red)"/>
+    <!-- 时钟同步标签背景 -->
+    <rect x="635" y="339" width="58" height="18" rx="4"
+          fill="#fff7f7" stroke="#fca5a5" stroke-width="1"/>
+    <text x="664" y="352" text-anchor="middle" font-size="11" font-weight="600"
+          fill="#b91c1c" font-family="PingFang SC,Microsoft YaHei,sans-serif">时钟同步</text>
+
+    <!-- ════════════════ 图例 ════════════════ -->
+    <rect x="12" y="390" width="936" height="56" rx="10"
+          fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="28" y="408" font-size="11" font-weight="700"
+          fill="#475569" font-family="PingFang SC,Microsoft YaHei,sans-serif">图例</text>
+
+    <rect x="60"  y="398" width="13" height="13" rx="3" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="79"  y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">输入文件</text>
+
+    <rect x="148" y="398" width="13" height="13" rx="3" fill="#ffedd5" stroke="#f97316" stroke-width="1.2"/>
+    <text x="167" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">处理线程</text>
+
+    <rect x="240" y="398" width="13" height="13" rx="3" fill="#dcfce7" stroke="#22c55e" stroke-width="1.2"/>
+    <text x="259" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">缓冲队列</text>
+
+    <rect x="332" y="398" width="13" height="13" rx="3" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.2"/>
+    <text x="351" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">输出设备</text>
+
+    <rect x="420" y="398" width="13" height="13" rx="3" fill="#fee2e2" stroke="#ef4444" stroke-width="1.5"/>
+    <text x="439" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">主时钟</text>
+
+    <line x1="494" y1="405" x2="522" y2="405"
+          stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+    <text x="528" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">数据流</text>
+
+    <line x1="586" y1="405" x2="614" y2="405"
+          stroke="#ef4444" stroke-width="1.6" stroke-dasharray="5,3" marker-end="url(#arr-red)"/>
+    <text x="620" y="409" font-size="11" fill="#334155" font-family="PingFang SC,Microsoft YaHei,sans-serif">时钟同步（虚线）</text>
+
+    <!-- 注释行 -->
+    <text x="28" y="432" font-size="11" fill="#94a3b8"
+          font-family="PingFang SC,Microsoft YaHei,sans-serif">
+      注：音频时钟为主时钟；视频帧滞后 &gt;400ms 丢弃；FrameQueue&lt;T&gt; 是唯一跨线程通信机制；seek 时清空双端队列并 flush 解码器
+    </text>
+  </svg>
+</div>
+</body>
+</html>

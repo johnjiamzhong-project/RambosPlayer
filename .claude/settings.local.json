@@ -76,7 +76,28 @@
       "PowerShell(python \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\src\\\\icons\\\\svg2ico.py\")",
       "Bash(Get-ChildItem \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\logs\" -ErrorAction SilentlyContinue)",
       "Bash(Sort-Object LastWriteTime -Descending)",
-      "Bash(Select-Object -First 5)"
+      "Bash(Select-Object -First 5)",
+      "Bash(ffprobe -protocols)",
+      "PowerShell(cmd /c \"E:\\\\vcpkg\\\\installed\\\\x64-windows\\\\tools\\\\ffmpeg\\\\ffprobe.exe -version 2>&1 | findstr version\")",
+      "PowerShell(cmd /c \"D:\\\\Tool\\\\ffmpeg-8.1-full_build\\\\bin\\\\ffprobe.exe -version 2>&1 | findstr version\")",
+      "PowerShell(cmd /c \"D:\\\\Tool\\\\ffmpeg-8.1-full_build\\\\bin\\\\ffprobe.exe -protocols 2>&1 | findstr srt\")",
+      "PowerShell(cmd /c \"E:\\\\vcpkg\\\\installed\\\\x64-windows\\\\tools\\\\ffmpeg\\\\ffprobe.exe -protocols 2>&1 | findstr srt\")",
+      "PowerShell(cmd /c \"dir E:\\\\vcpkg\\\\installed\\\\x64-windows\\\\tools\\\\ffmpeg /b 2>&1\")",
+      "PowerShell(cmd /c \"dir E:\\\\vcpkg\\\\installed\\\\x64-windows\\\\include\\\\libavformat /b 2>&1 | findstr avformat\")",
+      "PowerShell(cmd /c \"dir E:\\\\vcpkg\\\\installed\\\\x64-windows\\\\lib /b 2>&1 | findstr /i srt\")",
+      "PowerShell(cmd /c \"E:\\\\vcpkg\\\\vcpkg.exe list ffmpeg 2>&1\")",
+      "Bash(curl -L \"https://cdn.bootcdn.net/ajax/libs/flv.js/1.6.2/flv.min.js\" -o \"G:/source/vscode/ffmpeg_pro/stage5/RambosPlayer/build/Debug/flv.min.js\")",
+      "PowerShell(G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\temp_fix.ps1)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\temp_fix.ps1\")",
+      "Bash(cd /d G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer)",
+      "Bash(cmake --build build --config Debug -- /nologo /v:m)",
+      "Bash(findstr *)",
+      "PowerShell(Copy-Item *)",
+      "Bash(cmake *)",
+      "Bash(Get-Item \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\RambosPlayer.exe\")",
+      "Bash(Select-Object LastWriteTime)",
+      "Bash(dir \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\logs\\\\\" 2>&1 | head -30 *)",
+      "PowerShell(python -c \"import xml.etree.ElementTree as ET; ET.parse\\('G:/source/vscode/ffmpeg_pro/stage5/RambosPlayer/src/mainwindow.ui'\\); print\\('XML valid'\\)\")"
     ]
   }
 }

@@ -53,4 +53,5 @@ private:
     bool noFrameLogged_ = false;        // 避免同一段空窗重复打印
     int  dropCount_ = 0;                // 当前轮连续丢帧数，汇总后打印
     double lastRenderedPts_ = -1.0;     // 上次成功渲染的帧 PTS，用于检测 seek 后首帧
+    bool rendering_ = false;            // startRendering/stopRendering 状态标志，onTimer() 据此提前返回
 };
