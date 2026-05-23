@@ -46,8 +46,11 @@ RambosPlayer is a multithreaded multimedia player built with C++17, Qt 5.14.2, a
 # Configure（首次或 CMakeLists.txt 修改后）
 cmake --preset default
 
-# Build
+# Build Debug
 cmake --build build --config Debug
+
+# Build Release
+cmake --build build --config Release
 
 # Run tests
 ctest --test-dir build --config Debug --output-on-failure
@@ -59,6 +62,28 @@ To run a single test:
 .\build\Debug\TstAVSync.exe
 .\build\Debug\TstDemuxThread.exe
 ```
+
+## Packaging
+
+打包脚本位于 `release/package.ps1`，在 Release 编译完成后运行：
+
+```powershell
+cd release
+.\package.ps1                    # 默认版本 1.0.0
+.\package.ps1 -Version "1.2.0"  # 指定版本号
+```
+
+脚本执行流程：
+1. 从 `build/Release/RambosPlayer.exe` 复制 exe 到 `release/dist/`
+2. `windeployqt` 收集 Qt 运行时 DLL
+3. 从 vcpkg 复制 FFmpeg DLL（avcodec / avformat / avutil / avfilter / swresample / swscale）
+4. 从 `build/Release/` 复制额外 DLL（libx264、srt、libcrypto 等）
+5. 复制 `flv.min.js`（优先从 `build/Release/` 找，次选 `build/Debug/`）
+6. 打包为 `release/RambosPlayer-vX.X.X.zip`
+
+输出：
+- `release/dist/` — 展开目录，可直接运行验证
+- `release/RambosPlayer-vX.X.X.zip` — 最终分发包
 
 ## Architecture
 

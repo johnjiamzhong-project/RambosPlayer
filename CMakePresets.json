@@ -15,5 +15,19 @@
         "CMAKE_PREFIX_PATH": "E:/Qt/Qt5.14.2/5.14.2/msvc2017_64"
       }
     }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "configurePreset": "default",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "configurePreset": "default",
+      "configuration": "Release"
+    }
   ]
 }

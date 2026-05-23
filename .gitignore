@@ -3,3 +3,5 @@ bin/
 build_qmake/
 logs/
 *.pro.user
+release/dist/
+release/*.zip
