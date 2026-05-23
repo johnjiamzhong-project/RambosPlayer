@@ -105,7 +105,7 @@ DemuxThread ──→ videoPacketQueue ──→ VideoDecodeThread ──→ Vid
 |----------|----------|----------|
 | RTMP | `rtmp://127.0.0.1:1935/live/test` | 在线平台（Twitch/B站）或本地 SRS 服务器 |
 | SRT | `srt://:9000` | 局域网直连（平板/手机用 VLC 拉流），无需服务器 |
-| HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端 |
+| HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端；**仅支持 H.264 编码的视频**（MPEG-4 等格式不支持 FLV 容器） |
 | 本地录制 | `C:/record.flv` | 录制当前播放内容到文件 |
 
 > 重构计划：[docs/superpowers/plans/2026-05-17-phase9-restream.md](docs/superpowers/plans/2026-05-17-phase9-restream.md)

@@ -29,6 +29,13 @@ bool HttpFlvServer::init(quint16 port,
     videoTb_ = vtb;
     audioTb_ = atb;
 
+    // FLV 容器只支持 H.264 视频；提前拦截，避免 avformat_write_header 失败后才报错
+    if (vpar && vpar->codec_id != AV_CODEC_ID_H264) {
+        qWarning() << "HttpFlvServer: video codec" << avcodec_get_name(vpar->codec_id)
+                   << "incompatible with FLV container (H.264 only)";
+        return false;
+    }
+
     videoQueue_ = std::make_unique<FrameQueue<AVPacket*>>(30);
     audioQueue_ = std::make_unique<FrameQueue<AVPacket*>>(60);
 
@@ -143,6 +150,9 @@ void HttpFlvServer::broadcastData(const QByteArray& data) {
 // 主线程：HTTP 服务 + 数据包处理定时器
 void HttpFlvServer::run() {
     if (!initMuxer()) {
+        // abort 队列，防止 DemuxThread 持续 push 包导致队列积压大量丢包警告
+        if (videoQueue_) videoQueue_->abort();
+        if (audioQueue_) audioQueue_->abort();
         emit errorOccurred("FLV muxer 初始化失败");
         return;
     }

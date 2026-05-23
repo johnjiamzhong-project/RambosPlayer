@@ -39,7 +39,11 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
                 qWarning() << "HttpFlvServer: firewall rule needed, run as admin:" << cmd;
             });
             if (!srv->init(dest.port, vpar, vTimeBase, apar, aTimeBase)) {
-                emit errorOccurred(QString("HTTP-FLV 服务初始化失败（端口 %1）").arg(dest.port));
+                QString reason = (vpar && vpar->codec_id != AV_CODEC_ID_H264)
+                    ? QString("视频编码 %1 不支持 FLV，请使用 H.264 编码的视频")
+                          .arg(avcodec_get_name(vpar->codec_id))
+                    : QString("端口 %1 初始化失败").arg(dest.port);
+                emit errorOccurred("HTTP-FLV 推流失败：" + reason);
                 return false;
             }
             httpFlvServers_.push_back(std::move(srv));

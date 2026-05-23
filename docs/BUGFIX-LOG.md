@@ -252,6 +252,29 @@
 
 ---
 
+## #024 — 切换视频时播放按钮状态不同步（显示 play 但视频仍在播放）
+
+- **日期**：2026-05-23
+- **现象**：播放视频期间从最近文件菜单切换另一个视频，新视频正常播放，但播放按钮显示为 play 图标（关闭状态）
+- **根因**：`PlayerController::onDemuxFinished()` 用 `QTimer::singleShot(500ms)` 延迟发出 `playbackFinished` 信号（目的是给解码线程留时间耗尽队列）。切换视频时 `openFile()` 在 `player_->play()` 后将按钮设为暂停图标，但 500ms 后旧文件的延迟信号触发 `onPlaybackFinished()`，该函数无条件将按钮改回 play 图标，覆盖了新视频的状态
+- **修复**：在 `MainWindow::onPlaybackFinished()` 开头加 `if (player_->isPlaying()) return;`，若此时新文件已在播放则忽略旧文件的结束事件
+- **涉及文件**：`src/mainwindow.cpp`
+
+---
+
+## #025 — HTTP-FLV 推流不兼容编解码时静默失败并大量丢包
+
+- **日期**：2026-05-23
+- **现象**：对 MPEG-4 编码的视频启动 HTTP-FLV 推流，`avformat_write_header` 失败，随后日志刷出数百条 `restream tryPush drop — mux queue full` 警告，用户弹窗只显示"服务初始化失败"，原因不明
+- **根因**：FLV 容器只支持 H.264 视频，MPEG-4（Part 2）编码无法写入 FLV；`HttpFlvServer::init()` 未提前检查 codec 兼容性，导致 `avformat_write_header` 才报错。`run()` 的失败分支未 abort 队列，DemuxThread 持续向已退出线程的队列 push 包直到打满，造成大量丢包警告
+- **修复**：
+  1. `HttpFlvServer::init()` 开头检查 `vpar->codec_id != AV_CODEC_ID_H264`，不兼容时直接返回 false 并输出明确日志
+  2. `run()` 的 `initMuxer` 失败分支立即 `videoQueue_->abort(); audioQueue_->abort()`，截断后续丢包
+  3. `StreamController` 的错误信息改为包含 codec 名称：`"HTTP-FLV 推流失败：视频编码 mpeg4 不支持 FLV，请使用 H.264 编码的视频"`
+- **涉及文件**：`src/httpflvserver.cpp`、`src/streamcontroller.cpp`
+
+---
+
 ## #016 — 进度条拖拽失效：eventFilter 拦截手柄点击导致无法滑动
 
 - **日期**：2026-05-16

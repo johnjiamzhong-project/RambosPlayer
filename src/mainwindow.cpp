@@ -152,8 +152,14 @@ void MainWindow::openFile(const QString& path) {
         qInfo() << "MainWindow: opened" << path;
         currentFile_ = path;
         updateRecentFiles(path);
-        ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
         player_->play();
+
+        // 播放成功后，根据实际状态更新按钮（避免状态不同步）
+        if (player_->isPlaying()) {
+            ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+        } else {
+            ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+        }
 
         // 有预配置推流目标时，文件打开后自动启动推流
         if (!pendingDests_.isEmpty()) {
@@ -336,7 +342,10 @@ void MainWindow::onPositionChanged(int64_t ms) {
 }
 
 // 播放结束：复位按钮，若正在推流则自动停止。
+// playbackFinished 由 QTimer::singleShot(500ms) 延迟发出，切换文件时新文件可能已开始播放，
+// 此时忽略旧文件的结束事件，避免把按钮图标覆盖回 play。
 void MainWindow::onPlaybackFinished() {
+    if (player_->isPlaying()) return;
     ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
     if (streamCtrl_->isStreaming()) {
         double stopSec = player_->currentPositionSeconds();
