@@ -346,6 +346,46 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 
 ---
 
+## Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
+
+**目标：** 浏览器端到端延迟 ≤ 600ms，取代 HTTP-FLV 的 1-12s 抖动延迟。
+
+> 详细方案设计：[docs/solutions/low-latency-streaming.md](solutions/low-latency-streaming.md)
+
+### Phase A — EncodeThread 改造 ✅
+
+- [x] `EncodeThread` 新增 `setGopSize(int)` setter，`init()` 使用可配置 GOP（默认 = fps）
+
+### Phase B — StreamDecoder（推流专用解码）✅
+
+- [x] 新建 `src/streamdecoder.h/.cpp`：视频/音频通用解码线程
+  - 正确处理 nullptr sentinel（调用 `avcodec_flush_buffers` 而非发送 EOF）
+  - 无 QAudioOutput / AVSync / FilterGraph，仅解码推帧
+
+### Phase C — StreamPipeline（管线封装）✅
+
+- [x] 新建 `src/streampipeline.h/.cpp`：管理 4 线程（视频解码+编码、音频解码+编码）+ 6 队列
+  - 连接：`streamVideoInQ_` → StreamDecoder → `rawVideoQ_` → EncodeThread → `encodedVideoQ_`
+  - 连接：`streamAudioInQ_` → StreamDecoder → `rawAudioQ_` → AudioEncodeThread → `encodedAudioQ_`
+  - GOP = fps × gopSeconds（最小 1 帧）
+
+### Phase D — MpegTsServer ✅
+
+- [x] 新建 `src/mpegtsserver.h/.cpp`：HTTP MPEG-TS 流媒体服务器
+  - mpegts muxer + 自定义 avio 广播
+  - late-join：发送 `headerBytes_`（PAT/PMT）+ `segmentBytes_`（最近关键帧起）
+  - 内嵌播放页：mpegts.js + `liveBufferLatencyChasing=true`
+  - PAT/PMT 每 0.5s 重发，保证 segment buffer 自包含
+
+### Phase E — 集成对接 ✅
+
+- [x] `StreamDestination` 新增 `HttpMpegTs` 类型（含 fps/gopSeconds/bitrate 字段）
+- [x] `StreamController` 创建 StreamPipeline + MpegTsServer，管理生命周期
+- [x] `StreamConfigDialog` 新增"低延迟浏览器 (HTTP-MPEG-TS)"配置组（端口/GOP/码率）
+- [x] `mainwindow::startStreaming()` 注册 StreamPipeline 输入队列到 DemuxThread
+
+---
+
 ## 当前进度
 
 - [x] Phase 1 — 项目骨架
@@ -358,3 +398,4 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] Phase 8 — 视频滤镜 ✅
 - [x] Phase 9 — 屏幕录制/推流 ✅
 - [x] Phase 10 — 视频剪辑器 ✅
+- [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）✅

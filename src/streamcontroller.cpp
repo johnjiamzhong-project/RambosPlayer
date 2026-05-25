@@ -31,7 +31,7 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
             recorders_.push_back(std::move(rec));
             qInfo() << "StreamController: local recorder ready path=" << dest.url;
         } else if (dest.type == StreamDestination::HttpFlv) {
-            // HTTP-FLV 内置服务器
+            // HTTP-FLV 内置服务器（-c copy 直通）
             auto srv = std::make_unique<HttpFlvServer>();
             connect(srv.get(), &HttpFlvServer::errorOccurred,
                     this, &StreamController::errorOccurred);
@@ -48,6 +48,28 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
             }
             httpFlvServers_.push_back(std::move(srv));
             qInfo() << "StreamController: HTTP-FLV server ready port=" << dest.port;
+        } else if (dest.type == StreamDestination::HttpMpegTs) {
+            // HTTP-MPEG-TS：StreamPipeline（解码→重编码）+ MpegTsServer
+            auto pipeline = std::make_unique<StreamPipeline>();
+            if (!pipeline->init(vpar, apar, dest.fps, dest.gopSeconds, dest.bitrate)) {
+                emit errorOccurred(QString("MPEG-TS 编码管线初始化失败（端口 %1）").arg(dest.port));
+                return false;
+            }
+            auto srv = std::make_unique<MpegTsServer>();
+            connect(srv.get(), &MpegTsServer::errorOccurred,
+                    this, &StreamController::errorOccurred);
+            connect(srv.get(), &MpegTsServer::firewallHint, this, [](const QString& cmd) {
+                qWarning() << "MpegTsServer: firewall rule needed, run as admin:" << cmd;
+            });
+            if (!srv->init(dest.port,
+                           pipeline->encodedVideoQueue(), pipeline->encodedAudioQueue(),
+                           pipeline->videoCodecContext(), pipeline->audioCodecContext())) {
+                emit errorOccurred(QString("MPEG-TS 服务器初始化失败（端口 %1）").arg(dest.port));
+                return false;
+            }
+            streamPipelines_.push_back(std::move(pipeline));
+            mpegTsServers_.push_back(std::move(srv));
+            qInfo() << "StreamController: HTTP-MPEG-TS pipeline+server ready port=" << dest.port;
         } else {
             // 网络推流：MuxThread + 队列对
             // 容量控制预读深度：30 帧 ≈ 1.25s，seek 时最多清掉这么多内容。
@@ -75,14 +97,18 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
         }
     }
 
-    // 启动网络推流线程和 HTTP-FLV 服务器
+    // 启动网络推流线程、HTTP-FLV 服务器、MPEG-TS 管线和服务器
     for (auto& mux : muxThreads_) mux->start();
     for (auto& srv : httpFlvServers_) srv->start();
+    for (auto& srv : mpegTsServers_) srv->start();
+    for (auto& p   : streamPipelines_) p->start();
 
     streaming_ = true;
     emit streamingStarted();
     qInfo() << "StreamController::start ok local=" << recorders_.size()
-            << "remote=" << muxThreads_.size();
+            << "remote=" << muxThreads_.size()
+            << "httpFlv=" << httpFlvServers_.size()
+            << "mpegTs=" << mpegTsServers_.size();
     return true;
 }
 
@@ -117,6 +143,12 @@ void StreamController::stop() {
     // 停止 HTTP-FLV 服务器
     for (auto& srv : httpFlvServers_) { srv->stop(); srv->wait(3000); }
     httpFlvServers_.clear();
+
+    // 停止 MPEG-TS 管线（先 abort 编码队列，再停服务器）
+    for (auto& p   : streamPipelines_) p->stop();
+    for (auto& srv : mpegTsServers_)   { srv->stop(); srv->wait(3000); }
+    streamPipelines_.clear();
+    mpegTsServers_.clear();
 
     // 停止写入并完成本地录制文件
     for (auto& rec : recorders_) { rec->stop(); rec->finish(); }

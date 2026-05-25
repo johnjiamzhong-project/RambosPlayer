@@ -33,6 +33,7 @@ public:
     FrameQueue<AVPacket*>* audioQueue() { return audioQueue_.get(); }
 
     QString playerUrl() const;  // http://LAN_IP:PORT/player.html
+    quint16 port() const { return port_; }
 
 signals:
     void clientConnected(int total);

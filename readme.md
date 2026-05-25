@@ -11,6 +11,7 @@
 - 架构流程图：[docs/架构流程图.html](docs/架构流程图.html)
 - 软解 vs 硬解对比：[docs/软解与硬解对比.html](docs/软解与硬解对比.html)
 - 低延迟推流方案：[docs/solutions/low-latency-streaming.md](docs/solutions/low-latency-streaming.md)（GPU 实时重编码 + mpegts.js 追帧）
+- 推流方案对比架构图：[docs/推流方案对比架构图.html](docs/推流方案对比架构图.html)（HTTP-FLV vs HTTP-MPEG-TS 管线对比）
 
 | 功能 | 状态 |
 |------|:----:|
@@ -20,7 +21,7 @@
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
 | 功能5 — 推流播放内容（音视频双流，RTMP/SRT/HTTP-FLV） | ✅ 完成 |
 | 功能6 — 视频剪辑器 | ✅ 完成 |
-| 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | 📋 设计中 |
+| 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | ✅ 完成 |
 
 ---
 
@@ -119,6 +120,7 @@ DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP
 | RTMP | `rtmp://127.0.0.1:1935/live/test` | 在线平台（Twitch/B站）或本地 SRS 服务器 |
 | SRT | `srt://:9000` | 局域网直连（平板/手机用 VLC 拉流），无需服务器 |
 | HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端；**仅支持 H.264 编码的视频**（MPEG-4 等格式不支持 FLV 容器） |
+| HTTP-MPEG-TS | 端口 8090（内置） | **低延迟模式**：GPU 重编码（h264_nvenc + AAC），GOP=0.5s，浏览器延迟 ≤ 600ms；需将 `mpegts.min.js` 放到 exe 同目录 |
 | 本地录制 | `C:/record.flv` | 录制当前播放内容到文件 |
 
 > 重构计划：[docs/superpowers/plans/2026-05-17-phase9-restream.md](docs/superpowers/plans/2026-05-17-phase9-restream.md)

@@ -5,6 +5,8 @@
 #include <QGroupBox>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QComboBox>
 #include <QPushButton>
 #include <QDialogButtonBox>
 #include <QLabel>
@@ -137,6 +139,61 @@ void StreamConfigDialog::buildUi() {
 
     root->addWidget(httpFlvGroup_);
 
+    // ---- 低延迟浏览器 (HTTP-MPEG-TS) ----
+    mpegTsGroup_ = new QGroupBox("低延迟浏览器 (HTTP-MPEG-TS，≤600ms，GPU 重编码)", this);
+    mpegTsGroup_->setCheckable(true);
+    mpegTsGroup_->setChecked(false);
+    auto* mpegTsLayout = new QFormLayout(mpegTsGroup_);
+
+    mpegTsPortSpin_ = new QSpinBox(mpegTsGroup_);
+    mpegTsPortSpin_->setRange(1024, 65535);
+    mpegTsPortSpin_->setValue(8090);
+    mpegTsLayout->addRow("端口:", mpegTsPortSpin_);
+
+    mpegTsGopSpin_ = new QDoubleSpinBox(mpegTsGroup_);
+    mpegTsGopSpin_->setRange(0.1, 5.0);
+    mpegTsGopSpin_->setSingleStep(0.1);
+    mpegTsGopSpin_->setDecimals(1);
+    mpegTsGopSpin_->setValue(0.5);
+    mpegTsGopSpin_->setSuffix(" 秒");
+    mpegTsLayout->addRow("GOP 时长:", mpegTsGopSpin_);
+
+    mpegTsBitrateCombo_ = new QComboBox(mpegTsGroup_);
+    mpegTsBitrateCombo_->addItem("1 Mbps",  1000000);
+    mpegTsBitrateCombo_->addItem("2 Mbps",  2000000);
+    mpegTsBitrateCombo_->addItem("4 Mbps",  4000000);
+    mpegTsBitrateCombo_->addItem("8 Mbps",  8000000);
+    mpegTsBitrateCombo_->setCurrentIndex(1);  // 默认 2 Mbps
+    mpegTsLayout->addRow("视频码率:", mpegTsBitrateCombo_);
+
+    mpegTsHintLabel_ = new QLabel(mpegTsGroup_);
+    mpegTsHintLabel_->setText(QString("http://%1:%2/player.html").arg(lanIp).arg(mpegTsPortSpin_->value()));
+    mpegTsHintLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    mpegTsHintLabel_->setStyleSheet("color: #888; font-size: 12px;");
+
+    auto* mpegTsHintRow = new QHBoxLayout;
+    mpegTsHintRow->addWidget(new QLabel("浏览器打开:"));
+    mpegTsHintRow->addWidget(mpegTsHintLabel_);
+    auto* mpegTsCopyBtn = new QPushButton("复制", mpegTsGroup_);
+    mpegTsCopyBtn->setFixedWidth(48);
+    connect(mpegTsCopyBtn, &QPushButton::clicked, this, [this]{
+        QApplication::clipboard()->setText(mpegTsHintLabel_->text());
+    });
+    mpegTsHintRow->addWidget(mpegTsCopyBtn);
+    mpegTsHintRow->addStretch();
+    mpegTsLayout->addRow(mpegTsHintRow);
+
+    mpegTsLayout->addRow(new QLabel(
+        "<span style='color:#888;font-size:11px;'>"
+        "需将 mpegts.min.js 放到 exe 同目录（从 mpegts.js 官方发布包获取）"
+        "</span>"));
+
+    connect(mpegTsPortSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, lanIp](int p){
+        mpegTsHintLabel_->setText(QString("http://%1:%2/player.html").arg(lanIp).arg(p));
+    });
+
+    root->addWidget(mpegTsGroup_);
+
     // ---- 按钮 ----
     btnBox_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     btnBox_->button(QDialogButtonBox::Ok)->setText("开始推流");
@@ -147,6 +204,7 @@ void StreamConfigDialog::buildUi() {
     connect(srtGroup_,     &QGroupBox::toggled, this, &StreamConfigDialog::updateOkButton);
     connect(localGroup_,   &QGroupBox::toggled, this, &StreamConfigDialog::updateOkButton);
     connect(httpFlvGroup_, &QGroupBox::toggled, this, &StreamConfigDialog::updateOkButton);
+    connect(mpegTsGroup_,  &QGroupBox::toggled, this, &StreamConfigDialog::updateOkButton);
     connect(browseBtn_,  &QPushButton::clicked, this, &StreamConfigDialog::onBrowse);
     connect(btnBox_, &QDialogButtonBox::accepted, this, [this]{ saveSettings(); accept(); });
     connect(btnBox_, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -163,8 +221,9 @@ void StreamConfigDialog::onBrowse() {
 }
 
 void StreamConfigDialog::updateOkButton() {
-    bool any = rtmpGroup_->isChecked() || srtGroup_->isChecked()
-            || localGroup_->isChecked() || httpFlvGroup_->isChecked();
+    bool any = rtmpGroup_->isChecked()  || srtGroup_->isChecked()
+            || localGroup_->isChecked() || httpFlvGroup_->isChecked()
+            || mpegTsGroup_->isChecked();
     btnBox_->button(QDialogButtonBox::Ok)->setEnabled(any);
 }
 
@@ -178,6 +237,11 @@ void StreamConfigDialog::loadSettings() {
     localFileEdit_->setText(s.value("stream/localFile", "").toString());
     httpFlvGroup_->setChecked(s.value("stream/httpFlvEnabled", false).toBool());
     httpFlvPortSpin_->setValue(s.value("stream/httpFlvPort", 8080).toInt());
+    mpegTsGroup_->setChecked(s.value("stream/mpegTsEnabled", false).toBool());
+    mpegTsPortSpin_->setValue(s.value("stream/mpegTsPort", 8090).toInt());
+    mpegTsGopSpin_->setValue(s.value("stream/mpegTsGop", 0.5).toDouble());
+    int bitrateIdx = mpegTsBitrateCombo_->findData(s.value("stream/mpegTsBitrate", 2000000).toInt());
+    if (bitrateIdx >= 0) mpegTsBitrateCombo_->setCurrentIndex(bitrateIdx);
 }
 
 void StreamConfigDialog::saveSettings() {
@@ -190,6 +254,10 @@ void StreamConfigDialog::saveSettings() {
     s.setValue("stream/localFile",      localFileEdit_->text());
     s.setValue("stream/httpFlvEnabled", httpFlvGroup_->isChecked());
     s.setValue("stream/httpFlvPort",    httpFlvPortSpin_->value());
+    s.setValue("stream/mpegTsEnabled",  mpegTsGroup_->isChecked());
+    s.setValue("stream/mpegTsPort",     mpegTsPortSpin_->value());
+    s.setValue("stream/mpegTsGop",      mpegTsGopSpin_->value());
+    s.setValue("stream/mpegTsBitrate",  mpegTsBitrateCombo_->currentData().toInt());
 }
 
 QList<StreamDestination> StreamConfigDialog::destinations() const {
@@ -220,6 +288,15 @@ QList<StreamDestination> StreamConfigDialog::destinations() const {
         StreamDestination d;
         d.type = StreamDestination::HttpFlv;
         d.port = static_cast<quint16>(httpFlvPortSpin_->value());
+        list << d;
+    }
+    if (mpegTsGroup_->isChecked()) {
+        StreamDestination d;
+        d.type       = StreamDestination::HttpMpegTs;
+        d.port       = static_cast<quint16>(mpegTsPortSpin_->value());
+        d.gopSeconds = mpegTsGopSpin_->value();
+        d.bitrate    = mpegTsBitrateCombo_->currentData().toInt();
+        // fps 在 mainwindow 中根据实际视频帧率填充
         list << d;
     }
     return list;

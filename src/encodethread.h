@@ -23,6 +23,9 @@ public:
     void flush();
     AVCodecContext* codecContext() const { return codecCtx_; }
 
+    // init() 前调用：覆盖默认 GOP（默认=fps，即 1 秒一个关键帧）
+    void setGopSize(int g) { gopSize_ = g; }
+
     void setInputQueue(FrameQueue<AVFrame*>* q) { inputQueue_ = q; }
     void addOutputQueue(FrameQueue<AVPacket*>* q) { outputQueues_.push_back(q); }
     void clearOutputQueues() { outputQueues_.clear(); }
@@ -42,4 +45,5 @@ private:
     std::atomic<bool>       abort_{false};          // 停止标志
     bool                    hwEnc_       = false;   // 是否成功启用硬件编码
     int64_t                 ptsIdx_      = 0;       // 帧序号 PTS，init() 时重置
+    int                     gopSize_     = -1;      // -1 = 使用 fps（默认 1s），>0 = 指定帧数
 };

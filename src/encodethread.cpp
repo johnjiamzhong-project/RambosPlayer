@@ -83,7 +83,7 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
     codecCtx_->pix_fmt   = AV_PIX_FMT_YUV420P;
     codecCtx_->bit_rate  = bitrate;
     codecCtx_->max_b_frames = 0;  // 低延迟推流关 B 帧
-    codecCtx_->gop_size  = fps;   // 1 秒一个关键帧
+    codecCtx_->gop_size  = (gopSize_ > 0) ? gopSize_ : fps;   // 默认 1 秒一个关键帧
 
     // NVENC 特定优化
     if (hwEnc_) {

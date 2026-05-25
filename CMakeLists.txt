@@ -39,7 +39,11 @@ add_executable(RambosPlayer WIN32
     src/timeline.cpp
     src/exportworker.cpp
     src/httpflvserver.cpp
+    src/streamdecoder.cpp
+    src/streampipeline.cpp
+    src/mpegtsserver.cpp
 )
+
 
 target_include_directories(RambosPlayer PRIVATE
     ${FFMPEG_INCLUDE_DIRS}

@@ -8,6 +8,8 @@
 class QGroupBox;
 class QLineEdit;
 class QSpinBox;
+class QDoubleSpinBox;
+class QComboBox;
 class QPushButton;
 class QLabel;
 class QDialogButtonBox;
@@ -43,6 +45,12 @@ private:
     QGroupBox*       httpFlvGroup_;      // 局域网浏览器 (HTTP-FLV)
     QSpinBox*        httpFlvPortSpin_;
     QLabel*          httpFlvHintLabel_;  // 显示 http://IP:PORT/player.html
+
+    QGroupBox*       mpegTsGroup_;       // 低延迟浏览器 (HTTP-MPEG-TS)
+    QSpinBox*        mpegTsPortSpin_;
+    QDoubleSpinBox*  mpegTsGopSpin_;     // GOP 秒数
+    QComboBox*       mpegTsBitrateCombo_; // 视频码率
+    QLabel*          mpegTsHintLabel_;   // 显示 http://IP:PORT/player.html
 
     QDialogButtonBox* btnBox_;
 };

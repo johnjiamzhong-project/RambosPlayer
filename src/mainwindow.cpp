@@ -21,6 +21,7 @@
 #include <QCoreApplication>
 #include <QStatusBar>
 #include <QDebug>
+#include <algorithm>
 
 // 构造函数：setupUi 完成所有控件创建和布局，此处只做指针绑定、初始值和信号连接。
 // renderer_ 直接取 ui->videoWidget（promoted VideoRenderer），无需手动 setCentralWidget。
@@ -291,6 +292,11 @@ void MainWindow::reconnectStreaming() {
         srv->videoQueue()->reset();
         srv->audioQueue()->reset();
     }
+    // StreamPipeline 的输入队列同样需要 reset，保证 abort 标志清除
+    for (const auto& p : streamCtrl_->streamPipelines()) {
+        p->videoInputQueue()->reset();
+        p->audioInputQueue()->reset();
+    }
     streamCtrl_->setWaitingForStart(true);
     // 直接推 sentinel 到 restream 队列（重置 PTS + 触发关键帧门控），
     // 必须在 add* 之前，否则 DemuxThread 可能抢先推入帧，sentinel 被排到后面。
@@ -302,7 +308,11 @@ void MainWindow::reconnectStreaming() {
         streamCtrl_->videoMuxQueues()[i]->tryPush(nullptr);
         streamCtrl_->audioMuxQueues()[i]->tryPush(nullptr);
     }
-    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0;
+    for (const auto& p : streamCtrl_->streamPipelines()) {
+        p->videoInputQueue()->tryPush(nullptr);
+        p->audioInputQueue()->tryPush(nullptr);
+    }
+    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0, mpegTsIdx = 0;
     for (const auto& dest : activeDests_) {
         if (dest.type == StreamDestination::LocalFile) {
             player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
@@ -310,6 +320,10 @@ void MainWindow::reconnectStreaming() {
             auto* srv = streamCtrl_->httpFlvServers()[httpFlvIdx++].get();
             player_->addRestreamVideoPacketQueue(srv->videoQueue());
             player_->addRestreamAudioPacketQueue(srv->audioQueue());
+        } else if (dest.type == StreamDestination::HttpMpegTs) {
+            auto* p = streamCtrl_->streamPipelines()[mpegTsIdx++].get();
+            player_->addRestreamVideoPacketQueue(p->videoInputQueue());
+            player_->addRestreamAudioPacketQueue(p->audioInputQueue());
         } else {
             player_->addRestreamVideoPacketQueue(
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
@@ -544,10 +558,9 @@ void MainWindow::onExportFinished(bool ok) {
     ui->actionExport->setEnabled(true);
 }
 
-// 启动推流管线（-c copy 直通模式）：
-// 直接从 PlayerController 取源文件 AVCodecParameters，无需重编码。
-// MuxThread 启动后，将其输入队列注册到 DemuxThread 分叉列表，
-// DemuxThread 此后自动把每个原始 packet clone 一份推入推流队列。
+// 启动推流管线：
+// - 直通模式（RTMP/SRT/HTTP-FLV）：-c copy，无重编码
+// - 低延迟模式（HTTP-MPEG-TS）：StreamPipeline 解码→GPU 重编码，MpegTsServer 广播
 void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
     AVCodecParameters* vpar = player_->videoCodecPar();
     AVCodecParameters* apar = player_->audioCodecPar();
@@ -559,31 +572,48 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
         return;
     }
 
-    if (!streamCtrl_->start(dests, vpar, vtb, apar, atb)) {
+    // 为 HttpMpegTs 目标填充实际视频帧率
+    QList<StreamDestination> filledDests = dests;
+    int videoFps = player_->videoFps();
+    for (auto& d : filledDests) {
+        if (d.type == StreamDestination::HttpMpegTs)
+            d.fps = videoFps;
+    }
+
+    if (!streamCtrl_->start(filledDests, vpar, vtb, apar, atb)) {
         statusBar()->showMessage("推流启动失败，详见弹窗提示", 5000);
         return;
     }
 
-    activeDests_ = dests;  // 保存目标列表，暂停恢复时用于区分本地/远程
+    activeDests_ = filledDests;
 
-    // 直接推 sentinel 到 restream 队列（重置 PTS + 触发关键帧门控）
+    // 推 sentinel 到各类型的队列（重置 PTS + 触发关键帧门控）
     for (const auto& srv : streamCtrl_->httpFlvServers()) {
         srv->videoQueue()->tryPush(nullptr);
         srv->audioQueue()->tryPush(nullptr);
+    }
+    for (const auto& p : streamCtrl_->streamPipelines()) {
+        p->videoInputQueue()->tryPush(nullptr);
+        p->audioInputQueue()->tryPush(nullptr);
     }
     for (int i = 0; i < (int)streamCtrl_->videoMuxQueues().size(); ++i) {
         streamCtrl_->videoMuxQueues()[i]->tryPush(nullptr);
         streamCtrl_->audioMuxQueues()[i]->tryPush(nullptr);
     }
     // 根据目标类型分别注册到 DemuxThread
-    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0;
-    for (const auto& dest : dests) {
+    int localIdx = 0, remoteIdx = 0, httpFlvIdx = 0, mpegTsIdx = 0;
+    for (const auto& dest : filledDests) {
         if (dest.type == StreamDestination::LocalFile) {
             player_->addLocalRecorder(streamCtrl_->recorders()[localIdx++].get());
         } else if (dest.type == StreamDestination::HttpFlv) {
             auto* srv = streamCtrl_->httpFlvServers()[httpFlvIdx++].get();
             player_->addRestreamVideoPacketQueue(srv->videoQueue());
             player_->addRestreamAudioPacketQueue(srv->audioQueue());
+        } else if (dest.type == StreamDestination::HttpMpegTs) {
+            // MPEG-TS：DemuxThread → StreamPipeline 输入队列（管线内部解码+重编码）
+            auto* p = streamCtrl_->streamPipelines()[mpegTsIdx++].get();
+            player_->addRestreamVideoPacketQueue(p->videoInputQueue());
+            player_->addRestreamAudioPacketQueue(p->audioInputQueue());
         } else {
             player_->addRestreamVideoPacketQueue(
                 streamCtrl_->videoMuxQueues()[remoteIdx].get());
@@ -604,9 +634,18 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
             << "s (audioClock=" << player_->currentPositionSeconds() << ")";
 
     ui->actionStream->setText("停止推流");
+    bool hasMpegTs = std::any_of(filledDests.begin(), filledDests.end(),
+        [](const StreamDestination& d){ return d.type == StreamDestination::HttpMpegTs; });
+    QString modeStr = hasMpegTs ? "重编码+直通" : "直通";
     statusBar()->showMessage(
-        QString("推流中（直通）→ %1 路目标  %2x%3")
-            .arg(dests.size()).arg(vpar->width).arg(vpar->height), 0);
+        QString("推流中（%1）→ %2 路目标  %3x%4")
+            .arg(modeStr).arg(filledDests.size()).arg(vpar->width).arg(vpar->height), 0);
+
+    // URL 写入状态栏（服务器线程异步启动，约 200ms 内开始监听）
+    for (const auto& srv : streamCtrl_->mpegTsServers()) {
+        qInfo() << "MpegTsServer URL:" << srv->playerUrl()
+                << "| 本机: http://localhost:" + QString::number(srv->port()) + "/player.html";
+    }
 }
 
 // 毫秒转 "MM:SS" 字符串，用于时间标签显示。

@@ -1,7 +1,8 @@
 // StreamController：推流总控制器
 // 网络推流目标（RTMP/SRT）：创建 MuxThread + FrameQueue 对，DemuxThread tryPush 分叉。
 // 本地录制目标（LocalFile）：创建 LocalRecorder，DemuxThread 直接同步写 FLV。
-// HTTP-FLV 目标：创建 HttpFlvServer，内置 HTTP 服务，浏览器直接访问。
+// HTTP-FLV 目标：创建 HttpFlvServer，-c copy 直通，浏览器用 flv.js 播放。
+// HTTP-MPEG-TS 目标：创建 StreamPipeline + MpegTsServer，GPU 重编码，低延迟。
 #pragma once
 #include <QObject>
 #include <memory>
@@ -11,6 +12,8 @@
 #include "muxthread.h"
 #include "localrecorder.h"
 #include "httpflvserver.h"
+#include "streampipeline.h"
+#include "mpegtsserver.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -18,10 +21,13 @@ extern "C" {
 }
 
 struct StreamDestination {
-    enum Type { Rtmp, Srt, LocalFile, HttpFlv };
+    enum Type { Rtmp, Srt, LocalFile, HttpFlv, HttpMpegTs };
     Type    type;
-    QString url;   // RTMP: 完整 URL；SRT: "srt://:port"；LocalFile: 文件路径
-    quint16 port = 8080;  // HttpFlv 专用
+    QString url;         // RTMP: 完整 URL；SRT: "srt://:port"；LocalFile: 文件路径
+    quint16 port = 8080; // HttpFlv / HttpMpegTs 专用
+    int     fps  = 30;   // HttpMpegTs：目标帧率（用于 GOP 计算）
+    double  gopSeconds = 0.5; // HttpMpegTs：GOP 目标时长（秒）
+    int     bitrate = 2000000; // HttpMpegTs：视频码率
 };
 
 class StreamController : public QObject {
@@ -48,6 +54,10 @@ public:
     const std::vector<std::unique_ptr<MuxThread>>& muxThreads() const { return muxThreads_; }
     // HTTP-FLV 服务器（供 PlayerController 注册队列到 DemuxThread）
     const std::vector<std::unique_ptr<HttpFlvServer>>& httpFlvServers() const { return httpFlvServers_; }
+    // HTTP-MPEG-TS 管线（供 PlayerController 注册输入队列到 DemuxThread）
+    const std::vector<std::unique_ptr<StreamPipeline>>& streamPipelines() const { return streamPipelines_; }
+    // HTTP-MPEG-TS 服务器（供 MainWindow 读取播放 URL）
+    const std::vector<std::unique_ptr<MpegTsServer>>& mpegTsServers() const { return mpegTsServers_; }
 
     // MuxThread 侧控制（仅对网络推流生效）
     void setStreamStartSeconds(double sec);
@@ -65,5 +75,7 @@ private:
     std::vector<std::unique_ptr<FrameQueue<AVPacket*>>> audioMuxQueues_;   // 音频包队列（网络）
     std::vector<std::unique_ptr<LocalRecorder>>         recorders_;        // 本地录制器
     std::vector<std::unique_ptr<HttpFlvServer>>         httpFlvServers_;   // HTTP-FLV 服务器
+    std::vector<std::unique_ptr<StreamPipeline>>        streamPipelines_;  // HTTP-MPEG-TS 管线
+    std::vector<std::unique_ptr<MpegTsServer>>          mpegTsServers_;    // HTTP-MPEG-TS 服务器
     bool streaming_ = false;
 };
