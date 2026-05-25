@@ -10,6 +10,7 @@
 - 详细 TDD 计划：[docs/superpowers/plans/2026-04-26-rambos-player-core.md](docs/superpowers/plans/2026-04-26-rambos-player-core.md)
 - 架构流程图：[docs/架构流程图.html](docs/架构流程图.html)
 - 软解 vs 硬解对比：[docs/软解与硬解对比.html](docs/软解与硬解对比.html)
+- 低延迟推流方案：[docs/solutions/low-latency-streaming.md](docs/solutions/low-latency-streaming.md)（GPU 实时重编码 + mpegts.js 追帧）
 
 | 功能 | 状态 |
 |------|:----:|
@@ -19,6 +20,7 @@
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
 | 功能5 — 推流播放内容（音视频双流，RTMP/SRT/HTTP-FLV） | ✅ 完成 |
 | 功能6 — 视频剪辑器 | ✅ 完成 |
+| 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | 📋 设计中 |
 
 ---
 
@@ -90,15 +92,26 @@ VideoRenderer (QPainter)  ◄─── AVSync ◄─┘
 
 ### 推流管线
 
-推流在解复用层直接分叉压缩包（`-c copy` 直通模式），无需解码再编码，与播放管线完全并行互不影响。
+推流分两种模式，用户根据延迟需求选择：
+
+**直通模式**（`-c copy`，当前默认）：在解复用层直接分叉压缩包，无需解码再编码，CPU 开销极低。
+
+**低延迟模式**（计划中）：插入解码→GPU 重编码管线（`h264_nvenc`），强制小 GOP（0.5s），配合 mpegts.js 追帧，预期浏览器延迟 ≤ 600ms。详见 [低延迟推流方案](docs/solutions/low-latency-streaming.md)。
 
 ```
+直通模式 (-c copy):
 DemuxThread ──→ videoPacketQueue ──→ VideoDecodeThread ──→ VideoRenderer（播放）
             ──→ audioPacketQueue ──→ AudioDecodeThread ──→ QAudioOutput（播放）
             ↘ restreamVideoQ ──→ MuxThread[0]       → rtmp://...（RTMP/SRS）
             ↘ restreamAudioQ ──→ MuxThread[1]       → record.flv（本地录制）
             ↘ httpFlvVideoQ  ──→ HttpFlvServer → HTTP → 浏览器（局域网）
             ↘ httpFlvAudioQ  ──┘
+
+低延迟模式 (GPU re-encode, 计划中):
+DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP=0.5s) ──┐
+            ──→ StreamAudioDecoder ──→ AudioEncodeThread (AAC) ─────────────┤
+                                                                              ▼
+                                                          MpegTsServer → HTTP → mpegts.js
 ```
 
 | 推流协议 | 地址格式 | 适用场景 |
