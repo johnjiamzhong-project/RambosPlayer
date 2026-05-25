@@ -266,25 +266,26 @@ void HttpFlvServer::startStreaming(QTcpSocket* socket) {
         // 晚连路径：发编解码配置（无帧PTS）+ 当前GOP（最近关键帧起），不发旧时间戳帧
         socket->write(codecConfigHeader_);
         if (!currentGopBytes_.isEmpty()) socket->write(currentGopBytes_);
+        streamClients_.append(socket);
         qInfo() << "HttpFlvServer: client connected (late-join)"
-                << "total=" << streamClients_.size() + 1
+                << "total=" << streamClients_.size()
                 << "codecConfig=" << codecConfigHeader_.size() << "bytes"
                 << "gopBytes=" << currentGopBytes_.size() << "bytes"
                 << "audioFrames=" << audioFrameCount_
                 << "videoFrames=" << videoFrameCount_;
     } else {
-        // 早连路径：推流刚启动，直接发原始 flvHeader_（可能为空，后续靠广播接收）
-        if (!flvHeader_.isEmpty()) socket->write(flvHeader_);
-        qInfo() << "HttpFlvServer: client connected (early-join)"
-                << "total=" << streamClients_.size() + 1
-                << "header=" << flvHeader_.size() << "bytes";
+        // 早连路径：FLV 头未冻结，暂存等待，冻结后补发 codecConfig + GOP
+        pendingClients_.append(socket);
+        qInfo() << "HttpFlvServer: client pending (header not frozen)"
+                << "pending=" << pendingClients_.size()
+                << "flvHeader=" << flvHeader_.size() << "bytes";
     }
-    streamClients_.append(socket);
-    emit clientConnected(streamClients_.size());
+    emit clientConnected(streamClients_.size() + pendingClients_.size());
 }
 
 void HttpFlvServer::removeClient(QTcpSocket* socket) {
     streamClients_.removeOne(socket);
+    pendingClients_.removeOne(socket);
 }
 
 // 轮询队列，将 AVPacket 写入 FLV muxer（muxer 通过 writeCallback 广播）
@@ -359,7 +360,20 @@ void HttpFlvServer::processPackets() {
                         // 确保 flvHeader_ 包含 AVC 序列头 + I 帧 + AAC 序列头，两路时间戳对齐
                         if (!headerFrozen_ && !aStream_ && (pkt->flags & AV_PKT_FLAG_KEY)) {
                             headerFrozen_ = true;
-                            qInfo() << "HttpFlvServer: FLV header frozen (no audio) at first keyframe, size=" << flvHeader_.size();
+                            codecConfigHeader_ = buildCodecConfigHeader();
+                            currentGopBytes_   = extractInitialGopFrames();
+                            qInfo() << "HttpFlvServer: FLV header frozen (no audio) at first keyframe, size="
+                                    << flvHeader_.size()
+                                    << "codecConfig=" << codecConfigHeader_.size()
+                                    << "initialGop=" << currentGopBytes_.size();
+                            // 补发等待中的客户端
+                            for (auto* s : pendingClients_) {
+                                s->write(codecConfigHeader_);
+                                if (!currentGopBytes_.isEmpty()) s->write(currentGopBytes_);
+                                streamClients_.append(s);
+                            }
+                            qInfo() << "HttpFlvServer: flushed" << pendingClients_.size() << "pending clients";
+                            pendingClients_.clear();
                         }
                     }
                 }
@@ -438,12 +452,20 @@ void HttpFlvServer::processPackets() {
                                 headerFrozen_ = true;
                                 codecConfigHeader_ = buildCodecConfigHeader();
                                 currentGopBytes_   = extractInitialGopFrames();
+                                // 补发等待中的客户端
+                                for (auto* s : pendingClients_) {
+                                    s->write(codecConfigHeader_);
+                                    if (!currentGopBytes_.isEmpty()) s->write(currentGopBytes_);
+                                    streamClients_.append(s);
+                                }
                                 qInfo() << "HttpFlvServer: FLV header frozen after first audio+video, size="
                                         << flvHeader_.size()
                                         << "codecConfig=" << codecConfigHeader_.size()
                                         << "initialGop=" << currentGopBytes_.size()
                                         << "videoFrames=" << videoFrameCount_
-                                        << "audioPTS=" << apkt->pts;
+                                        << "audioPTS=" << apkt->pts
+                                        << "flushedPending=" << pendingClients_.size();
+                                pendingClients_.clear();
                             }
                             qInfo() << "HttpFlvServer: FIRST audio frame written"
                                     << "size=" << rawSize

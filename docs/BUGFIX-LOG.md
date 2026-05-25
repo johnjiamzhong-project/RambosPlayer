@@ -227,6 +227,20 @@
 
 ---
 
+## #026 — 预配置推流（先配推流后开文件）平板端 10 秒才有画面
+
+- **日期**：2026-05-25
+- **现象**：先配置 HTTP-FLV 推流、再打开视频文件，平板浏览器连接后白屏约 10 秒才出画面，日志显示首个关键帧 PTS=9.927
+- **根因**：`MainWindow::openFile()` 先调 `player_->play()` 启动 DemuxThread，再调 `startStreaming()` 注册推流队列。DemuxThread 在队列注册前已读完第一个关键帧（PTS≈0），推流通道只收到后续帧；`HttpFlvServer::needsKeyframe_` 门控丢弃所有非关键帧，必须等下一个 GOP 的关键帧（~10s）。同时平板早连时 `codecConfigHeader_` 为空，`startStreaming()` 发空 `flvHeader_` 后客户端无有效编解码配置，即使关键帧到达后广播数据也无法解码
+- **修复**：
+  1. `startStreaming()` 移到 `player_->play()` 之前，确保 DemuxThread 启动时推流队列已就位，首个关键帧即进入推流通道
+  2. `HttpFlvServer` 新增 `pendingClients_` 列表：早连客户端不发空数据，暂存等待；FLV 头冻结后补发 `codecConfigHeader_` + `currentGopBytes_` 再移入广播列表，保证客户端始终从合法起点开始解码
+  3. `removeClient()` 同步清理 `pendingClients_`，避免断连残留
+  4. 无音频流冻结路径补建 `codecConfigHeader_` / `currentGopBytes_`，与有音频流路径一致
+- **涉及文件**：`src/mainwindow.cpp`、`src/httpflvserver.h`、`src/httpflvserver.cpp`
+
+---
+
 ## #019 — MuxThread 视频 PTS 单调性检查误报 B 帧，掩盖真实 DTS 异常
 
 - **日期**：2026-05-20

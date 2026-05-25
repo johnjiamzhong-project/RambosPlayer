@@ -162,6 +162,13 @@ void MainWindow::openFile(const QString& path) {
         qInfo() << "MainWindow: opened" << path;
         currentFile_ = path;
         updateRecentFiles(path);
+        // 有预配置推流目标时，在 play() 前先注册推流队列，
+        // 确保 DemuxThread 启动后首个关键帧即进入推流通道，避免漏等整个 GOP
+        if (!pendingDests_.isEmpty()) {
+            startStreaming(pendingDests_);
+            pendingDests_.clear();
+        }
+
         player_->play();
 
         // 播放成功后，根据实际状态更新按钮（避免状态不同步）
@@ -169,12 +176,6 @@ void MainWindow::openFile(const QString& path) {
             ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
         } else {
             ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
-        }
-
-        // 有预配置推流目标时，文件打开后自动启动推流
-        if (!pendingDests_.isEmpty()) {
-            startStreaming(pendingDests_);
-            pendingDests_.clear();
         }
 
         // 剪辑模式下自动提取缩略图

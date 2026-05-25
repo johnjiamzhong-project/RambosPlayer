@@ -115,6 +115,7 @@ private:
 
     // HTTP 客户端
     QList<QTcpSocket*> streamClients_;   // 正在接收 FLV 流的客户端
+    QList<QTcpSocket*> pendingClients_;  // 等待 FLV 头冻结的客户端，冻结后补发 codecConfig + GOP
 
     quint16           port_  = 8080;
     std::atomic<bool> abort_{false};
