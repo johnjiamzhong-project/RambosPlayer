@@ -11,7 +11,6 @@
 #include "framequeue.h"
 
 class QTcpSocket;
-class QHostAddress;
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -30,6 +29,7 @@ public:
               FrameQueue<AVPacket*>* vq, FrameQueue<AVPacket*>* aq,
               AVCodecContext* vCodecCtx, AVCodecContext* aCodecCtx);
     void stop();
+    void requestClientReconnect();
 
     QString playerUrl() const;  // http://LAN_IP:PORT/player.html
     quint16 port() const { return port_; }
@@ -51,7 +51,7 @@ private:
     void startStreaming(QTcpSocket* socket);
     void removeClient(QTcpSocket* socket);
     void disconnectAllStreamClients(const QString& reason);
-    void disconnectClientsFromPeer(const QHostAddress& peer, QTcpSocket* exceptSocket);
+    void flushPendingClients(const QString& reason);
 
     // MPEG-TS muxer
     bool initMuxer();
@@ -100,5 +100,6 @@ private:
     QList<QTcpSocket*> pendingClients_;  // 等待首个关键帧的客户端
 
     quint16           port_  = 8080;
+    std::atomic<bool> reconnectClientsRequested_{false}; // 外部请求浏览器重连，由服务线程执行断开
     std::atomic<bool> abort_{false};
 };

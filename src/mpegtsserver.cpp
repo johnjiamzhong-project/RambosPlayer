@@ -73,6 +73,10 @@ void MpegTsServer::stop() {
     quit();
 }
 
+void MpegTsServer::requestClientReconnect() {
+    reconnectClientsRequested_.store(true, std::memory_order_relaxed);
+}
+
 // 在 run() 中初始化 avio（自定义写回调），再调 avformat_write_header 写出 PAT/PMT
 bool MpegTsServer::initMuxer() {
     const int BUF = 65536;
@@ -85,8 +89,8 @@ bool MpegTsServer::initMuxer() {
     fmtCtx_->pb    = avio;
     fmtCtx_->flags |= AVFMT_FLAG_CUSTOM_IO;
 
-    // PAT/PMT 每 0.5s 重发一次（与 GOP 对齐），保证 segmentBytes_ 开头含 PAT/PMT
-    av_opt_set(fmtCtx_->priv_data, "mpegts_flags", "pat_period=0.5", 0);
+    // PAT/PMT 周期性重发，确保晚连客户端能从流中自然解析到节目信息
+    av_opt_set(fmtCtx_->priv_data, "mpegts_flags", "resend_headers=1", 0);
 
     if (avformat_write_header(fmtCtx_, nullptr) < 0) {
         qWarning() << "MpegTsServer: avformat_write_header failed";
@@ -151,6 +155,8 @@ void MpegTsServer::broadcastData(const QByteArray& data) {
                 it.remove();
             }
         } else {
+            qInfo() << "MpegTsServer: client disconnected silently, removing from broadcast list"
+                    << "remaining=" << (streamClients_.size() - 1);
             it.remove();
         }
     }
@@ -210,6 +216,21 @@ void MpegTsServer::handleRequest(QTcpSocket* socket, const QByteArray& request) 
         serveMpegtsJs(socket);
     } else if (path == "/stream.ts") {
         startStreaming(socket);
+    } else if (path == "/status") {
+        QString json = QString("{\"streamClients\":%1,\"pendingClients\":%2,"
+                               "\"headerFrozen\":%3,\"needsKeyframe\":%4,"
+                               "\"headerBytes\":%5,\"segmentBytes\":%6}")
+            .arg(streamClients_.size())
+            .arg(pendingClients_.size())
+            .arg(headerFrozen_ ? "true" : "false")
+            .arg(needsKeyframe_ ? "true" : "false")
+            .arg(headerBytes_.size())
+            .arg(segmentBytes_.size());
+        QByteArray body = json.toUtf8();
+        socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                      "Cache-Control: no-cache\r\n"
+                      "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+        socket->disconnectFromHost();
     } else {
         qWarning() << "MpegTsServer: 404 path=" << path;
         socket->write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
@@ -252,26 +273,27 @@ void MpegTsServer::serveMpegtsJs(QTcpSocket* socket) {
 
 // 将客户端加入推流列表，后续只接收实时广播数据。
 void MpegTsServer::startStreaming(QTcpSocket* socket) {
-    disconnectClientsFromPeer(socket->peerAddress(), socket);
-    socket->write("HTTP/1.1 200 OK\r\n"
-                  "Content-Type: video/mp2t\r\n"
-                  "Cache-Control: no-cache\r\n"
-                  "Access-Control-Allow-Origin: *\r\n"
-                  "Connection: keep-alive\r\n"
-                  "\r\n");
     if (headerFrozen_ && !needsKeyframe_) {
-        // 不预发 headerBytes_/segmentBytes_。headerBytes_ 可能包含首帧附近的 TS 数据，
-        // seek 后晚连若收到它，会偶发看到文件开头画面。mpegts muxer 会周期性重发
-        // PAT/PMT，客户端从实时广播自然起播。
+        // 晚连：发送 HTTP 响应头 + 当前画面组数据。
+        // resend_headers 已把 PAT/PMT 周期性写入 segmentBytes_，无需 headerBytes_（含旧音频 PTS 跳变会破坏 mpegts.js 解码）
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: video/mp2t\r\n"
+                      "Cache-Control: no-cache\r\n"
+                      "Access-Control-Allow-Origin: *\r\n"
+                      "Connection: keep-alive\r\n"
+                      "\r\n");
+        if (!segmentBytes_.isEmpty()) socket->write(segmentBytes_);
         streamClients_.append(socket);
         qInfo() << "MpegTsServer: client connected (late-join)"
                 << "total=" << streamClients_.size()
-                << "headerSkipped=" << headerBytes_.size() << "bytes"
-                << "segmentSkipped=" << segmentBytes_.size() << "bytes";
+                << "segment=" << segmentBytes_.size()
+                << "headerSkipped=" << headerBytes_.size();
     } else {
-        // 早连或 seek 后关键帧未到：先挂起，避免在新关键帧前接入旧段尾部数据。
+        // 早连或 seek 后关键帧未到：暂不发送 HTTP 响应头，等关键帧到达
+        // flush 时统一发送，避免浏览器在无数据期间超时触发重连
         pendingClients_.append(socket);
-        qInfo() << "MpegTsServer: client pending (no keyframe yet)"
+        QString reconnectCause = needsKeyframe_ ? "seek" : "early-connect";
+        qInfo() << "MpegTsServer: client pending (deferred HTTP, cause=" << reconnectCause << ")"
                 << "pending=" << pendingClients_.size();
     }
     emit clientConnected(streamClients_.size() + pendingClients_.size());
@@ -303,34 +325,37 @@ void MpegTsServer::disconnectAllStreamClients(const QString& reason) {
     emit clientDisconnected(0);
 }
 
-// 同一浏览器重连 /stream.ts 时替换旧连接，避免旧 socket 留在广播列表中持续积压数据。
-void MpegTsServer::disconnectClientsFromPeer(const QHostAddress& peer, QTcpSocket* exceptSocket) {
-    QList<QTcpSocket*> staleSockets;
-    auto disconnectMatching = [&](QList<QTcpSocket*>& clients) {
-        for (QTcpSocket* s : clients) {
-            if (!s || s == exceptSocket) continue;
-            if (s->peerAddress() == peer) staleSockets.append(s);
-        }
-    };
-    disconnectMatching(streamClients_);
-    disconnectMatching(pendingClients_);
+void MpegTsServer::flushPendingClients(const QString& reason) {
+    if (pendingClients_.isEmpty() || !headerFrozen_ || needsKeyframe_)
+        return;
 
-    for (QTcpSocket* s : staleSockets) {
-        streamClients_.removeOne(s);
-        pendingClients_.removeOne(s);
+    QByteArray httpHdr("HTTP/1.1 200 OK\r\n"
+                       "Content-Type: video/mp2t\r\n"
+                       "Cache-Control: no-cache\r\n"
+                       "Access-Control-Allow-Origin: *\r\n"
+                       "Connection: keep-alive\r\n"
+                       "\r\n");
+    for (auto* s : pendingClients_) {
+        if (!s || s->state() != QAbstractSocket::ConnectedState)
+            continue;
+        s->write(httpHdr);
+        // resend_headers 把 PAT/PMT 写入 segmentBytes_，无需 headerBytes_（含旧音频数据会破坏 PTS 连续性）
+        if (!segmentBytes_.isEmpty()) s->write(segmentBytes_);
+        streamClients_.append(s);
     }
-    for (QTcpSocket* s : staleSockets) {
-        qInfo() << "MpegTsServer: replacing old stream client from"
-                << peer.toString();
-        s->disconnectFromHost();
-    }
-    if (!staleSockets.isEmpty())
-        emit clientDisconnected(streamClients_.size() + pendingClients_.size());
+    qInfo() << "MpegTsServer: flushed" << pendingClients_.size()
+            << "pending clients," << reason
+            << "segment=" << segmentBytes_.size();
+    pendingClients_.clear();
+    emit clientConnected(streamClients_.size());
 }
 
 // 轮询包队列，写入 MPEG-TS muxer（muxer 通过 writeCallback 广播）
 void MpegTsServer::processPackets() {
     if (abort_) { quit(); return; }
+    if (reconnectClientsRequested_.exchange(false, std::memory_order_relaxed)) {
+        disconnectAllStreamClients("external reconnect request");
+    }
 
     for (int i = 0; i < 8; ++i) {
         AVPacket* pkt = nullptr;
@@ -391,16 +416,8 @@ void MpegTsServer::processPackets() {
                             headerFrozen_ = true;
                             newSegmentStarting_ = true;
                             segmentBytes_.clear(); // 清掉 seek 前残留的旧数据
-                            // 立即接入等待中的早连客户端，只接收后续实时广播。
-                            if (!pendingClients_.isEmpty()) {
-                                for (auto* s : pendingClients_) {
-                                    streamClients_.append(s);
-                                }
-                                qInfo() << "MpegTsServer: flushed" << pendingClients_.size()
-                                        << "pending clients (live only, headerSkipped="
-                                        << headerBytes_.size() << "bytes)";
-                                pendingClients_.clear();
-                            }
+                            // 立即接入等待中的早连客户端，发送 HTTP 响应 + PAT/PMT + 画面组数据
+                            flushPendingClients("first keyframe");
                         }
                         if (pkt->flags & AV_PKT_FLAG_KEY)
                             qInfo() << "MpegTsServer: keyframe written, segmentBytes_="
@@ -411,15 +428,8 @@ void MpegTsServer::processPackets() {
                         av_strerror(ret, errbuf, sizeof(errbuf));
                         qWarning() << "MpegTsServer: video write error:" << errbuf;
                     }
-                    // 后续关键帧冻结后补发 pending 客户端
-                    if (headerFrozen_ && !pendingClients_.isEmpty() && !newSegmentStarting_) {
-                        for (auto* s : pendingClients_) {
-                            streamClients_.append(s);
-                        }
-                        qInfo() << "MpegTsServer: flushed" << pendingClients_.size()
-                                << "pending clients (live only)";
-                        pendingClients_.clear();
-                    }
+                    // 后续关键帧冻结后补发 pending 客户端，发送 HTTP 响应 + PAT/PMT + 画面组数据
+                    flushPendingClients("live keyframe");
                 }
                 av_packet_free(&pkt);
             }
@@ -537,7 +547,7 @@ var player=null,retryTimer=null,prevTime=-1,stallCount=0;
 function setMsg(t){msg.textContent=t;}
 function clearVideo(){try{v.pause();v.removeAttribute('src');v.load();}catch(e){}}
 function destroy(){if(player){try{player.unload();player.detachMediaElement();player.destroy();}catch(e){}player=null;}clearVideo();}
-function reconnect(t,ms){if(retryTimer)return;setMsg(t);destroy();retryTimer=setTimeout(function(){retryTimer=null;connect();},ms);}
+function reconnect(t,ms){setMsg(t);destroy();clearTimeout(retryTimer);retryTimer=setTimeout(function(){retryTimer=null;connect();},ms);}
 function doUnmute(){v.muted=false;v.volume=1;unmuteBtn.style.display='none';}
 function connect(){
   destroy();clearTimeout(retryTimer);retryTimer=null;
@@ -563,10 +573,10 @@ function connect(){
   }).catch(function(){});
   setMsg('低延迟直播中（MPEG-TS）');
 }
-v.addEventListener('ended',function(){reconnect('流结束，重连...',800);});
+v.addEventListener('ended',function(){console.log('[MpegTs] ended event');reconnect('快进中，重连...',800);});
 setInterval(function(){
   if(v.paused)return;
-  if(v.ended){reconnect('流结束，重连...',800);return;}
+  if(v.ended){console.log('[MpegTs] ended detected in interval');reconnect('快进中，重连...',800);return;}
   if(v.currentTime===prevTime){if(++stallCount>=2){reconnect('画面卡住，重连...',300);stallCount=0;}}
   else{stallCount=0;}
   prevTime=v.currentTime;

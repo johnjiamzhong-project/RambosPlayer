@@ -63,6 +63,7 @@ public:
     void setStreamStartSeconds(double sec);
     void setStreamStopDuration(double durationSec);
     void setWaitingForStart(bool v);
+    void requestMpegTsClientReconnect();
 
 signals:
     void streamingStarted();

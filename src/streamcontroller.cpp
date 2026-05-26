@@ -122,6 +122,11 @@ void StreamController::setWaitingForStart(bool v) {
     for (auto& mux : muxThreads_) mux->setWaitingForStart(v);
 }
 
+void StreamController::requestMpegTsClientReconnect() {
+    for (auto& srv : mpegTsServers_)
+        srv->requestClientReconnect();
+}
+
 // 透传截止时长：MuxThread 用 stopDuration，LocalRecorder 也设置
 void StreamController::setStreamStopDuration(double durationSec) {
     qInfo() << "StreamController: setStreamStopDuration" << durationSec << "s";
