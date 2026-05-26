@@ -43,4 +43,7 @@ private:
     int64_t                             nextPts_      = 0;       // 编码帧序号，用于生成 PTS
     int                                 sampleRate_   = 44100;   // 编码采样率
     int                                 channels_     = 2;       // 编码声道数
+    int                                 bitrate_      = 128000;  // 编码码率，重建编码器时复用
+
+    bool reopenCodec();                                         // seek 后重建 AAC 编码器（~2048 samples lookahead 无法 flush）
 };

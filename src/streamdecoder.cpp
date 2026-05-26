@@ -53,9 +53,16 @@ void StreamDecoder::run() {
         if (!inputQueue_->tryPop(pkt, 20)) continue;
 
         if (!pkt) {
-            // sentinel：flush 解码器缓冲，丢弃残留帧，准备接收新位置的包
+            // sentinel（seek）：flush 解码器缓冲，向下游传播 nullptr 触发 EncodeThread flush
+            qInfo() << "StreamDecoder: seek sentinel received, flushing codec buffers";
             avcodec_flush_buffers(codecCtx_);
-            if (outputQueue_) outputQueue_->clear();
+            if (outputQueue_) {
+                outputQueue_->clear();
+                bool ok = outputQueue_->tryPush(nullptr);
+                qInfo() << "StreamDecoder: nullptr pushed downstream ok=" << ok;
+            } else {
+                qWarning() << "StreamDecoder: no outputQueue, sentinel not propagated";
+            }
             continue;
         }
 

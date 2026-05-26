@@ -40,6 +40,7 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
                               width, height, AV_PIX_FMT_RGB32,
                               SWS_BILINEAR, nullptr, nullptr, nullptr);
     currentFrame_ = QImage(width, height, QImage::Format_RGB32);
+    currentFrame_.fill(Qt::black);
 }
 
 // 启动/停止 1ms 定时器，控制帧拉取循环的运行状态。

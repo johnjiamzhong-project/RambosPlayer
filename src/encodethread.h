@@ -37,6 +37,8 @@ protected:
     void run() override;
 
 private:
+    bool reopenCodec(); // seek 后重建编码器（libx264 不支持 avcodec_flush_buffers 复位）
+
     AVCodecContext*         codecCtx_    = nullptr; // 编码器上下文
     FrameQueue<AVFrame*>*                inputQueue_   = nullptr; // 输入：原始帧队列
     std::vector<FrameQueue<AVPacket*>*>  outputQueues_;           // 输出：fan-out 目标队列列表
@@ -46,4 +48,9 @@ private:
     bool                    hwEnc_       = false;   // 是否成功启用硬件编码
     int64_t                 ptsIdx_      = 0;       // 帧序号 PTS，init() 时重置
     int                     gopSize_     = -1;      // -1 = 使用 fps（默认 1s），>0 = 指定帧数
+    bool                    firstFrameAfterSentinel_ = false; // sentinel 后等待第一帧日志
+    int                     width_       = 0;       // 编码分辨率，init() 保存供 reopenCodec() 使用
+    int                     height_      = 0;
+    int                     fps_         = 0;       // 帧率
+    int                     bitrate_     = 0;       // 码率
 };

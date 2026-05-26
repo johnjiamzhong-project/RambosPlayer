@@ -276,21 +276,22 @@ void MpegTsServer::processPackets() {
                 videoAccumPts_ = videoLastOut_ + oneUnit;
                 videoSegBase_  = AV_NOPTS_VALUE;
                 needsKeyframe_ = true;
-                qInfo() << "MpegTsServer: video sentinel, accumPts=" << videoAccumPts_;
-                // seek 后强制断开所有客户端，让浏览器重连拿新位置的 segmentBytes_
-                // 避免旧缓冲与新帧混在 MSE buffer 里造成 5 秒以上的时延堆积
-                if (!streamClients_.isEmpty()) {
-                    for (QTcpSocket* s : streamClients_) s->disconnectFromHost();
-                    streamClients_.clear();
-                    emit clientDisconnected(0);
-                }
+                qInfo() << "MpegTsServer: video sentinel received, accumPts=" << videoAccumPts_
+                        << "streamClients=" << streamClients_.size();
+                // seek 后不再断开客户端：PTS remap 已保证编码器重建后的流连续性，
+                // mpegts.js 可自行处理 TS 流中的 PTS 跳变，断开重连反而导致静态
+                // segment 快照无法过渡到实时广播数据。
+                qInfo() << "MpegTsServer: keeping" << streamClients_.size()
+                        << "client(s) connected after seek, broadcast continues";
             } else {
                 if (needsKeyframe_ && !(pkt->flags & AV_PKT_FLAG_KEY)) {
                     av_packet_free(&pkt); continue;
                 }
                 if (needsKeyframe_) {
                     needsKeyframe_ = false;
-                    qInfo() << "MpegTsServer: first keyframe after sentinel";
+                    qInfo() << "MpegTsServer: first keyframe after sentinel"
+                            << "streamClients=" << streamClients_.size()
+                            << "pendingClients=" << pendingClients_.size();
                 }
                 if (videoSegBase_ == AV_NOPTS_VALUE) {
                     videoSegBase_ = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
@@ -302,21 +303,43 @@ void MpegTsServer::processPackets() {
                 if (pkt->pts != AV_NOPTS_VALUE) videoLastOut_ = pkt->pts;
 
                 if (vStream_) {
-                    // 关键帧：通知 writeCallback 重置 segmentBytes_；冻结后补发 pending 客户端
+                    // 关键帧：首个关键帧不在此处冻结 headerBytes_，
+                    // 推迟到 av_write_frame + avio_flush 之后。
+                    // 若提前设置 headerFrozen_=true，muxer 在写首个视频帧时
+                    // 连带生成的 PAT/PMT 会落入 segmentBytes_，导致
+                    // headerBytes_ 永远为 0，所有晚连客户端收不到初始 PAT/PMT。
                     if (pkt->flags & AV_PKT_FLAG_KEY) {
                         if (headerFrozen_) {
-                            newSegmentStarting_ = true;
-                        } else {
-                            // 首个关键帧：冻结 headerBytes_，开始收集 segmentBytes_
-                            headerFrozen_ = true;
                             newSegmentStarting_ = true;
                         }
                     }
                     pkt->stream_index = vStream_->index;
                     av_packet_rescale_ts(pkt, videoTb_, vStream_->time_base);
                     int ret = av_write_frame(fmtCtx_, pkt);
+                    // flush muxer 内部 BSF 缓冲 — 只在关键帧后执行，
+                    // 既保证数据被及时写出，又避免每帧都干扰 muxer 时序
+                    if (pkt->flags & AV_PKT_FLAG_KEY) {
+                        av_write_frame(fmtCtx_, nullptr);
+                    }
                     if (ret >= 0) {
                         avio_flush(fmtCtx_->pb);
+                        // 首个关键帧写完后冻结 headerBytes_，后续数据写入 segmentBytes_
+                        if (!headerFrozen_ && (pkt->flags & AV_PKT_FLAG_KEY)) {
+                            headerFrozen_ = true;
+                            newSegmentStarting_ = true;
+                            segmentBytes_.clear(); // 清掉 seek 前残留的旧数据
+                            // 立即补发等待中的早连客户端（headerBytes_ 已含 PAT/PMT）
+                            if (!pendingClients_.isEmpty()) {
+                                for (auto* s : pendingClients_) {
+                                    if (!headerBytes_.isEmpty()) s->write(headerBytes_);
+                                    streamClients_.append(s);
+                                }
+                                qInfo() << "MpegTsServer: flushed" << pendingClients_.size()
+                                        << "pending clients (first keyframe, header="
+                                        << headerBytes_.size() << "bytes)";
+                                pendingClients_.clear();
+                            }
+                        }
                         if (pkt->flags & AV_PKT_FLAG_KEY)
                             qInfo() << "MpegTsServer: keyframe written, segmentBytes_="
                                     << segmentBytes_.size() << "headerBytes_=" << headerBytes_.size();
@@ -326,7 +349,7 @@ void MpegTsServer::processPackets() {
                         av_strerror(ret, errbuf, sizeof(errbuf));
                         qWarning() << "MpegTsServer: video write error:" << errbuf;
                     }
-                    // 关键帧冻结后补发 pending 客户端
+                    // 后续关键帧冻结后补发 pending 客户端
                     if (headerFrozen_ && !pendingClients_.isEmpty() && !newSegmentStarting_) {
                         for (auto* s : pendingClients_) {
                             if (!headerBytes_.isEmpty()) s->write(headerBytes_);
@@ -477,8 +500,10 @@ function connect(){
   }).catch(function(){});
   setMsg('低延迟直播中（MPEG-TS）');
 }
+v.addEventListener('ended',function(){setMsg('流结束，重连...');retryTimer=setTimeout(connect,1500);});
 setInterval(function(){
-  if(v.paused||v.ended)return;
+  if(v.paused)return;
+  if(v.ended){setMsg('流结束，重连...');connect();return;}
   if(v.currentTime===prevTime){if(++stallCount>=2){setMsg('画面卡住，重连...');connect();stallCount=0;}}
   else{stallCount=0;}
   prevTime=v.currentTime;

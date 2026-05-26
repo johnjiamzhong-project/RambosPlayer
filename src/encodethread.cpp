@@ -24,6 +24,7 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
 
     abort_.store(false, std::memory_order_relaxed);
     ptsIdx_ = 0;
+    width_ = width; height_ = height; fps_ = fps; bitrate_ = bitrate;
 
     const AVCodec* codec = nullptr;
 
@@ -109,6 +110,55 @@ bool EncodeThread::init(int width, int height, int fps, int bitrate) {
     return true;
 }
 
+// seek 后重建编码器：libx264 调用 avcodec_flush_buffers 会进入 EOS/drain 模式，
+// 之后所有 avcodec_send_frame 返回错误。必须销毁并重建编码器上下文。
+bool EncodeThread::reopenCodec() {
+    avcodec_free_context(&codecCtx_);
+    if (swsCtx_)   { sws_freeContext(swsCtx_);  swsCtx_   = nullptr; }
+    if (swsFrame_) { av_frame_free(&swsFrame_);  swsFrame_ = nullptr; }
+
+    const AVCodec* codec = nullptr;
+    if (hwEnc_) codec = avcodec_find_encoder_by_name("h264_nvenc");
+    if (!codec)  codec = avcodec_find_encoder_by_name("libx264");
+    if (!codec)  codec = avcodec_find_encoder_by_name("libopenh264");
+    if (!codec)  codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if (!codec) {
+        qWarning() << "EncodeThread::reopenCodec: no H.264 encoder";
+        return false;
+    }
+
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_) return false;
+
+    codecCtx_->width     = width_;
+    codecCtx_->height    = height_;
+    codecCtx_->time_base = {1, fps_};
+    codecCtx_->framerate = {fps_, 1};
+    codecCtx_->pix_fmt   = AV_PIX_FMT_YUV420P;
+    codecCtx_->bit_rate  = bitrate_;
+    codecCtx_->max_b_frames = 0;
+    codecCtx_->gop_size  = (gopSize_ > 0) ? gopSize_ : fps_;
+    codecCtx_->flags    |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+    if (hwEnc_) {
+        av_opt_set(codecCtx_->priv_data, "preset",      "p4",  0);
+        av_opt_set(codecCtx_->priv_data, "tune",        "ll",  0);
+        av_opt_set(codecCtx_->priv_data, "zerolatency", "1",   0);
+        av_opt_set(codecCtx_->priv_data, "rc",          "cbr", 0);
+    } else {
+        av_opt_set(codecCtx_->priv_data, "preset", "ultrafast",   0);
+        av_opt_set(codecCtx_->priv_data, "tune",   "zerolatency", 0);
+    }
+
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
+        qWarning() << "EncodeThread::reopenCodec: avcodec_open2 failed";
+        avcodec_free_context(&codecCtx_);
+        return false;
+    }
+    qInfo() << "EncodeThread::reopenCodec ok codec =" << codec->name;
+    return true;
+}
+
 // 设置停止标志并 abort 两侧队列
 void EncodeThread::stop() {
     abort_ = true;
@@ -139,6 +189,25 @@ void EncodeThread::run() {
     while (!abort_.load(std::memory_order_relaxed)) {
         if (!inputQueue_->tryPop(frame, 20)) continue;
 
+        if (!frame) {
+            // sentinel（seek）：只在已有帧时 flush（ptsIdx_>0），避免对刚初始化的编码器 flush 导致状态异常
+            qInfo() << "EncodeThread: seek sentinel received ptsIdx_=" << ptsIdx_
+                    << "outputQueues=" << outputQueues_.size();
+            if (ptsIdx_ > 0) reopenCodec();
+            ptsIdx_ = 0;
+            firstFrameAfterSentinel_ = true;
+            for (auto* q : outputQueues_) { q->clear(); q->tryPush(nullptr); }
+            qInfo() << "EncodeThread: nullptr pushed to" << outputQueues_.size() << "output queues";
+            continue;
+        }
+
+        if (firstFrameAfterSentinel_) {
+            qInfo() << "EncodeThread: first frame after sentinel pts=" << frame->pts
+                    << "format=" << frame->format
+                    << "size=" << frame->width << "x" << frame->height;
+            firstFrameAfterSentinel_ = false;
+        }
+
         frame->pts = ptsIdx_++;
 
         // gdigrab 输出 bgr0/bgra，libx264 要求 yuv420p，按需做像素格式转换
@@ -165,7 +234,10 @@ void EncodeThread::run() {
             encodeFrame = swsFrame_;
         }
 
-        if (avcodec_send_frame(codecCtx_, encodeFrame) < 0) {
+        int sendRet = avcodec_send_frame(codecCtx_, encodeFrame);
+        if (sendRet < 0) {
+            qWarning() << "EncodeThread: avcodec_send_frame failed ret=" << sendRet
+                       << "pts=" << encodeFrame->pts;
             av_frame_free(&frame); continue;
         }
         av_frame_free(&frame);
@@ -173,6 +245,12 @@ void EncodeThread::run() {
         // 收已编码的包，fan-out clone 到每路 MuxThread 输入队列
         AVPacket* pkt = av_packet_alloc();
         while (avcodec_receive_packet(codecCtx_, pkt) == 0) {
+            if (ptsIdx_ <= 2) {  // 只打印 sentinel 后前两帧的包，验证编码器状态
+                qInfo() << "EncodeThread: pkt produced ptsIdx_=" << ptsIdx_
+                        << "pkt.pts=" << pkt->pts
+                        << "flags=" << pkt->flags
+                        << "size=" << pkt->size;
+            }
             for (auto* q : outputQueues_) {
                 AVPacket* copy = av_packet_clone(pkt);
                 q->push(copy);

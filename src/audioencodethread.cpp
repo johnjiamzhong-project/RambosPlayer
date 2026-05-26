@@ -26,6 +26,7 @@ bool AudioEncodeThread::init(int sampleRate, int channels, int bitrate) {
     nextPts_    = 0;
     sampleRate_ = sampleRate;
     channels_   = channels;
+    bitrate_    = bitrate;
 
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
     if (!codec) { qWarning() << "AudioEncodeThread: AAC encoder not found"; return false; }
@@ -57,6 +58,35 @@ bool AudioEncodeThread::init(int sampleRate, int channels, int bitrate) {
     return true;
 }
 
+// seek 后重建 AAC 编码器：FFmpeg 原生 AAC 编码器有 ~2048 samples 内部 lookahead，
+// avcodec_flush_buffers 无法可靠清除，旧缓存帧的 PTS 会污染 MpegTsServer 的 audioSegBase_。
+// 只能通过重建编码器上下文来保证干净状态（与 EncodeThread 处理 libx264 的方式一致）。
+bool AudioEncodeThread::reopenCodec() {
+    avcodec_free_context(&codecCtx_);
+    codecCtx_ = nullptr;
+
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    if (!codec) { qWarning() << "AudioEncodeThread::reopenCodec: AAC encoder not found"; return false; }
+
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_) return false;
+
+    codecCtx_->sample_fmt  = AV_SAMPLE_FMT_FLTP;
+    codecCtx_->sample_rate = sampleRate_;
+    codecCtx_->bit_rate    = bitrate_;
+    codecCtx_->time_base   = {1, sampleRate_};
+    av_channel_layout_default(&codecCtx_->ch_layout, channels_);
+    codecCtx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
+        qWarning() << "AudioEncodeThread::reopenCodec: avcodec_open2 failed";
+        avcodec_free_context(&codecCtx_);
+        return false;
+    }
+    qInfo() << "AudioEncodeThread::reopenCodec ok";
+    return true;
+}
+
 // 设置停止标志并 abort 所有关联队列
 void AudioEncodeThread::stop() {
     abort_ = true;
@@ -85,6 +115,27 @@ void AudioEncodeThread::run() {
 
     while (!abort_) {
         if (!inputQueue_->tryPop(frame, 20)) continue;
+
+        if (!frame) {
+            // sentinel（seek）：重置 swr/fifo 状态，向下游传播 nullptr
+            qInfo() << "AudioEncodeThread: seek sentinel received (outputQueues=" << outputQueues_.size() << ")";
+            if (swrCtx_) { swr_free(&swrCtx_); swrCtx_ = nullptr; }
+            if (fifo_)   av_audio_fifo_drain(fifo_, av_audio_fifo_size(fifo_));
+            // AAC 编码器有 ~2048 samples 的内部 lookahead 缓冲，seek 后旧缓
+            // 存帧会先于新帧输出，PTS 污染 MpegTsServer::audioSegBase_ 导致新帧
+            // remap 后 PTS 变为负数。avcodec_flush_buffers 无法可靠清除 AAC
+            // 编码器的 lookahead，必须重建编码器（与 EncodeThread 处理方式一致）。
+            if (nextPts_ > 0 && !reopenCodec()) {
+                qWarning() << "AudioEncodeThread: reopenCodec failed, aborting";
+                abort_ = true;
+                for (auto* q : outputQueues_) q->abort();
+                continue;
+            }
+            nextPts_ = 0;
+            for (auto* q : outputQueues_) { q->clear(); q->tryPush(nullptr); }
+            qInfo() << "AudioEncodeThread: nullptr pushed to" << outputQueues_.size() << "output queues";
+            continue;
+        }
 
         // SwrContext 懒初始化：首帧到来时才知道输入格式
         if (!swrCtx_) {
