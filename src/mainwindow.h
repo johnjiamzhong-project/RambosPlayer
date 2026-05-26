@@ -54,6 +54,7 @@ private:
     void rebuildRecentMenu();                                       // 用 QSettings 重建最近文件菜单条目
     void startStreaming(const QList<StreamDestination>& dests);     // 启动推流管线（需文件已打开）
     void reconnectStreaming();                                       // 恢复播放时重新接入推流
+    void prepareMpegTsSeek(double seconds);                          // 通知低延迟推流丢弃 seek 预滚输出
 
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权

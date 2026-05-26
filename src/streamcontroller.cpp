@@ -51,7 +51,8 @@ bool StreamController::start(const QList<StreamDestination>& destinations,
         } else if (dest.type == StreamDestination::HttpMpegTs) {
             // HTTP-MPEG-TS：StreamPipeline（解码→重编码）+ MpegTsServer
             auto pipeline = std::make_unique<StreamPipeline>();
-            if (!pipeline->init(vpar, apar, dest.fps, dest.gopSeconds, dest.bitrate)) {
+            if (!pipeline->init(vpar, apar, vTimeBase, aTimeBase,
+                                dest.fps, dest.gopSeconds, dest.bitrate)) {
                 emit errorOccurred(QString("MPEG-TS 编码管线初始化失败（端口 %1）").arg(dest.port));
                 return false;
             }

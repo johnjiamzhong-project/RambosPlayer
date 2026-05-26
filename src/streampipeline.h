@@ -11,6 +11,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/rational.h>
 }
 
 class StreamPipeline : public QObject {
@@ -21,9 +22,11 @@ public:
 
     // 初始化四条线程：vpar/apar 为源文件编解码参数，fps 用于计算 GOP
     bool init(AVCodecParameters* vpar, AVCodecParameters* apar,
+              AVRational vTimeBase, AVRational aTimeBase,
               int fps, double gopSeconds = 0.5, int bitrate = 2000000);
     void start();
     void stop();
+    void setSeekTargetSeconds(double seconds);
 
     // 供 DemuxThread 注册的原始包输入队列（-c copy 分叉点）
     FrameQueue<AVPacket*>* videoInputQueue() { return &streamVideoInQ_; }

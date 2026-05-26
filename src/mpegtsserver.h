@@ -11,6 +11,7 @@
 #include "framequeue.h"
 
 class QTcpSocket;
+class QHostAddress;
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -49,6 +50,8 @@ private:
     void serveMpegtsJs(QTcpSocket* socket);
     void startStreaming(QTcpSocket* socket);
     void removeClient(QTcpSocket* socket);
+    void disconnectAllStreamClients(const QString& reason);
+    void disconnectClientsFromPeer(const QHostAddress& peer, QTcpSocket* exceptSocket);
 
     // MPEG-TS muxer
     bool initMuxer();

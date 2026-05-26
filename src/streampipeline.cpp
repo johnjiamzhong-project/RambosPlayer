@@ -10,6 +10,7 @@ StreamPipeline::~StreamPipeline() { stop(); }
 // 视频解码走软解（不需要 D3D11VA，帧立即传给编码器），
 // GOP = fps × gopSeconds（最小 1 帧）。
 bool StreamPipeline::init(AVCodecParameters* vpar, AVCodecParameters* apar,
+                           AVRational vTimeBase, AVRational aTimeBase,
                            int fps, double gopSeconds, int bitrate) {
     if (!vpar) {
         qWarning() << "StreamPipeline::init: vpar is null";
@@ -23,6 +24,7 @@ bool StreamPipeline::init(AVCodecParameters* vpar, AVCodecParameters* apar,
     }
     streamVideoDec_.setInputQueue(&streamVideoInQ_);
     streamVideoDec_.setOutputQueue(&rawVideoQ_);
+    streamVideoDec_.setInputTimeBase(vTimeBase);
 
     // 视频编码线程（GOP 由 gopSeconds 控制，余量取 max(1,...)）
     int gopSize = qMax(1, (int)(fps * gopSeconds));
@@ -42,6 +44,7 @@ bool StreamPipeline::init(AVCodecParameters* vpar, AVCodecParameters* apar,
         }
         streamAudioDec_.setInputQueue(&streamAudioInQ_);
         streamAudioDec_.setOutputQueue(&rawAudioQ_);
+        streamAudioDec_.setInputTimeBase(aTimeBase);
 
         // 音频编码线程
         int sr = streamAudioDec_.sampleRate();
@@ -59,6 +62,11 @@ bool StreamPipeline::init(AVCodecParameters* vpar, AVCodecParameters* apar,
             << "video=" << vpar->width << "x" << vpar->height
             << "hasAudio=" << (apar != nullptr);
     return true;
+}
+
+// 设置低延迟推流 seek 目标。视频解码器会预滚目标前包但不输出旧帧给编码器。
+void StreamPipeline::setSeekTargetSeconds(double seconds) {
+    streamVideoDec_.setMinOutputSeconds(seconds);
 }
 
 // 启动四条线程

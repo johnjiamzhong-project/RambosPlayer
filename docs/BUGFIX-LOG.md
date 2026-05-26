@@ -217,6 +217,50 @@
 
 ---
 
+## #027 — HTTP-MPEG-TS 多次 seek 后浏览器直播延迟逐步升高
+
+- **日期**：2026-05-26
+- **现象**：使用 HTTP-MPEG-TS 低延迟浏览器推流电影时，多次 seek 后浏览器端延迟逐渐升高；日志显示 seek 后 `MpegTsServer` 持续保持旧 `/stream.ts` 连接，且同一 IP 多次重连后客户端数从 1 增至 3
+- **根因**：seek 后解码预滚会产生目标点前的 GOP 重叠视频数据，旧浏览器连接继续接收这些数据并写入 MSE SourceBuffer；同时旧 socket 未及时替换，服务端可能继续向滞后连接广播，导致写缓冲和浏览器缓冲累积
+- **修复**：
+  1. `MpegTsServer` 收到视频 seek sentinel 后主动断开所有 TS 流客户端，让播放页自动重连并重建 SourceBuffer
+  2. 新 `/stream.ts` 请求会替换同一 IP 的旧流连接，避免同一浏览器反复重连后旧 socket 残留
+  3. 广播 TS 数据时检测 `QTcpSocket::bytesToWrite()`，写缓冲超过 1 MB 的客户端直接断开，防止慢客户端拖累直播链路
+  4. 内嵌 mpegts.js 播放页断流重连等待从 2 秒降至 200 ms，并监听 `stalled` / `emptied` / `abort` 触发快速重连
+  5. HTTP-MPEG-TS 晚连客户端只发送 PAT/PMT header，不再预灌 `segmentBytes_` 历史 GOP，避免 seek 重连后先消费历史片段形成固定延迟
+- **涉及文件**：`src/mpegtsserver.cpp`、`src/mpegtsserver.h`
+
+---
+
+## #028 — HTTP-MPEG-TS 快进后重连风暴触发 QList 迭代器断言
+
+- **日期**：2026-05-26
+- **现象**：HTTP-MPEG-TS 推流时按右方向键快进，浏览器端连续请求 `/stream.ts`，随后程序报 `QList::erase` 断言失败：`The specified iterator argument 'it' is invalid`
+- **根因**：`disconnectClientsFromPeer()` 使用 `QMutableListIterator` 遍历 `streamClients_` 时调用 `QTcpSocket::disconnectFromHost()`；断开信号可能同步进入 `removeClient()` 修改同一个 `QList`，导致当前迭代器失效。同时前一次修复新增的 `stalled` / `emptied` / `abort` 事件重连过于敏感，`destroy()` / `unload()` 过程也可能触发事件，造成 200 ms 间隔的重连风暴
+- **修复**：
+  1. 替换旧客户端时先收集 socket 指针，再从 `streamClients_` / `pendingClients_` 中移除，最后统一 `disconnectFromHost()`，避免遍历期间修改 QList
+  2. 内嵌播放页撤销 `stalled` / `emptied` / `abort` 事件重连，只保留 mpegts.js `ERROR` 回调快速重连，并将重连间隔设为 500 ms
+- **涉及文件**：`src/mpegtsserver.cpp`
+
+---
+
+## #029 — HTTP-MPEG-TS seek 后先推送 seek 目标前旧画面
+
+- **日期**：2026-05-26
+- **现象**：HTTP-MPEG-TS 推流时向前 seek 10 秒，浏览器端先播放 seek 之前的画面，几秒后才切到新位置；日志显示 target=35.045s，但 `EncodeThread: first frame after sentinel pts=2700000`（约 30s），随后 `preTargetVideoFrames=115`
+- **根因**：DemuxThread 为保证 H.264 参考链完整，会从目标前关键帧开始把 pre-target 视频包送入 HTTP-MPEG-TS 的解码队列；但 StreamDecoder 解码出的 pre-target 帧没有被拦截，直接进入 EncodeThread 重编码，导致服务端先推送 30s–35s 的旧画面
+- **修复**：
+  1. `StreamDecoder` 新增 seek 最小输出 PTS 门控：继续消费目标前包完成解码预滚，但丢弃目标前解码帧
+  2. `StreamPipeline` 记录视频流 time_base，并暴露 `setSeekTargetSeconds()` 给 UI seek 入口调用
+  3. `MainWindow` 在进度条和左右方向键 seek 前通知所有 HTTP-MPEG-TS 管线设置 seek 目标，确保编码器第一帧接近目标位置
+  4. `MpegTsServer` seek 断流改用 `QTcpSocket::abort()` 立即关闭 TS 连接，避免浏览器继续消费旧 HTTP 流缓冲
+  5. 内嵌播放页在重连前立即销毁 mpegts.js player、清空 `<video>` 的 `src` 并调用 `load()`，先清掉旧 MSE/视频缓冲再重新连接
+  6. seek sentinel 后 `MpegTsServer` 即使已有 `headerFrozen_`，也在新关键帧到达前把新 `/stream.ts` 连接挂到 `pendingClients_`，避免重连过早接入旧段尾部实时广播
+  7. 暂停恢复重接 HTTP-MPEG-TS 管线时同步设置 `StreamDecoder` 最小输出时间，防止 DemuxThread 恢复时的超前旧帧直接进入编码器
+- **涉及文件**：`src/streamdecoder.h`、`src/streamdecoder.cpp`、`src/streampipeline.h`、`src/streampipeline.cpp`、`src/streamcontroller.cpp`、`src/mainwindow.h`、`src/mainwindow.cpp`、`src/mpegtsserver.cpp`
+
+---
+
 ## #018 — 推流时关闭窗口 UAF 崩溃：FrameQueue 先于 DemuxThread 解除引用
 
 - **日期**：2026-05-20

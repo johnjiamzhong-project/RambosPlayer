@@ -304,11 +304,14 @@ void MainWindow::reconnectStreaming() {
         srv->videoQueue()->tryPush(nullptr);
         srv->audioQueue()->tryPush(nullptr);
     }
+    double alignSec = player_->currentPositionSeconds();
+    if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
     for (int i = 0; i < (int)streamCtrl_->videoMuxQueues().size(); ++i) {
         streamCtrl_->videoMuxQueues()[i]->tryPush(nullptr);
         streamCtrl_->audioMuxQueues()[i]->tryPush(nullptr);
     }
     for (const auto& p : streamCtrl_->streamPipelines()) {
+        p->setSeekTargetSeconds(alignSec);
         p->videoInputQueue()->tryPush(nullptr);
         p->audioInputQueue()->tryPush(nullptr);
     }
@@ -333,8 +336,6 @@ void MainWindow::reconnectStreaming() {
             remoteIdx++;
         }
     }
-    double alignSec = player_->currentPositionSeconds();
-    if (alignSec < 0.0) alignSec = currentPos_ / 1000.0;
     streamAlignSec_ = alignSec;
     qInfo() << "MainWindow: restream reconnected, align=" << alignSec << "s";
 }
@@ -343,7 +344,15 @@ void MainWindow::reconnectStreaming() {
 void MainWindow::onSeekSliderMoved(int value) {
     if (duration_ <= 0) return;
     double seconds = (double)value / 1000.0 * duration_ / 1000.0;
+    prepareMpegTsSeek(seconds);
     player_->seek(seconds);
+}
+
+// HTTP-MPEG-TS 需要从关键帧开始解码预滚，但不能把 seek 目标前的解码帧送去编码。
+void MainWindow::prepareMpegTsSeek(double seconds) {
+    if (!streamCtrl_ || !streamCtrl_->isStreaming()) return;
+    for (const auto& p : streamCtrl_->streamPipelines())
+        p->setSeekTargetSeconds(seconds);
 }
 
 // 音量滑块变化，value 范围 0–100 映射到 0.0–1.0，并持久化到 QSettings。
@@ -430,6 +439,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
             qInfo() << "MainWindow:" << (ke->key() == Qt::Key_Left ? "Left" : "Right")
                     << "arrow, seek from" << currentPos_ / 1000.0 << "s to" << newSec << "s"
                     << "(offset =" << offset << "s)";
+            prepareMpegTsSeek(newSec);
             player_->seek(newSec);
             return true;
         }
@@ -453,6 +463,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
         double newSec = qBound(0.0, currentPos_ / 1000.0 + offset, duration_ / 1000.0);
         qInfo() << "MainWindow::keyPressEvent" << (event->key() == Qt::Key_Left ? "Left" : "Right")
                 << "seek to" << newSec;
+        prepareMpegTsSeek(newSec);
         player_->seek(newSec);
     } else {
         QMainWindow::keyPressEvent(event);

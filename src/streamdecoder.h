@@ -9,6 +9,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/rational.h>
 }
 
 class StreamDecoder : public QThread {
@@ -22,6 +23,8 @@ public:
 
     void setInputQueue(FrameQueue<AVPacket*>* q)  { inputQueue_  = q; }
     void setOutputQueue(FrameQueue<AVFrame*>* q)  { outputQueue_ = q; }
+    void setInputTimeBase(AVRational tb) { inputTimeBase_ = tb; }
+    void setMinOutputSeconds(double seconds);
 
     // 音频解码后的实际参数（视频流调用结果未定义）
     int sampleRate() const { return codecCtx_ ? codecCtx_->sample_rate : 44100; }
@@ -37,5 +40,8 @@ private:
     AVCodecContext*       codecCtx_    = nullptr; // 解码器上下文
     FrameQueue<AVPacket*>* inputQueue_ = nullptr; // 输入：包队列（外部持有）
     FrameQueue<AVFrame*>* outputQueue_ = nullptr; // 输出：帧队列（外部持有）
+    AVRational            inputTimeBase_ = {0, 1}; // 输入包/帧 PTS 的时间基，用于 seek 预滚过滤
+    std::atomic<int64_t>   minOutputPts_{AV_NOPTS_VALUE}; // seek 后允许输出到编码器的最小 PTS
+    std::atomic<int>       prerollDropLogCount_{0};        // 预滚丢帧日志限流
     std::atomic<bool>     abort_{false};           // 停止标志
 };
