@@ -340,7 +340,7 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] 在 `MainWindow` 加"剪辑模式 (Ctrl+T)"菜单 + "导出片段 (Ctrl+E)"，显示/隐藏 `Timeline` dock
 - [x] 缩略图逐张送达，状态栏实时显示修剪区间
 - [x] 手动验证：拖拽剪辑点，导出，播放正常，时长正确
-- [ ] `git commit -m "feat: 视频剪辑器时间线 UI 与无损剪切导出（Phase 10）"`
+- [x] `git commit -m "feat: 视频剪辑器时间线 UI 与无损剪切导出（Phase 10）"`
 
 **验收：** 导出文件画面流畅无卡顿，时长与选区一致；程序无崩溃。
 
@@ -386,16 +386,59 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 
 ---
 
+## Phase 12 — 剪辑器增强：三模式剪切 + 合并
+
+**目标：** 新增浏览剪切（边播边标）、多段剪切（批量区间输入）两种交互模式，以及视频拼接/音频混音/音视频混流。
+
+> 详细计划：[docs/superpowers/plans/2026-05-27-phase12-video-editor.md](superpowers/plans/2026-05-27-phase12-video-editor.md)
+
+**新增组件：**
+- `BrowseClipper` — 浏览剪切控制器
+- `SegmentClipper` — 多段剪切控制器
+- `MergeWorker` — 合并任务入口
+- `ConcatDemuxer` / `ConcatFilter` — 视频拼接
+- `AudioMixer` — 音频混音
+- `SimpleMuxer` — 音视频混流
+- `MergePanel` UI
+
+### Task 1 — Timeline 底部导轨扩展
+- [ ] Timeline 新增底部导轨层绘制、`addSegment()` / `clearSegments()` / `segments()`
+
+### Task 2 — BrowseClipper 浏览剪切
+- [ ] 菜单"剪辑 → 浏览剪切"启动
+- [ ] 播放中按空格标记入点/出点，追加到底部导轨
+- [ ] 退出模式时区间列表确认对话框
+
+### Task 3 — SegmentClipper 多段剪切
+- [ ] 输入面板 UI，逐行输入时间区间
+- [ ] 验证：不超过视频时长、起始≤结束、区间不重叠
+- [ ] 确定后填充底部导轨
+
+### Task 4 — 合并（Concat / Mix / Mux）
+- [ ] ConcatDemuxer：同参数无损拼接
+- [ ] AudioMixer：N 路音频混音
+- [ ] ConcatFilter：异参数重编码拼接
+- [ ] SimpleMuxer：音视频混流
+
+### Task 5 — MergePanel UI + MainWindow 集成
+- [ ] 文件拖入列表、模式自动判断、音量滑块
+- [ ] 进度条、取消、日志
+
+**验收：** 三种剪切模式均可正常标记区间并导出；各种合并场景输出正确。
+
+---
+
 ## 当前进度
 
 - [x] Phase 1 — 项目骨架
-- [x] Phase 2 — 基础组件（FrameQueue ✅，AVSync ✅）
-- [x] Phase 3 — 解复用线程（DemuxThread ✅）
+- [x] Phase 2 — 基础组件（FrameQueue，AVSync）
+- [x] Phase 3 — 解复用线程（DemuxThread）
 - [x] Phase 4 — 解码层
-- [x] Phase 5 — 渲染与同步 ✅
-- [x] Phase 6 — 完整播放器 UI ✅
+- [x] Phase 5 — 渲染与同步
+- [x] Phase 6 — 完整播放器 UI
 - [x] Phase 7 — 硬件加速
-- [x] Phase 8 — 视频滤镜 ✅
-- [x] Phase 9 — 屏幕录制/推流 ✅
-- [x] Phase 10 — 视频剪辑器 ✅
-- [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）✅
+- [x] Phase 8 — 视频滤镜
+- [x] Phase 9 — 屏幕录制/推流
+- [x] Phase 10 — 视频剪辑器
+- [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
+- [ ] Phase 12 — 剪辑器增强：三模式剪切 + 合并

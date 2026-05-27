@@ -77,7 +77,23 @@ if (Test-Path $flvJs) {
     Write-Host "[package] WARNING: flv.min.js not found at $flvJs -- HTTP-FLV player page will not work" -ForegroundColor Yellow
 }
 
-# 8. Zip
+# 8. Copy mpegts.min.js (required for HTTP-MPEG-TS streaming)
+#    Prefer release/ copy (user can place custom version), then build/Release, then src/
+$mpegtsJs = "$PSScriptRoot\mpegts.min.js"
+if (-not (Test-Path $mpegtsJs)) {
+    $mpegtsJs = "$ProjectRoot\build\Release\mpegts.min.js"
+}
+if (-not (Test-Path $mpegtsJs)) {
+    $mpegtsJs = "$ProjectRoot\src\mpegts.min.js"
+}
+if (Test-Path $mpegtsJs) {
+    Log "Copying mpegts.min.js..."
+    Copy-Item $mpegtsJs $DistDir
+} else {
+    Write-Host "[package] WARNING: mpegts.min.js not found -- HTTP-MPEG-TS player will fall back to embedded copy" -ForegroundColor Yellow
+}
+
+# 9. Zip
 Log "Creating $ZipOut..."
 if (Test-Path $ZipOut) { Remove-Item $ZipOut -Force }
 Compress-Archive -Path "$DistDir\*" -DestinationPath $ZipOut

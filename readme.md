@@ -6,8 +6,9 @@
 
 ## 文档
 
-- 开发计划总览：[docs/DEVPLAN.md](docs/DEVPLAN.md)（Phase 1–10）
-- 详细 TDD 计划：[docs/superpowers/plans/2026-04-26-rambos-player-core.md](docs/superpowers/plans/2026-04-26-rambos-player-core.md)
+- 开发计划总览：[docs/DEVPLAN.md](docs/DEVPLAN.md)（Phase 1–12）
+- 详细 TDD 计划（Phase 1–6）：[docs/superpowers/plans/2026-04-26-rambos-player-core.md](docs/superpowers/plans/2026-04-26-rambos-player-core.md)
+- 视频剪辑器增强计划（Phase 12）：[docs/superpowers/plans/2026-05-27-phase12-video-editor.md](docs/superpowers/plans/2026-05-27-phase12-video-editor.md)
 - 架构流程图：[docs/架构流程图.html](docs/架构流程图.html)
 - 软解 vs 硬解对比：[docs/软解与硬解对比.html](docs/软解与硬解对比.html)
 - 低延迟推流方案：[docs/solutions/low-latency-streaming.md](docs/solutions/low-latency-streaming.md)（GPU 实时重编码 + mpegts.js 追帧）
@@ -20,8 +21,9 @@
 | 功能3 — 硬件加速解码 | ✅ 完成 |
 | 功能4 — 视频滤镜编辑器 | ✅ 完成 |
 | 功能5 — 推流播放内容（音视频双流，RTMP/SRT/HTTP-FLV） | ✅ 完成 |
-| 功能6 — 视频剪辑器 | ✅ 完成 |
+| 功能6 — 视频剪辑器（自由剪切） | ✅ 完成 |
 | 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | ✅ 完成 |
+| 功能8 — 三模式剪切 + 视频合并 | 🚧 计划中 |
 
 ---
 
@@ -57,7 +59,10 @@
 | 硬件加速（D3D11VA） | 菜单 → 硬件加速（重新打开文件后生效） |
 | 视频滤镜（亮度/对比度/饱和度/水印） | 菜单 → 滤镜编辑器，实时预览 |
 | 推流播放内容（RTMP / SRT / HTTP-FLV） | 菜单 → 推流，支持多路同时推流；HTTP-FLV 无需外部服务器，局域网浏览器直接打开链接收看 |
-| 视频剪辑（无损剪切导出） | 菜单 → 剪辑模式（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
+| 视频剪辑（自由剪切） | 菜单 → 剪辑 → 自由剪切（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
+| 浏览剪切（边播边标） | 菜单 → 剪辑 → 浏览剪切（Ctrl+B），播放中标记入点/出点，自动追加到底部导轨 | 🚧 计划中 |
+| 多段剪切（批量区间） | 菜单 → 剪辑 → 多段剪切（Ctrl+M），逐行输入时间区间，批量导出 | 🚧 计划中 |
+| 视频拼接 / 音频混音 / 混流 | 菜单 → 合并（Ctrl+G），拖入多个文件，自动判断合并模式 | 🚧 计划中 |
 
 ---
 
@@ -156,7 +161,7 @@ RambosPlayer/
 │   ├── tst_demuxthread.cpp
 │   └── data/sample.mp4         # 测试用 2 秒视频（ffmpeg 生成）
 ├── docs/
-│   ├── DEVPLAN.md              # 开发计划总览（Phase 1–10，含 Task 编号）
+│   ├── DEVPLAN.md              # 开发计划总览（Phase 1–12，含 Task 编号）
 │   ├── BUGFIX-LOG.md           # 计划外 Bug 修复记录
 │   ├── interview-claude-code-workflow.md  # Claude Code 工作流记录（需求→计划→执行全流程、架构决策与收益总结）
 │   ├── *.html                  # 架构流程图（可视化）

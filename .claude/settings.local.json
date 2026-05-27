@@ -97,7 +97,14 @@
       "Bash(Get-Item \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\RambosPlayer.exe\")",
       "Bash(Select-Object LastWriteTime)",
       "Bash(dir \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\logs\\\\\" 2>&1 | head -30 *)",
-      "PowerShell(python -c \"import xml.etree.ElementTree as ET; ET.parse\\('G:/source/vscode/ffmpeg_pro/stage5/RambosPlayer/src/mainwindow.ui'\\); print\\('XML valid'\\)\")"
+      "PowerShell(python -c \"import xml.etree.ElementTree as ET; ET.parse\\('G:/source/vscode/ffmpeg_pro/stage5/RambosPlayer/src/mainwindow.ui'\\); print\\('XML valid'\\)\")",
+      "Bash(taskkill /F /IM RambosPlayer.exe)",
+      "Bash(grep -i \"\\\\.js$\\\\|\\\\.min\\\\.\")",
+      "PowerShell(Invoke-WebRequest -Uri \"https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js\" -OutFile \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\mpegts.min.js\"; Write-Host \"downloaded size=$\\(Get-Item 'G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\build\\\\Debug\\\\mpegts.min.js'\\).Length bytes\")",
+      "Bash(dir G:sourcevscodeffmpeg_prostage5RambosPlayerdocs *)",
+      "Bash(Remove-Item *)",
+      "Bash(Select-Object -Last 30)",
+      "PowerShell(Get-Content G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\CLAUDE.md -Encoding utf8 | Select-Object -Index 183,184,185,186,187,188 | ForEach-Object { \"[$\\([char]34\\)$_$\\([char]34\\)]\" })"
     ]
   }
 }

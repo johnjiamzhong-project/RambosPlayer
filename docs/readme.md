@@ -6,10 +6,11 @@
 
 | 文件 | 说明 |
 |------|------|
-| `DEVPLAN.md` | 10 阶段总体开发计划，定义各阶段目标与依赖关系 |
+| `DEVPLAN.md` | 12 阶段总体开发计划，定义各阶段目标与依赖关系 |
 | `superpowers/plans/2026-04-26-rambos-player-core.md` | Phase 1–6 TDD 详细执行计划，含完整代码 |
 | `superpowers/plans/2026-05-08-demuxthread.md` | DemuxThread 模块执行计划 |
 | `superpowers/plans/2026-05-17-phase9-restream.md` | Phase 9 推流重构计划：从录屏推流转为解复用分叉直通 |
+| `superpowers/plans/2026-05-27-phase12-video-editor.md` | Phase 12 剪辑器增强计划：三模式剪切 + 合并 |
 
 ## 设计规格
 

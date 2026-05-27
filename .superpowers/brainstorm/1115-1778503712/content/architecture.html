@@ -1,0 +1,89 @@
+<h2>Phase 8 — 视频滤镜编辑器 架构概览</h2>
+<p class="subtitle">在现有解码流水线中插入 libavfilter 滤镜图，配上实时调参 UI</p>
+
+<div class="section">
+  <h3>数据流变化</h3>
+  <div class="mockup">
+    <div class="mockup-header">当前流水线（Phase 1–7）</div>
+    <div class="mockup-body" style="font-family: monospace; font-size: 12px; line-height: 1.8;">
+      DemuxThread → videoPacketQ → VideoDecodeThread → videoFrameQ → VideoRenderer
+    </div>
+  </div>
+  <div style="text-align: center; padding: 10px; font-size: 20px; color: #888;">↓</div>
+  <div class="mockup">
+    <div class="mockup-header">Phase 8 流水线（滤镜插入点）</div>
+    <div class="mockup-body" style="font-family: monospace; font-size: 12px; line-height: 1.8;">
+      DemuxThread → videoPacketQ → <strong style="color: #4fc3f7;">VideoDecodeThread</strong> → <mark style="background: #4fc3f7; color: #121212; padding: 2px 6px; border-radius: 3px;">FilterGraph</mark> → videoFrameQ → VideoRenderer
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Phase 8 的三个 Task</h3>
+  <table style="width: 100%; border-collapse: collapse; color: #ccc;">
+    <tr style="border-bottom: 1px solid #333;">
+      <th style="text-align: left; padding: 8px;">Task</th>
+      <th style="text-align: left; padding: 8px;">组件</th>
+      <th style="text-align: left; padding: 8px;">职责</th>
+    </tr>
+    <tr style="border-bottom: 1px solid #2a2a2a;">
+      <td style="padding: 8px; color: #4fc3f7;">14</td>
+      <td style="padding: 8px;">FilterGraph</td>
+      <td style="padding: 8px; font-size: 13px;">封装 libavfilter，构建/重建滤镜图，处理单帧</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #2a2a2a;">
+      <td style="padding: 8px; color: #4fc3f7;">15</td>
+      <td style="padding: 8px;">VideoDecodeThread 集成</td>
+      <td style="padding: 8px; font-size: 13px;">解码后、推队前，可选地通过 FilterGraph 处理帧</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; color: #4fc3f7;">16</td>
+      <td style="padding: 8px;">FilterPanel UI</td>
+      <td style="padding: 8px; font-size: 13px;">QDockWidget 面板，滑块实时调亮度/对比度/水印</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>第一个设计问题：滤镜放在哪里？</h3>
+  <p style="color: #aaa; font-size: 13px;">这决定了 FilterGraph 的生命周期、线程模型和性能影响。</p>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>VideoDecodeThread 内（解码线程）</h3>
+      <p>每个解码帧立即过滤镜，再推入 videoFrameQ。FilterGraph 和 VideoRenderer 完全解耦。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>VideoRenderer 无需改动</li><li>滤镜在解码线程，不阻塞 GUI</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>滤镜增加解码线程 CPU 负载</li><li>需线程安全地更新滤镜参数</li></ul></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>VideoRenderer 内（GUI 线程）</h3>
+      <p>帧出队后、sws_scale 之前过滤镜。FilterGraph 可直接读 UI 控件值。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>滤镜参数同步简单，无需跨线程</li><li>解码线程不受影响</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>GUI 线程做滤镜处理，可能丢帧卡 UI</li><li>违反现有 VideoRenderer 轻量化设计</li></ul></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>独立 FilterThread</h3>
+      <p>解码帧 → FilterFrameQ → FilterThread 处理 → videoFrameQ。滤镜有自己独立的队列和线程。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>解码/滤镜/渲染三级流水，各不阻塞</li><li>架构最清晰的解耦</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>增加一条队列 + 一个线程，复杂度最高</li><li>当前仅 3 个简单滤镜，过度工程化</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top: 16px; color: #aaa; font-size: 13px;">推荐 <strong style="color: #4fc3f7;">A</strong> — 在解码线程内处理。滤镜参数通过 atomic 变量传递，UI 滑块只写原子量，FilterGraph 在 run() 循环中读取。简洁且符合现有帧队列架构。</p>
+</div>
