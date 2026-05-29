@@ -13,6 +13,8 @@
 - 软解 vs 硬解对比：[docs/软解与硬解对比.html](docs/软解与硬解对比.html)
 - 低延迟推流方案：[docs/solutions/low-latency-streaming.md](docs/solutions/low-latency-streaming.md)（GPU 实时重编码 + mpegts.js 追帧）
 - 推流方案对比架构图：[docs/推流方案对比架构图.html](docs/推流方案对比架构图.html)（HTTP-FLV vs HTTP-MPEG-TS 管线对比）
+- 导出管线优化分析：[docs/EXPORT_OPTIMIZATION.md](docs/EXPORT_OPTIMIZATION.md)（架构、瓶颈、6 项优化策略）
+- 导出性能基准记录：[docs/EXPORT_BENCHMARK.md](docs/EXPORT_BENCHMARK.md)（各阶段实测数据，11 次测试）
 
 | 功能 | 状态 |
 |------|:----:|
@@ -145,6 +147,7 @@ DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |
 | `MuxThread` | `src/muxthread.h/.cpp` | 消费音视频压缩包（`-c copy` 直通），`av_write_frame` 写出；支持 RTMP（FLV）和 SRT（MPEGTS），seek 后 PTS 续接保证单调递增 |
+| `ExportWorker` | `src/exportworker.h/.cpp` | 帧精确重编码导出线程（QThread）；解码源文件 → H.264 + AAC 重编码 → MP4 封装，支持单段/批量导出。CRF 17 / CQP 18 高画质，superfast 预设快速编码。详见 [导出优化分析](docs/EXPORT_OPTIMIZATION.md) |
 | `HttpFlvServer` | `src/httpflvserver.h/.cpp` | 内置 HTTP-FLV 流媒体服务器；FFmpeg FLV muxer 通过自定义 avio 将数据广播给所有已连接的浏览器客户端；含音视频 PTS 对齐、关键帧门控、内嵌 flv.js 播放页 |
 | `StreamController` | `src/streamcontroller.h/.cpp` | 管理多路 MuxThread / HttpFlvServer 生命周期；向 DemuxThread 提供 restream 分叉队列入口 |
 
@@ -198,6 +201,6 @@ RambosPlayer/
 
 - **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 解码帧直接分叉进入编码管线，推送到 RTMP 服务器或 SRT 对端；音视频双流，支持多路同时推流
 
-- **转封装链路（剪辑导出）**：`av_seek_frame` + `-c copy` 无损剪切，关键帧对齐，PTS 归零重写
+- **重编码链路（剪辑导出）**：解码 → 像素格式转换 → H.264 重编码（CRF 17 / CQP 18）+ AAC 音频重编码 → MP4 封装；帧精确裁剪，输出时长与选中区间完全一致。详见 [导出管线优化分析](docs/EXPORT_OPTIMIZATION.md)
 
   三条链路合在一起才构成完整的 FFmpeg 技能树，所以定位更接近**"多媒体处理工具箱"**而非纯播放器。

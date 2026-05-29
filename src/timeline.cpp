@@ -1,4 +1,5 @@
 #include "timeline.h"
+#include "timeutil.h"
 #include <QPainter>
 #include <QMouseEvent>
 #include <QtMath>
@@ -16,6 +17,8 @@ Timeline::Timeline(QWidget* parent)
 
 void Timeline::setDuration(int64_t durationUs)
 {
+    if (durationUs <= 0)
+        return;
     duration_ = durationUs;
     if (outPts_ == 0)  // 首次设置才初始化出口到末尾
         outPts_ = durationUs;
@@ -45,14 +48,17 @@ void Timeline::setTrimRange(int64_t inUs, int64_t outUs)
     update();
 }
 
+// 将时间戳（微秒）映射到轨道水平像素坐标。
+// range 提升为 int64_t 后再乘，避免 pts * range 在除法前溢出 int。
 int Timeline::ptsToX(int64_t pts) const
 {
     if (duration_ <= 0)
         return trackLeft_;
-    int range = trackRight_ - trackLeft_;
+    int64_t range = trackRight_ - trackLeft_;
     return trackLeft_ + static_cast<int>(pts * range / duration_);
 }
 
+// 将轨道水平像素坐标反算为时间戳（微秒），结果钳位到 [0, duration_]。
 int64_t Timeline::xToPts(int x) const
 {
     if (duration_ <= 0)
@@ -64,11 +70,14 @@ int64_t Timeline::xToPts(int x) const
     return qBound<int64_t>(0, pts, duration_);
 }
 
+// 返回指定把手（入口/出口）的鼠标响应矩形区域。
+// 区域覆盖整条竖线高度，方便鼠标精确抓取。
 QRect Timeline::handleRect(bool isInHandle) const
 {
     int x = ptsToX(isInHandle ? inPts_ : outPts_);
-    return QRect(x - kHandleWidth / 2, trackTop_ + trackHeight_,
-                 kHandleWidth, kHandleHeight);
+    // 点击区域覆盖整条竖线（从轨道顶部到底部把手），方便鼠标抓取
+    return QRect(x - kHandleWidth / 2, trackTop_,
+                 kHandleWidth, trackHeight_ + kHandleHeight);
 }
 
 // 绘制时间刻度尺（自适应刻度间距）
@@ -140,17 +149,8 @@ void Timeline::drawThumbnails(QPainter& p)
     }
 }
 
-// 微秒 → "MM:SS" 或 "HH:MM:SS" 字符串
-static QString usToLabel(int64_t us)
-{
-    int totalSec = static_cast<int>(us / 1000000);
-    int h = totalSec / 3600;
-    int m = (totalSec % 3600) / 60;
-    int s = totalSec % 60;
-    if (h > 0)
-        return QString("%1:%2:%3").arg(h).arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
-    return QString("%1:%2").arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
-}
+// usToLabel 由 timeutil.h 提供（inline），通过 #include 使用即可
+// 本文件不再定义静态 usToLabel，避免重复定义
 
 // 绘制入口/出口把手（三角形 + 竖线 + 时间标签）
 void Timeline::drawHandles(QPainter& p)
@@ -196,6 +196,8 @@ void Timeline::drawHandles(QPainter& p)
     drawOne(outPts_, false);
 }
 
+// 绘制整个时间轴控件：背景、轨道底色、选中高亮、刻度尺、缩略图、
+// 把手（自由剪辑模式）和底部导轨（多段区间/浏览剪切模式）。
 void Timeline::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
@@ -217,12 +219,14 @@ void Timeline::paintEvent(QPaintEvent*)
         p.drawText(trackRect, Qt::AlignCenter, "正在生成缩略图...");
     }
 
-    // 已选中区域高亮
-    int selLeft  = ptsToX(inPts_);
-    int selRight = ptsToX(outPts_);
-    if (selRight > selLeft) {
-        p.fillRect(QRect(selLeft, trackTop_, selRight - selLeft, trackHeight_),
-                   QColor(60, 120, 200, 80));
+    // 把手可见时绘制选中区域高亮和把手（自由剪辑模式）
+    if (handlesVisible_) {
+        int selLeft  = ptsToX(inPts_);
+        int selRight = ptsToX(outPts_);
+        if (selRight > selLeft) {
+            p.fillRect(QRect(selLeft, trackTop_, selRight - selLeft, trackHeight_),
+                       QColor(60, 120, 200, 80));
+        }
     }
 
     // 轨道边框
@@ -232,11 +236,16 @@ void Timeline::paintEvent(QPaintEvent*)
 
     drawRuler(p);
     drawThumbnails(p);
-    drawHandles(p);
+    if (handlesVisible_)
+        drawHandles(p);
+    drawBottomBar(p);
 }
 
+// 鼠标按下：判断是否点中入口或出口把手，记录拖拽目标并切换光标。
+// 非自由剪辑模式（把手隐藏时）透传给父类。
 void Timeline::mousePressEvent(QMouseEvent* ev)
 {
+    if (!handlesVisible_) { QWidget::mousePressEvent(ev); return; }
     QRect inR  = handleRect(true);
     QRect outR = handleRect(false);
 
@@ -249,8 +258,11 @@ void Timeline::mousePressEvent(QMouseEvent* ev)
     }
 }
 
+// 鼠标移动：拖拽中更新入口/出口时间点并发射 trimPointChanged；
+// 未拖拽时做悬停检测，悬停到把手区域时切换为水平缩放光标。
 void Timeline::mouseMoveEvent(QMouseEvent* ev)
 {
+    if (!handlesVisible_) { QWidget::mouseMoveEvent(ev); return; }
     if (handleDrag_ < 0) {
         // 悬停检测
         QRect inR  = handleRect(true);
@@ -276,6 +288,7 @@ void Timeline::mouseMoveEvent(QMouseEvent* ev)
     emit trimPointChanged(inPts_, outPts_);
 }
 
+// 鼠标释放：结束拖拽，恢复箭头光标，打印最终剪辑点到日志。
 void Timeline::mouseReleaseEvent(QMouseEvent*)
 {
     if (handleDrag_ >= 0)
@@ -286,7 +299,222 @@ void Timeline::mouseReleaseEvent(QMouseEvent*)
     setCursor(Qt::ArrowCursor);
 }
 
+// 控件大小变化时更新右侧轨道边界坐标。
 void Timeline::resizeEvent(QResizeEvent*)
 {
     trackRight_ = width() - 10;
+}
+
+// ---- 底部导轨（多段区间） ----
+
+// 向底部导轨添加区间（微秒），插入后按起始时间排序。
+// 与已有区间重叠时拒绝并返回 false，由调用方决定是否弹出合并对话框。
+bool Timeline::addSegment(int64_t startUs, int64_t endUs)
+{
+    if (startUs >= endUs || startUs < 0 || endUs > duration_)
+        return false;
+    // 拒绝与已有区间重叠
+    for (const auto& seg : segments_) {
+        if (startUs < seg.second && endUs > seg.first)
+            return false;
+    }
+    segments_.append(qMakePair(startUs, endUs));
+    std::sort(segments_.begin(), segments_.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    update();
+    emit segmentsChanged(segments_.size());
+    return true;
+}
+
+// 按精确起止时间移除单个区间，找不到则返回 false。
+// 注意：mergeSegment 会改变区间边界，之后用原始参数调用此方法会找不到。
+// 边界已漂移的场景请用 removeSegmentAt(index) 替代。
+bool Timeline::removeSegment(int64_t startUs, int64_t endUs)
+{
+    auto it = std::find_if(segments_.begin(), segments_.end(),
+        [&](const auto& seg) { return seg.first == startUs && seg.second == endUs; });
+    if (it != segments_.end()) {
+        segments_.erase(it);
+        update();
+        emit segmentsChanged(segments_.size());
+        return true;
+    }
+    return false;
+}
+
+// 按索引移除区间，不受边界漂移影响。
+// 调用方需确保 index 有效（通常由 dialog 中勾选状态推导）。
+bool Timeline::removeSegmentAt(int index)
+{
+    if (index < 0 || index >= segments_.size())
+        return false;
+    segments_.erase(segments_.begin() + index);
+    update();
+    emit segmentsChanged(segments_.size());
+    return true;
+}
+
+// 将新区间合并到已有的重叠区间中（扩展边界），合并后调用 mergeAdjacent() 消除连锁重叠。
+// 若与所有已有区间均不重叠则返回 false（不新增区间）。
+bool Timeline::mergeSegment(int64_t startUs, int64_t endUs)
+{
+    if (startUs >= endUs || startUs < 0 || endUs > duration_)
+        return false;
+    for (auto& seg : segments_) {
+        if (startUs < seg.second && endUs > seg.first) {
+            // 扩展已有区间覆盖两者
+            seg.first  = qMin(seg.first, startUs);
+            seg.second = qMax(seg.second, endUs);
+            // 合并后可能与后续区间再次重叠（如 A(0-10) B(5-15) C(12-20)
+            // 合并 A(0-15) 后与 C 重叠，需递归合并
+            mergeAdjacent();
+            update();
+            emit segmentsChanged(segments_.size());
+            return true;
+        }
+    }
+    return false;
+}
+
+// 合并相邻或重叠的区间（排序后遍历合并）。
+// 仅合并真正重叠的区间（A 的结束 > B 的起始），
+// 首尾恰好相接的区间（如 0-10 和 10-20）保持独立，不合并。
+void Timeline::mergeAdjacent()
+{
+    if (segments_.size() < 2) return;
+    std::sort(segments_.begin(), segments_.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    QList<QPair<int64_t, int64_t>> merged;
+    merged.append(segments_.first());
+    for (int i = 1; i < segments_.size(); ++i) {
+        auto& last = merged.last();
+        if (segments_[i].first < last.second) {
+            // 真正重叠（非相邻），合并
+            last.second = qMax(last.second, segments_[i].second);
+        } else {
+            merged.append(segments_[i]);
+        }
+    }
+    segments_ = merged;
+}
+
+// 清空所有底部导轨区间并触发重绘。
+void Timeline::clearSegments()
+{
+    segments_.clear();
+    update();
+    emit segmentsChanged(0);
+}
+
+// 返回当前所有已标记区间的副本（按起始时间排序）。
+QList<QPair<int64_t, int64_t>> Timeline::segments() const
+{
+    return segments_;
+}
+
+// 控制底部导轨（多段区间显示层）的可见性，并同步调整控件最小高度。
+void Timeline::setBottomBarVisible(bool visible)
+{
+    bottomBarVisible_ = visible;
+    setMinimumHeight(visible ? 140 : 110);
+    update();
+}
+
+// 返回底部导轨当前是否可见。
+bool Timeline::isBottomBarVisible() const
+{
+    return bottomBarVisible_;
+}
+
+// 控制剪辑把手（入口/出口竖线与三角）的可见性。
+// 自由剪辑模式显示，浏览剪切/多段剪切模式隐藏，隐藏时把手坐标保留不变。
+void Timeline::setHandlesVisible(bool visible)
+{
+    handlesVisible_ = visible;
+    update();
+}
+
+// 设置待定入点（浏览剪切首次空格时调用），底部导轨立即绘制绿色竖线标记。
+void Timeline::setPendingInPoint(int64_t pts)
+{
+    pendingInPts_ = pts;
+    update();
+}
+
+// 清除待定入点标记（区间确认后或模式退出时调用），底部导轨绿色竖线消失。
+void Timeline::clearPendingInPoint()
+{
+    pendingInPts_ = -1;
+    update();
+}
+
+// 绘制底部导轨：显示所有已标记区间的色块 + 时间标签
+void Timeline::drawBottomBar(QPainter& p)
+{
+    // 底部导轨在没有区间也没有待定入点时隐藏
+    bool hasContent = !segments_.isEmpty() || pendingInPts_ >= 0;
+    if (!bottomBarVisible_ || !hasContent)
+        return;
+
+    int barTop = trackTop_ + trackHeight_ + kHandleHeight + 6;
+    int barH   = kBottomBarHeight;
+
+    // 底部导轨背景
+    p.fillRect(trackLeft_, barTop, trackRight_ - trackLeft_, barH, QColor(35, 35, 38));
+    p.setPen(QPen(QColor(70, 70, 75), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(trackLeft_, barTop, trackRight_ - trackLeft_, barH);
+
+    QFont f = p.font();
+    f.setPixelSize(9);
+    p.setFont(f);
+
+    for (const auto& seg : segments_) {
+        int x1 = ptsToX(seg.first);
+        int x2 = ptsToX(seg.second);
+        if (x2 <= x1) continue;
+
+        // 区间色块
+        p.fillRect(x1, barTop + 3, x2 - x1, barH - 6, QColor(80, 160, 80, 140));
+        p.setPen(QPen(QColor(80, 200, 80), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(x1, barTop + 3, x2 - x1, barH - 6);
+
+        // 时间标签
+        QString label = usToLabel(seg.first) + " - " + usToLabel(seg.second);
+        p.setPen(QColor(200, 200, 200));
+        int tw = QFontMetrics(f).horizontalAdvance(label);
+        int tx = x1 + (x2 - x1 - tw) / 2;
+        if (tx < trackLeft_) tx = trackLeft_;
+        if (tx + tw > trackRight_) tx = trackRight_ - tw;
+        p.drawText(tx, barTop + barH - 6, label);
+    }
+
+    // 待定入点标记：绿色竖线 + 三角 + 时间标签
+    if (pendingInPts_ >= 0) {
+        int x = ptsToX(pendingInPts_);
+        if (x >= trackLeft_ && x <= trackRight_) {
+            QColor green(0, 220, 80);
+            p.setPen(QPen(green, 2));
+            p.drawLine(x, barTop, x, barTop + barH);
+
+            // 小三角
+            QPoint tri[3] = {
+                QPoint(x, barTop),
+                QPoint(x - 5, barTop - 4),
+                QPoint(x + 5, barTop - 4)
+            };
+            p.setBrush(green);
+            p.setPen(Qt::NoPen);
+            p.drawPolygon(tri, 3);
+
+            // 时间标签
+            p.setPen(green);
+            p.setFont(f);
+            QString label = usToLabel(pendingInPts_);
+            int tw = QFontMetrics(f).horizontalAdvance(label);
+            int tx = qBound(trackLeft_, x - tw / 2, trackRight_ - tw);
+            p.drawText(tx, barTop + barH - 4, label);
+        }
+    }
 }

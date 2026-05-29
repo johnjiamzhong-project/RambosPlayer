@@ -1,5 +1,8 @@
 #pragma once
 #include <QMainWindow>
+#include <QList>
+#include <QPair>
+#include <QElapsedTimer>
 #include "streamcontroller.h"
 
 QT_BEGIN_NAMESPACE
@@ -13,6 +16,7 @@ class StreamController;
 class Timeline;
 class ThumbnailExtractor;
 class ExportWorker;
+class BrowseClipper;
 class QDockWidget;
 
 // MainWindow 是播放器的主窗口，包含视频渲染区（VideoRenderer）和底部控制栏。
@@ -42,10 +46,12 @@ private slots:
     void onFilterPanelToggled(bool checked);
     void onStreamStart();
     void onTrimModeToggled(bool checked);
+    void onBrowseClipToggled(bool checked);
     void onExportTriggered();
     void onThumbnailsReady(const QList<QImage>& images);
     void onExportProgress(int64_t currentPts, int64_t totalPts);
     void onExportFinished(bool ok);
+    // startNextBatchExport 已移除 — 批量导出改用 ExportWorker::runBatch() 内部循环
     void onAbout();
 
 private:
@@ -66,10 +72,19 @@ private:
     Timeline*           timeline_      = nullptr; // 剪辑时间轴控件
     ThumbnailExtractor* thumbExtractor_ = nullptr; // 缩略图异步提取
     ExportWorker*       exportWorker_  = nullptr; // 无损剪切导出线程
+    BrowseClipper*      browseClipper_ = nullptr; // 浏览剪切控制器
+    // 批量导出状态
+    int     batchExportIndex_ = 0;  // 当前导出到第几个（UI 进度显示用）
+    int     batchExportTotal_ = 0;  // 总区间数
+    QStringList batchExportLog_;    // 日志行缓存，全部完成后写入
+    QElapsedTimer exportTimer_;     // 导出耗时计时器
+
+    void writeExportLog();          // 写入导出记录到文件
     QString             currentFile_;              // 当前打开的文件路径
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     int64_t currentPos_ = 0;        // 当前播放位置（毫秒），键盘快进/快退用
     bool isFullscreen_ = false;     // 全屏状态标志
+    bool switchingClipMode_ = false; // 剪辑模式切换中，防止 trimDock_ visibility 循环触发
     QList<StreamDestination> pendingDests_;        // 文件打开前预配置的推流目标，openFile 后自动启动
     QList<StreamDestination> activeDests_;         // 当前正在推流的目标列表（暂停恢复时需要阻塞标志）
     double streamAlignSec_ = 0.0;                 // 推流 seek 对齐的起始秒数，用于计算截止时长

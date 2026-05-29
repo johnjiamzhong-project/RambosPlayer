@@ -6,12 +6,18 @@
 #include "streamcontroller.h"
 #include "streamconfigdialog.h"
 #include "timeline.h"
+#include "browseclipper.h"
 #include "thumbnailextractor.h"
 #include "exportworker.h"
+#include <QMessageBox>
 #include <QDockWidget>
 #include <QStyleOptionSlider>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include <QDir>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QSettings>
@@ -22,6 +28,19 @@
 #include <QStatusBar>
 #include <QDebug>
 #include <algorithm>
+
+// 毫秒转文件名安全的时间字符串（冒号在 Windows 文件名中非法）。
+// 格式：MMmSSs（如 01m23s），超过 1 小时则为 HHhMMmSSs。
+static QString formatTimeForFilename(int64_t ms) {
+    int s = static_cast<int>(ms / 1000);
+    int h = s / 3600;
+    int m = (s % 3600) / 60;
+    int sec = s % 60;
+    if (h > 0)
+        return QString("%1h%2m%3s").arg(h).arg(m, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0'));
+    return QString("%1m%2s").arg(m, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0'));
+}
+
 
 // 构造函数：setupUi 完成所有控件创建和布局，此处只做指针绑定、初始值和信号连接。
 // renderer_ 直接取 ui->videoWidget（promoted VideoRenderer），无需手动 setCentralWidget。
@@ -58,6 +77,12 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_       = new Timeline();
     thumbExtractor_ = new ThumbnailExtractor();
     exportWorker_   = new ExportWorker();
+
+    // 浏览剪切控制器
+    browseClipper_ = new BrowseClipper(player_, timeline_, this);
+    connect(browseClipper_, &BrowseClipper::finished, this, [this]() {
+        ui->actionBrowseClip->setChecked(false);
+    });
 
     // 剪辑时间轴 Dock，挂在底部
     trimDock_ = new QDockWidget("视频剪辑", this);
@@ -100,6 +125,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // 剪辑模式信号连接
     connect(ui->actionTrimMode, &QAction::toggled,          this, &MainWindow::onTrimModeToggled);
+    connect(ui->actionBrowseClip, &QAction::toggled,        this, &MainWindow::onBrowseClipToggled);
     connect(ui->actionExport,  &QAction::triggered,         this, &MainWindow::onExportTriggered);
     connect(trimDock_,         &QDockWidget::visibilityChanged, ui->actionTrimMode, &QAction::setChecked);
     connect(thumbExtractor_,   &ThumbnailExtractor::thumbnailReady,  this, [this](const QImage& img) {
@@ -120,7 +146,16 @@ MainWindow::MainWindow(QWidget* parent)
                 .arg(outSec / 60, 2, 10, QChar('0')).arg(outSec % 60, 2, 10, QChar('0'))
                 .arg(durSec));
     });
+    connect(timeline_, &Timeline::segmentsChanged, this, [this](int count) {
+        ui->actionExport->setEnabled(count > 0 || ui->actionTrimMode->isChecked());
+    });
     connect(exportWorker_, &ExportWorker::progressed, this, &MainWindow::onExportProgress);
+    connect(exportWorker_, &ExportWorker::segmentCompleted, this, [this](int index) {
+        batchExportIndex_ = index + 1;
+        if (batchExportIndex_ < batchExportTotal_)
+            statusBar()->showMessage(
+                QString("导出中... 第 %1/%2 段").arg(batchExportIndex_).arg(batchExportTotal_));
+    });
     connect(exportWorker_, &ExportWorker::exportFinished, this, &MainWindow::onExportFinished);
     connect(exportWorker_, &ExportWorker::errorOccurred, this, [](const QString& msg) {
         QMessageBox::warning(nullptr, "导出错误", msg);
@@ -365,6 +400,8 @@ void MainWindow::onVolumeChanged(int value) {
 void MainWindow::onDurationChanged(int64_t ms) {
     duration_ = ms;
     ui->timeLabel->setText("00:00 / " + formatTime(ms));
+    if (trimDock_->isVisible())
+        timeline_->setDuration(ms * 1000);
 }
 
 // 每 100ms 更新进度条和时间标签；用户正在拖拽时跳过进度条更新，避免跳动。
@@ -425,6 +462,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
         auto* ke = static_cast<QKeyEvent*>(event);
         if (ke->isAutoRepeat()) return false;  // 忽略按键自动重复，避免多次 seek 叠加
         if (ke->key() == Qt::Key_Space) {
+            if (browseClipper_->isActive()) {
+                browseClipper_->markPoint();
+                return true;
+            }
             qInfo() << "MainWindow: Space pressed, toggle play/pause";
             onPlayPause();
             return true;
@@ -452,6 +493,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
 void MainWindow::keyPressEvent(QKeyEvent* event) {
     if (event->isAutoRepeat()) return;
     if (event->key() == Qt::Key_Space) {
+        if (browseClipper_->isActive()) {
+            browseClipper_->markPoint();
+            return;
+        }
         qInfo() << "MainWindow::keyPressEvent Space";
         onPlayPause();
     } else if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
@@ -519,13 +564,92 @@ void MainWindow::onStreamStart() {
 }
 
 // 剪辑模式切换：显示/隐藏时间轴 Dock，启动缩略图提取。
+// 与浏览剪切互斥，进入时自动退出浏览剪切（含保存提示）。
 void MainWindow::onTrimModeToggled(bool checked) {
-    trimDock_->setVisible(checked);
-    if (checked && !currentFile_.isEmpty()) {
-        timeline_->setDuration(duration_ * 1000);  // ms → us，先画刻度
-        thumbExtractor_->extract(currentFile_);
-        ui->actionExport->setEnabled(false);
+    // 切换中的 guard：dock visibilityChanged 可能误触发 actionTrimMode→setChecked，
+    // 此时浏览模式活跃则立即回退，不阻塞后续逻辑
+    if (switchingClipMode_) {
+        if (checked && ui->actionBrowseClip->isChecked())
+            ui->actionTrimMode->setChecked(false);
+        return;
     }
+    switchingClipMode_ = true;
+
+    if (checked) {
+        timeline_->setHandlesVisible(true);
+        timeline_->setBottomBarVisible(false);
+        trimDock_->setVisible(true);
+        if (!currentFile_.isEmpty()) {
+            timeline_->setDuration(duration_ * 1000);
+            if (!thumbExtractor_->isRunning())
+                thumbExtractor_->extract(currentFile_);
+            ui->actionExport->setEnabled(!timeline_->segments().isEmpty());
+        }
+    } else {
+        if (!ui->actionBrowseClip->isChecked())
+            trimDock_->setVisible(false);
+    }
+    switchingClipMode_ = false;
+}
+
+// 浏览剪切模式切换（Ctrl+B）
+// 与自由剪辑互斥，进入时询问是否保存自由剪辑的入/出点区间。
+void MainWindow::onBrowseClipToggled(bool checked) {
+    if (switchingClipMode_) return;
+    switchingClipMode_ = true;
+
+    if (checked) {
+        if (currentFile_.isEmpty()) {
+            ui->actionBrowseClip->setChecked(false);
+            statusBar()->showMessage("请先打开视频文件", 3000);
+            switchingClipMode_ = false;
+            return;
+        }
+        // 隐藏自由剪辑的把手
+        timeline_->setHandlesVisible(false);
+        // 如果从自由剪辑切换过来，询问是否保存当前入点/出点区间
+        if (ui->actionTrimMode->isChecked()) {
+            int64_t inUs = timeline_->inPts();
+            int64_t outUs = timeline_->outPts();
+            int64_t dur = timeline_->duration();
+            // inPts_ 默认 0, outPts_ 默认 duration_，当用户拖动过任意把手时此条件为真
+            bool hasTrim = (inUs > 0 || outUs < dur);
+            if (hasTrim) {
+                auto btn = QMessageBox::question(this, "保存剪切区间",
+                    QString("当前剪切区间 %1 → %2，是否保存到底部导轨？")
+                        .arg(MainWindow::formatTime(inUs / 1000))
+                        .arg(MainWindow::formatTime(outUs / 1000)),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                if (btn == QMessageBox::Yes) {
+                    timeline_->setBottomBarVisible(true);
+                    timeline_->addSegment(inUs, outUs);
+                }
+            }
+            ui->actionTrimMode->setChecked(false);
+        }
+        // 确保 timeline dock 可见
+        if (!trimDock_->isVisible()) {
+            trimDock_->setVisible(true);
+            timeline_->setDuration(duration_ * 1000);
+            if (!thumbExtractor_->isRunning())
+                thumbExtractor_->extract(currentFile_);
+        }
+        browseClipper_->start();
+    } else {
+        if (browseClipper_->isActive())
+            browseClipper_->stop();
+        // 退出浏览剪切：仅在自由剪辑模式激活时才恢复把手
+        timeline_->setHandlesVisible(ui->actionTrimMode->isChecked());
+        // 底部导轨的显隐由 BrowseClipper::stop() 根据用户选择管理：
+        // - 保留区间 → 保持可见
+        // - 全部丢弃 → stop() 内已调用 setBottomBarVisible(false)
+        // 此处不再无条件隐藏，避免覆盖用户的选择。
+        // 如果底部导轨还有区间（用户保留的），保持 dock 可见；
+        // 否则 dock 随浏览剪切一起关闭。
+        if (!ui->actionTrimMode->isChecked() && timeline_->segments().isEmpty())
+            trimDock_->setVisible(false);
+    }
+    switchingClipMode_ = false;
 }
 
 // 缩略图全部提取完成：确保时长已设置（第一张来时就设了，这里做兜底）。
@@ -533,39 +657,159 @@ void MainWindow::onThumbnailsReady(const QList<QImage>&) {
     timeline_->setDuration(duration_ * 1000);
 }
 
-// 导出片段：弹出保存对话框，启动 ExportWorker。记住上次导出路径。
+// 导出片段：弹出保存对话框，启动 ExportWorker（单段或多段）。记住上次导出路径。
 void MainWindow::onExportTriggered() {
     QSettings s("RambosPlayer", "RambosPlayer");
     QString lastExportDir = s.value("lastExportDir",
                                      QFileInfo(currentFile_).absolutePath()).toString();
-    QString defaultPath = lastExportDir + "/clip_" + QFileInfo(currentFile_).completeBaseName() + ".mp4";
+    QString baseName = QFileInfo(currentFile_).completeBaseName();
 
-    QString outPath = QFileDialog::getSaveFileName(this, "导出剪辑片段", defaultPath,
-        "MP4 (*.mp4);;所有文件 (*)");
-    if (outPath.isEmpty()) return;
+    // 让用户输入导出名称（默认用源文件基础名，用户可修改）
+    bool ok = false;
+    QString exportName = QInputDialog::getText(this, "导出名称",
+        QString::fromUtf8("请输入导出视频的名称前缀："),
+        QLineEdit::Normal, baseName, &ok);
+    if (!ok || exportName.trimmed().isEmpty())
+        return;
+    exportName = exportName.trimmed();
 
-    s.setValue("lastExportDir", QFileInfo(outPath).absolutePath());
+    auto segs = timeline_->segments();
+    if (!segs.isEmpty()) {
+        // 多段导出：选择目录，一次 runBatch 处理所有段（复用解码器）
+        QString dir = QFileDialog::getExistingDirectory(this, "选择导出目录", lastExportDir);
+        if (dir.isEmpty()) return;
+        s.setValue("lastExportDir", dir);
 
-    int64_t inUs  = timeline_->inPts();
-    int64_t outUs = timeline_->outPts();
-    qInfo() << "导出范围:" << inUs / 1000000.0 << "s –" << outUs / 1000000.0 << "s";
+        batchExportTotal_ = segs.size();
+        batchExportIndex_ = 0;
+        batchExportLog_.clear();
 
-    statusBar()->showMessage("正在导出...");
-    ui->actionExport->setEnabled(false);
-    exportWorker_->run(currentFile_, outPath, inUs, outUs);
+        // 构建片段列表
+        QList<ExportSegment> segments;
+        for (int i = 0; i < segs.size(); ++i) {
+            const auto& seg = segs[i];
+            QString fileName = QString("%1_%2_%3.mp4")
+                                   .arg(exportName)
+                                   .arg(formatTimeForFilename(seg.first / 1000))
+                                   .arg(formatTimeForFilename(seg.second / 1000));
+            segments.append({dir + "/" + fileName, seg.first, seg.second});
+
+            // 预填日志（区间/时长按截断秒显示）
+            int64_t dispInSec  = seg.first  / 1000000;
+            int64_t dispOutSec = seg.second / 1000000;
+            batchExportLog_.append(QString::fromUtf8("文件: %1").arg(fileName));
+            batchExportLog_.append(QString::fromUtf8("区间: %1 → %2")
+                .arg(formatTime(dispInSec * 1000))
+                .arg(formatTime(dispOutSec * 1000)));
+            batchExportLog_.append(QString::fromUtf8("时长: %1")
+                .arg(formatTime((dispOutSec - dispInSec) * 1000)));
+            if (i < segs.size() - 1)
+                batchExportLog_.append("---");
+        }
+
+        exportTimer_.start();
+        statusBar()->showMessage(QString("正在导出第 1/%1 段...").arg(batchExportTotal_));
+        ui->actionExport->setEnabled(false);
+        exportWorker_->runBatch(currentFile_, segments);
+    } else {
+        // 单段导出：自由剪辑的入/出点范围，默认文件名带时间区间方便区分
+        int64_t inUs  = timeline_->inPts();
+        int64_t outUs = timeline_->outPts();
+        QString defaultName = QString("%1_%2_%3.mp4")
+            .arg(exportName)
+            .arg(formatTimeForFilename(inUs / 1000))
+            .arg(formatTimeForFilename(outUs / 1000));
+        QString defaultPath = lastExportDir + "/" + defaultName;
+        QString outPath = QFileDialog::getSaveFileName(this, "导出剪辑片段", defaultPath,
+            "MP4 (*.mp4);;所有文件 (*)");
+        if (outPath.isEmpty()) return;
+        s.setValue("lastExportDir", QFileInfo(outPath).absolutePath());
+        qInfo() << "导出范围:" << inUs / 1000000.0 << "s –" << outUs / 1000000.0 << "s";
+
+        // 单段日志缓存在 batchExportLog_ 中模拟为一条
+        // 区间和时长统一按秒截断，保证日志显示数学自洽（实际导出仍用精确微秒值）
+        {
+            int64_t dispInSec  = inUs  / 1000000;  // 截断到秒，与 Timeline 显示一致
+            int64_t dispOutSec = outUs / 1000000;
+            batchExportLog_.clear();
+            batchExportLog_.append(QString::fromUtf8("文件: %1").arg(QFileInfo(outPath).fileName()));
+            batchExportLog_.append(QString::fromUtf8("区间: %1 → %2")
+                .arg(formatTime(dispInSec  * 1000))
+                .arg(formatTime(dispOutSec * 1000)));
+            batchExportLog_.append(QString::fromUtf8("时长: %1")
+                .arg(formatTime((dispOutSec - dispInSec) * 1000)));
+        }
+
+        exportTimer_.start();  // 开始计时
+        statusBar()->showMessage("正在导出...");
+        ui->actionExport->setEnabled(false);
+        exportWorker_->run(currentFile_, outPath, inUs, outUs);
+    }
+}
+
+// 写入导出记录到文件（与导出文件同目录）
+// 每次重写整个文件（BOM + 原有内容 + 新条目），彻底规避 Append/size 判断不可靠的问题
+void MainWindow::writeExportLog() {
+    QString logPath = QCoreApplication::applicationDirPath() + "/export_log.txt";
+    qInfo() << "ExportWorker: 写日志到" << logPath;
+
+    // 构建新条目：全程用 QString，经 toUtf8() 输出，避免 const char* 经 QLatin1String 双重编码
+    QString newEntry;
+    newEntry += QString::fromUtf8("\n========================================\n");
+    newEntry += QString::fromUtf8("导出时间: ") + QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") + QLatin1Char('\n');
+    newEntry += QString::fromUtf8("源文件: ") + currentFile_ + QLatin1Char('\n');
+    newEntry += QString::fromUtf8("------------------------------------------------------------\n");
+    for (const auto& line : batchExportLog_)
+        newEntry += line + QLatin1Char('\n');
+    // 导出耗时
+    double elapsedSec = exportTimer_.elapsed() / 1000.0;
+    newEntry += QString::fromUtf8("导出耗时: %1 秒\n")
+                    .arg(QString::number(elapsedSec, 'f', 1));
+    newEntry += QString::fromUtf8("========================================\n");
+
+    static const QByteArray kBom("\xEF\xBB\xBF", 3);
+
+    // 读取已有内容（去掉旧 BOM），追加新条目，整体以 BOM+UTF-8 重写，确保 Notepad 始终正确识别编码
+    QByteArray body;
+    {
+        QFile reader(logPath);
+        if (reader.open(QIODevice::ReadOnly)) {
+            body = reader.readAll();
+            if (body.startsWith(kBom))
+                body = body.mid(3);
+        }
+    }
+    body += newEntry.toUtf8();
+
+    QFile writer(logPath);
+    if (!writer.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qInfo() << "ExportWorker: 无法打开日志文件" << logPath;
+        return;
+    }
+    writer.write(kBom);
+    writer.write(body);
+    qInfo() << "ExportWorker: 日志写入完成";
 }
 
 // 导出进度更新。
 void MainWindow::onExportProgress(int64_t currentPts, int64_t totalPts) {
     if (totalPts > 0) {
         int pct = static_cast<int>(currentPts * 100 / totalPts);
-        statusBar()->showMessage(QString("导出中... %1%").arg(pct));
+        if (batchExportTotal_ > 0)
+            statusBar()->showMessage(
+                QString("导出中... 第 %1/%2 段 %3%")
+                    .arg(batchExportIndex_ + 1).arg(batchExportTotal_).arg(pct));
+        else
+            statusBar()->showMessage(QString("导出中... %1%").arg(pct));
     }
 }
 
 // 导出完成/失败处理。
 void MainWindow::onExportFinished(bool ok) {
-    statusBar()->showMessage(ok ? "导出完成" : "导出失败", 5000);
+    if (ok)
+        writeExportLog();
+    statusBar()->showMessage(ok ? "导出完成" : "导出失败，请查看日志", 5000);
+    batchExportTotal_ = 0;
     ui->actionExport->setEnabled(true);
 }
 
@@ -685,7 +929,8 @@ void MainWindow::onAbout() {
         "<tr><td><b>双击视频</b></td><td>切换全屏</td></tr>"
         "<tr><td><b>Esc</b></td><td>退出全屏</td></tr>"
         "<tr><td><b>Ctrl+Shift+S</b></td><td>推流设置（HTTP-FLV / SRT / 本地录制）</td></tr>"
-        "<tr><td><b>Ctrl+T</b></td><td>剪辑模式</td></tr>"
+        "<tr><td><b>Ctrl+T</b></td><td>剪辑模式（自由剪辑）</td></tr>"
+        "<tr><td><b>Ctrl+B</b></td><td>浏览剪切</td></tr>"
         "<tr><td><b>Ctrl+E</b></td><td>导出片段</td></tr>"
         "</table><br>"
         "<a href='https://github.com/johnjiamzhong-project/RambosPlayer'>"

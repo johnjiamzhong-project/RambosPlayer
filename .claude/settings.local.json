@@ -104,7 +104,13 @@
       "Bash(dir G:sourcevscodeffmpeg_prostage5RambosPlayerdocs *)",
       "Bash(Remove-Item *)",
       "Bash(Select-Object -Last 30)",
-      "PowerShell(Get-Content G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\CLAUDE.md -Encoding utf8 | Select-Object -Index 183,184,185,186,187,188 | ForEach-Object { \"[$\\([char]34\\)$_$\\([char]34\\)]\" })"
+      "PowerShell(Get-Content G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\CLAUDE.md -Encoding utf8 | Select-Object -Index 183,184,185,186,187,188 | ForEach-Object { \"[$\\([char]34\\)$_$\\([char]34\\)]\" })",
+      "PowerShell(if \\(Test-Path \"build/Release/RambosPlayer.exe\"\\) { $f = Get-Item \"build/Release/RambosPlayer.exe\"; Write-Host \"Release exe found, last modified: $\\($f.LastWriteTime\\)\" } else { Write-Host \"No Release exe found\" })",
+      "Bash(grep -E '\\\\.\\(cpp|h|ui|pro|cmake|ps1|json|md\\)$')",
+      "Bash(xargs wc -l)",
+      "Bash(claude *)",
+      "PowerShell(Select-String -Path \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\src\\\\exportworker.cpp\" -Pattern \"videoFrameCount\" | ForEach-Object { \"$\\($_.LineNumber\\): $\\($_.Line.Trim\\(\\)\\)\" })",
+      "Bash(dir *)"
     ]
   }
 }

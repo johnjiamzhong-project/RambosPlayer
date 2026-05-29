@@ -62,12 +62,17 @@ SOURCES += \
     src/streamconfigdialog.cpp \
     src/localrecorder.cpp \
     src/thumbnailextractor.cpp \
+    src/browseclipper.cpp \
     src/timeline.cpp \
     src/exportworker.cpp \
-    src/httpflvserver.cpp
+    src/httpflvserver.cpp \
+    src/streamdecoder.cpp \
+    src/streampipeline.cpp \
+    src/mpegtsserver.cpp
 
 HEADERS += \
     src/framequeue.h \
+    src/timeutil.h \
     src/avsync.h \
     src/logger.h \
     src/hwaccel.h \
@@ -86,9 +91,13 @@ HEADERS += \
     src/streamconfigdialog.h \
     src/localrecorder.h \
     src/thumbnailextractor.h \
+    src/browseclipper.h \
     src/timeline.h \
     src/exportworker.h \
-    src/httpflvserver.h
+    src/httpflvserver.h \
+    src/streamdecoder.h \
+    src/streampipeline.h \
+    src/mpegtsserver.h
 
 FORMS += \
     src/mainwindow.ui \

@@ -192,10 +192,18 @@
     <addaction name="separator"/>
     <addaction name="actionFilterPanel"/>
     <addaction name="actionHwAccel"/>
-	    <addaction name="actionStream"/>
-	    <addaction name="separator"/>
-	    <addaction name="actionTrimMode"/>
-	    <addaction name="actionExport"/>
+    <addaction name="actionStream"/>
+    <addaction name="separator"/>
+    <addaction name="menuClip"/>
+   </widget>
+   <widget class="QMenu" name="menuClip">
+    <property name="title">
+     <string>剪切(&amp;C)</string>
+    </property>
+    <addaction name="actionTrimMode"/>
+    <addaction name="actionBrowseClip"/>
+    <addaction name="separator"/>
+    <addaction name="actionExport"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -246,7 +254,7 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>剪辑模式(&amp;T)</string>
+    <string>自由剪辑(&amp;T)</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+T</string>
@@ -274,6 +282,17 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+S</string>
+   </property>
+  </action>
+  <action name="actionBrowseClip">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>浏览剪切(&amp;B)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+B</string>
    </property>
   </action>
  </widget>
