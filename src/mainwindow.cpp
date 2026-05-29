@@ -724,9 +724,10 @@ void MainWindow::onSegmentClipTriggered()
         statusBar()->showMessage(
             QString("多段剪切：已添加 %1 个区间，可按 Ctrl+E 导出").arg(count), 5000);
         // 保留底部导轨，无模式激活
-    } else if (timeline_->segments().isEmpty()) {
-        // 取消且无区间 → 恢复之前的模式
-        timeline_->setBottomBarVisible(false);
+    } else {
+        // 取消 → 恢复进入前的模式（无论区间是否为空）
+        if (timeline_->segments().isEmpty())
+            timeline_->setBottomBarVisible(false);
         if (prevBrowse) {
             // 恢复浏览剪切模式
             ui->actionBrowseClip->blockSignals(true);
@@ -741,26 +742,21 @@ void MainWindow::onSegmentClipTriggered()
             }
         } else if (prevFree) {
             // 恢复自由剪辑模式
-            ui->actionTrimMode->setChecked(true);
-            // onTrimModeToggled(true) 会被 blockSignals 阻止，手动处理
             timeline_->setHandlesVisible(true);
             timeline_->setBottomBarVisible(false);
+            ui->actionTrimMode->blockSignals(true);
+            ui->actionTrimMode->setChecked(true);
+            ui->actionTrimMode->blockSignals(false);
             if (!trimDock_->isVisible()) {
                 trimDock_->setVisible(true);
                 timeline_->setDuration(duration_ * 1000);
                 if (!thumbExtractor_->isRunning())
                     thumbExtractor_->extract(currentFile_);
             }
-            ui->actionTrimMode->blockSignals(true);
-            ui->actionTrimMode->setChecked(true);
-            ui->actionTrimMode->blockSignals(false);
-        } else {
-            // 之前无模式，隐藏 dock
+        } else if (timeline_->segments().isEmpty()) {
+            // 之前无模式且无区间 → 隐藏 dock
             trimDock_->setVisible(false);
         }
-    } else {
-        // 取消但有已有区间（非本次操作添加的）：保持底部导轨，隐藏把手
-        timeline_->setHandlesVisible(false);
     }
 }
 
