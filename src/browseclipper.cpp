@@ -12,6 +12,7 @@
 #include <QStatusBar>
 #include <QMainWindow>
 #include <QDebug>
+#include <algorithm>
 
 // 构造函数：绑定播放控制器与时间轴，不做其他初始化（状态由 start() 重置）。
 BrowseClipper::BrowseClipper(PlayerController* player, Timeline* timeline, QObject* parent)
@@ -36,34 +37,48 @@ void BrowseClipper::start()
     }
 }
 
-// 退出浏览剪切模式：清除待定入点标记，若有已标记区间则弹出确认对话框，
-// 用户可勾选要保留的区间；全部丢弃则从时间轴移除所有本次会话区间。
+// 退出浏览剪切模式：
+// - showDialog=true (默认): 弹出确认对话框，列出底部导轨所有区间，用户勾选保留
+// - showDialog=false: 静默退出，保留所有区间不变（模式切换时使用）
 // 最终发射 finished() 信号通知主窗口更新菜单状态。
-void BrowseClipper::stop()
+void BrowseClipper::stop(bool showDialog)
 {
     active_ = false;
     state_ = Idle;
     timeline_->clearPendingInPoint();
 
-    if (markedSegments_.isEmpty()) {
+    QMainWindow* mw = qobject_cast<QMainWindow*>(parent());
+
+    if (!showDialog) {
+        // 静默退出：保留所有区间，不弹对话框
+        if (mw && mw->statusBar())
+            mw->statusBar()->showMessage("已退出浏览剪切模式", 3000);
+        emit finished();
+        return;
+    }
+
+    // 获取当前底部导轨所有区间（不限于本次浏览会话标记的）
+    auto allSegs = timeline_->segments();
+    int segCount = allSegs.size();
+
+    if (segCount == 0) {
         timeline_->setBottomBarVisible(false);
-        QMainWindow* mw = qobject_cast<QMainWindow*>(parent());
         if (mw && mw->statusBar())
             mw->statusBar()->showMessage("", 3000);
         emit finished();
         return;
     }
 
-    // 弹出确认对话框：列出所有已标记区间，可勾选保留
+    // 弹出确认对话框：列出所有区间，可勾选保留
     QDialog dlg(qobject_cast<QWidget*>(parent()));
     dlg.setWindowTitle("浏览剪切 — 确认区间");
     dlg.resize(400, 250);
 
     auto* layout = new QVBoxLayout(&dlg);
-    layout->addWidget(new QLabel(QString("共标记 %1 个区间，勾选要保留的段：").arg(markedSegments_.size())));
+    layout->addWidget(new QLabel(QString("共标记 %1 个区间，勾选要保留的段：").arg(segCount)));
 
     auto* list = new QListWidget(&dlg);
-    for (const auto& seg : markedSegments_) {
+    for (const auto& seg : allSegs) {
         auto* item = new QListWidgetItem(
             QString("%1 → %2  (%3秒)")
                 .arg(usToLabel(seg.first))
@@ -82,23 +97,23 @@ void BrowseClipper::stop()
     QObject::connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     if (dlg.exec() == QDialog::Accepted) {
-        // 移除未勾选的浏览区间，已勾选的保留在 timeline 中（不动，避免重叠检测误杀）
-        for (int i = 0; i < list->count() && i < markedSegments_.size(); ++i) {
-            if (list->item(i)->checkState() == Qt::Unchecked) {
-                timeline_->removeSegment(markedSegments_[i].first, markedSegments_[i].second);
-            }
+        // 收集未勾选的索引（从高到低删除，避免索引漂移）
+        QList<int> removeIndices;
+        for (int i = 0; i < list->count(); ++i) {
+            if (list->item(i)->checkState() == Qt::Unchecked)
+                removeIndices.append(i);
         }
+        std::sort(removeIndices.begin(), removeIndices.end(), std::greater<int>());
+        for (int idx : removeIndices)
+            timeline_->removeSegmentAt(idx);
         if (timeline_->segments().isEmpty())
             timeline_->setBottomBarVisible(false);
     } else {
-        // 全部丢弃：移除所有本次浏览会话标记的区间
-        for (const auto& seg : markedSegments_)
-            timeline_->removeSegment(seg.first, seg.second);
-        if (timeline_->segments().isEmpty())
-            timeline_->setBottomBarVisible(false);
+        // 全部丢弃
+        timeline_->clearSegments();
+        timeline_->setBottomBarVisible(false);
     }
 
-    QMainWindow* mw = qobject_cast<QMainWindow*>(parent());
     if (mw && mw->statusBar())
         mw->statusBar()->showMessage("已退出浏览剪切模式", 3000);
 

@@ -15,7 +15,7 @@ public:
     explicit BrowseClipper(PlayerController* player, Timeline* timeline, QObject* parent = nullptr);
 
     void start();           // 进入浏览剪切模式，自动播放
-    void stop();            // 退出浏览剪切模式，弹出确认对话框
+    void stop(bool showDialog = true);  // 退出浏览剪切模式；showDialog=true 弹出确认对话框
     bool isActive() const;
     void markPoint();       // 空格键：标记入点或出点
 
