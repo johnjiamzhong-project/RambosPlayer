@@ -578,6 +578,13 @@ void MainWindow::onTrimModeToggled(bool checked) {
     switchingClipMode_ = true;
 
     if (checked) {
+        // 无文件保护：所有剪辑模式统一弹窗提示
+        if (currentFile_.isEmpty()) {
+            QMessageBox::information(this, "提示", "请先打开视频文件");
+            ui->actionTrimMode->setChecked(false);
+            switchingClipMode_ = false;
+            return;
+        }
         timeline_->setHandlesVisible(true);
         trimDock_->setVisible(true);
 
@@ -614,8 +621,8 @@ void MainWindow::onBrowseClipToggled(bool checked) {
 
     if (checked) {
         if (currentFile_.isEmpty()) {
+            QMessageBox::information(this, "提示", "请先打开视频文件");
             ui->actionBrowseClip->setChecked(false);
-            statusBar()->showMessage("请先打开视频文件", 3000);
             switchingClipMode_ = false;
             return;
         }
@@ -671,7 +678,7 @@ void MainWindow::onBrowseClipToggled(bool checked) {
 void MainWindow::onSegmentClipTriggered()
 {
     if (currentFile_.isEmpty()) {
-        statusBar()->showMessage("请先打开视频文件", 3000);
+        QMessageBox::information(this, "提示", "请先打开视频文件");
         return;
     }
 
