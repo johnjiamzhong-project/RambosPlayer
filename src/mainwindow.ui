@@ -202,6 +202,7 @@
     </property>
     <addaction name="actionTrimMode"/>
     <addaction name="actionBrowseClip"/>
+    <addaction name="actionSegmentClip"/>
     <addaction name="separator"/>
     <addaction name="actionExport"/>
    </widget>
@@ -293,6 +294,17 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+B</string>
+   </property>
+  </action>
+  <action name="actionSegmentClip">
+   <property name="checkable">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>多段剪切(&amp;M)...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+M</string>
    </property>
   </action>
  </widget>

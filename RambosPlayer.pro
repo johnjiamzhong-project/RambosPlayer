@@ -63,6 +63,7 @@ SOURCES += \
     src/localrecorder.cpp \
     src/thumbnailextractor.cpp \
     src/browseclipper.cpp \
+    src/segmentclipper.cpp \
     src/timeline.cpp \
     src/exportworker.cpp \
     src/httpflvserver.cpp \
@@ -92,6 +93,7 @@ HEADERS += \
     src/localrecorder.h \
     src/thumbnailextractor.h \
     src/browseclipper.h \
+    src/segmentclipper.h \
     src/timeline.h \
     src/exportworker.h \
     src/httpflvserver.h \

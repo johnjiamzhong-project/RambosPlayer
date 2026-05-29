@@ -445,10 +445,12 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] 修复浏览模式时 dock 显示误触自由剪辑勾选状态
 - [x] 导出按钮在自由剪辑拖把手时启用，浏览模式加区间时启用
 
-### Task 3 — SegmentClipper 多段剪切
-- [ ] 输入面板 UI，逐行输入时间区间
-- [ ] 验证：不超过视频时长、起始≤结束、区间不重叠
-- [ ] 确定后填充底部导轨
+### Task 3 — SegmentClipper 多段剪切 ✅
+- [x] 输入面板 UI，逐行输入时间区间（QTextEdit + 验证列表）
+- [x] 解析 MM:SS 和 HH:MM:SS 两种时间格式
+- [x] 验证：不超过视频时长、起始≤结束、区间不重叠
+- [x] 确定后填充底部导轨
+- [x] 菜单入口 "多段剪切 (Ctrl+M)"，关于对话框同步更新
 
 ### Task 4 — 合并（Concat / Mix / Mux）
 - [ ] ConcatDemuxer：同参数无损拼接
@@ -477,4 +479,4 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] Phase 9 — 屏幕录制/推流
 - [x] Phase 10 — 视频剪辑器
 - [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
-- [ ] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅）
+- [x] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅ Task 3✅）

@@ -7,6 +7,7 @@
 #include "streamconfigdialog.h"
 #include "timeline.h"
 #include "browseclipper.h"
+#include "segmentclipper.h"
 #include "thumbnailextractor.h"
 #include "exportworker.h"
 #include <QMessageBox>
@@ -126,6 +127,7 @@ MainWindow::MainWindow(QWidget* parent)
     // 剪辑模式信号连接
     connect(ui->actionTrimMode, &QAction::toggled,          this, &MainWindow::onTrimModeToggled);
     connect(ui->actionBrowseClip, &QAction::toggled,        this, &MainWindow::onBrowseClipToggled);
+    connect(ui->actionSegmentClip, &QAction::triggered,     this, &MainWindow::onSegmentClipTriggered);
     connect(ui->actionExport,  &QAction::triggered,         this, &MainWindow::onExportTriggered);
     connect(trimDock_,         &QDockWidget::visibilityChanged, ui->actionTrimMode, &QAction::setChecked);
     connect(thumbExtractor_,   &ThumbnailExtractor::thumbnailReady,  this, [this](const QImage& img) {
@@ -652,6 +654,39 @@ void MainWindow::onBrowseClipToggled(bool checked) {
     switchingClipMode_ = false;
 }
 
+// 多段剪切（Ctrl+M）：弹出输入对话框，验证通过后填充底部导轨。
+void MainWindow::onSegmentClipTriggered()
+{
+    if (currentFile_.isEmpty()) {
+        statusBar()->showMessage("请先打开视频文件", 3000);
+        return;
+    }
+
+    // 确保 dock 可见
+    if (!trimDock_->isVisible()) {
+        trimDock_->setVisible(true);
+        timeline_->setDuration(duration_ * 1000);
+        if (!thumbExtractor_->isRunning())
+            thumbExtractor_->extract(currentFile_);
+    }
+    // 多段剪切模式：隐藏把手，显示底部导轨
+    timeline_->setHandlesVisible(false);
+    timeline_->setBottomBarVisible(true);
+
+    SegmentClipper dlg(timeline_, duration_ * 1000, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        int count = timeline_->segments().size();
+        statusBar()->showMessage(
+            QString("多段剪切：已添加 %1 个区间，可按 Ctrl+E 导出").arg(count), 5000);
+    } else if (timeline_->segments().isEmpty()) {
+        // 用户取消且没有已有区间，隐藏底部导轨
+        timeline_->setBottomBarVisible(false);
+        // 如果自由剪辑也没激活，隐藏 dock
+        if (!ui->actionTrimMode->isChecked())
+            trimDock_->setVisible(false);
+    }
+}
+
 // 缩略图全部提取完成：确保时长已设置（第一张来时就设了，这里做兜底）。
 void MainWindow::onThumbnailsReady(const QList<QImage>&) {
     timeline_->setDuration(duration_ * 1000);
@@ -931,6 +966,7 @@ void MainWindow::onAbout() {
         "<tr><td><b>Ctrl+Shift+S</b></td><td>推流设置（HTTP-FLV / SRT / 本地录制）</td></tr>"
         "<tr><td><b>Ctrl+T</b></td><td>剪辑模式（自由剪辑）</td></tr>"
         "<tr><td><b>Ctrl+B</b></td><td>浏览剪切</td></tr>"
+        "<tr><td><b>Ctrl+M</b></td><td>多段剪切（批量输入区间）</td></tr>"
         "<tr><td><b>Ctrl+E</b></td><td>导出片段</td></tr>"
         "</table><br>"
         "<a href='https://github.com/johnjiamzhong-project/RambosPlayer'>"

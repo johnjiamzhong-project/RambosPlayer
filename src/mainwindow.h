@@ -47,6 +47,7 @@ private slots:
     void onStreamStart();
     void onTrimModeToggled(bool checked);
     void onBrowseClipToggled(bool checked);
+    void onSegmentClipTriggered();
     void onExportTriggered();
     void onThumbnailsReady(const QList<QImage>& images);
     void onExportProgress(int64_t currentPts, int64_t totalPts);

@@ -37,6 +37,7 @@ add_executable(RambosPlayer WIN32
     src/localrecorder.cpp
     src/thumbnailextractor.cpp
     src/browseclipper.cpp
+    src/segmentclipper.cpp
     src/timeline.cpp
     src/exportworker.cpp
     src/httpflvserver.cpp
