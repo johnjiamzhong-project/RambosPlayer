@@ -273,8 +273,7 @@ void SegmentClipper::onAccept()
             return;
     }
 
-    // 清空现有区间
-    timeline_->clearSegments();
+    // 只追加新区间，不清除已有区间（之前可能由浏览剪切添加）
     timeline_->setBottomBarVisible(true);
 
     int added = 0;
