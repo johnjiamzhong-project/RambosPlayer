@@ -579,16 +579,21 @@ void MainWindow::onTrimModeToggled(bool checked) {
 
     if (checked) {
         timeline_->setHandlesVisible(true);
-        timeline_->setBottomBarVisible(false);
         trimDock_->setVisible(true);
+
+        // 进入自由剪辑前，静默退出浏览剪切（保留所有区间）
+        bool hadBrowseSegments = false;
+        if (ui->actionBrowseClip->isChecked()) {
+            if (!timeline_->segments().isEmpty())
+                hadBrowseSegments = true;
+            browseClipper_->stop(false);
+            ui->actionBrowseClip->blockSignals(true);
+            ui->actionBrowseClip->setChecked(false);
+            ui->actionBrowseClip->blockSignals(false);
+        }
+        // 有浏览区间时保留底部导轨可见，否则隐藏
+        timeline_->setBottomBarVisible(hadBrowseSegments);
         if (!currentFile_.isEmpty()) {
-            // 进入自由剪辑：静默退出浏览剪切（保留所有区间）
-            if (ui->actionBrowseClip->isChecked()) {
-                browseClipper_->stop(false);
-                ui->actionBrowseClip->blockSignals(true);
-                ui->actionBrowseClip->setChecked(false);
-                ui->actionBrowseClip->blockSignals(false);
-            }
             timeline_->setDuration(duration_ * 1000);
             if (!thumbExtractor_->isRunning())
                 thumbExtractor_->extract(currentFile_);
