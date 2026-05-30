@@ -393,3 +393,33 @@
 - **修复**：删除 `disconnectClientsFromPeer()` 调用及方法定义。旧 socket 的清理由 `broadcastData()` 中的 `ConnectedState` 检查和 `QTcpSocket::disconnected` 信号接管。同时删除 `mpegtsserver.h` 中 `QHostAddress` 前向声明（不再需要）
 - **涉及文件**：`src/mpegtsserver.cpp`、`src/mpegtsserver.h`
 - **关联**：本修复撤销了 #027 第 2 点和 #028 中引入的 IP 去重机制，该机制在单设备场景下可防止旧 socket 残留，但在多设备 NAT 场景下误杀合法客户端
+
+---
+
+## #034 — ConcatDemuxer 临时文件格式与输入编码不兼容
+
+- **日期**：2026-05-30
+- **现象**：MergePanel「替换音频」模式，选择 1 个视频 + 多个 MP3 音频后点击开始，日志报错 `写入文件头失败 [fmt=ipod, err=Invalid argument]`，合成失败
+- **根因**：MuxAV 多音频路径先将音频拼接为临时文件，临时文件扩展名 `.aac`（ADTS 格式），ADTS 容器只接受 AAC 编码；用户的音频为 MP3，`-c copy` 直通写入被 FFmpeg 拒绝
+- **修复**：临时文件扩展名改为 `.m4a`（MOV/ipod 容器），同时将 MuxAV 多音频路径统一改为调 `execAudioConcat` 重编码为 AAC，彻底规避格式不兼容
+- **涉及文件**：`src/mergeworker.cpp`
+
+---
+
+## #035 — execAudioConcat avfilter concat 导致多段音频全部丢失
+
+- **日期**：2026-05-30
+- **现象**：替换音频模式下，1 个视频 + 3 个音频，合成成功但输出文件完全没有声音；单个音频替换正常
+- **根因**：`execAudioConcat` 使用 `concat=n=N:v=0:a=1` avfilter 拼接音频。该滤镜要求按段顺序驱动，且每段 EOF 前必须先刷新解码器缓冲；代码中未调用 `avcodec_send_packet(nullptr)` 刷新，导致解码器末尾缓存的帧永远不被送入滤镜，concat 滤镜等待超时后不输出任何数据，最终生成的临时音频文件为空，SimpleMuxer 写入的音频流无内容
+- **修复**：完全重写 `execAudioConcat`，改为逐文件顺序解码 + `SwrContext` 重采样 + AAC 编码方案（无 avfilter），每个文件处理完毕后显式用 `avcodec_send_packet(nullptr)` 刷新解码器，确保所有帧都被编码写入
+- **涉及文件**：`src/mergeworker.cpp`
+
+---
+
+## #036 — QWidgetAction 在 QMenu 中高度为零导致最近文件条目不显示
+
+- **日期**：2026-05-30
+- **现象**：最近文件子菜单改为用 `QWidgetAction` + 自定义 widget 实现后，菜单打开只剩「清除所有」一项，文件条目全部消失
+- **根因**：自定义 widget 的 `paintEvent` 调用 `QStyle::CE_MenuItem` 进行绘制，Qt Style 在 `QWidgetAction` 上下文中计算该控件高度时返回 0，导致 `QMenu` 为这些条目分配的区域为空，视觉上完全不可见
+- **修复**：放弃 `QWidgetAction` 方案，恢复使用原生 `QAction`（保证与「清除所有」风格完全一致），另创建一个悬浮 `QToolButton` 作为覆盖层，通过 `eventFilter` 监听菜单鼠标移动事件，动态将 × 按钮定位到 hover 条目右侧
+- **涉及文件**：`src/mainwindow.cpp`、`src/mainwindow.h`

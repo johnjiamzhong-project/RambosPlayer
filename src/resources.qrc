@@ -3,6 +3,8 @@
         <file>style.qss</file>
         <file>icons/play.svg</file>
         <file>icons/pause.svg</file>
+        <file>icons/dock_close.svg</file>
+        <file>icons/dock_float.svg</file>
         <file>icons/app.ico</file>
         <file>mpegts.min.js</file>
     </qresource>

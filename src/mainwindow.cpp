@@ -10,8 +10,14 @@
 #include "segmentclipper.h"
 #include "thumbnailextractor.h"
 #include "exportworker.h"
+#include "mergepanel.h"
 #include <QMessageBox>
 #include <QDockWidget>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QToolButton>
+#include <QWidgetAction>
+#include <QTimer>
 #include <QStyleOptionSlider>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -78,6 +84,61 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_       = new Timeline();
     thumbExtractor_ = new ThumbnailExtractor();
     exportWorker_   = new ExportWorker();
+
+    // 合并/混音面板 Dock（右侧，默认隐藏）
+    mergePanel_ = new MergePanel();
+    mergeDock_  = new QDockWidget("合并 / 混音", this);
+    mergeDock_->setWidget(mergePanel_);
+    mergeDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    mergeDock_->setVisible(false);
+
+    // 自定义标题栏：QSS 无法同时控制标题栏高度和按钮尺寸（两者绑定），
+    // setTitleBarWidget 让高度和按钮大小各自独立。
+    {
+        auto* bar = new QWidget();
+        bar->setFixedHeight(26);
+        bar->setStyleSheet("background:#3c3c3c;");
+
+        auto* layout = new QHBoxLayout(bar);
+        layout->setContentsMargins(8, 0, 4, 0);
+        layout->setSpacing(2);
+
+        auto* title = new QLabel("合并 / 混音");
+        title->setStyleSheet("color:#f0f0f0; font-weight:bold; font-size:12px;");
+        layout->addWidget(title);
+        layout->addStretch();
+
+        const QString btnStyle =
+            "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+            "QPushButton:hover{background:#5a5a5a;}"
+            "QPushButton:pressed{background:#444;}";
+
+        auto* floatBtn = new QPushButton();
+        floatBtn->setFixedSize(20, 20);
+        floatBtn->setIcon(QIcon(":/icons/dock_float.svg"));
+        floatBtn->setIconSize(QSize(14, 14));
+        floatBtn->setToolTip("浮动/停靠");
+        floatBtn->setStyleSheet(btnStyle);
+        connect(floatBtn, &QPushButton::clicked, this, [this]{
+            mergeDock_->setFloating(!mergeDock_->isFloating());
+        });
+        layout->addWidget(floatBtn);
+
+        auto* closeBtn = new QPushButton();
+        closeBtn->setFixedSize(20, 20);
+        closeBtn->setIcon(QIcon(":/icons/dock_close.svg"));
+        closeBtn->setIconSize(QSize(14, 14));
+        closeBtn->setToolTip("关闭");
+        closeBtn->setStyleSheet(
+            "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+            "QPushButton:hover{background:#c0392b;}"
+            "QPushButton:pressed{background:#922b21;}");
+        connect(closeBtn, &QPushButton::clicked, this, [this]{ mergeDock_->hide(); });
+        layout->addWidget(closeBtn);
+
+        mergeDock_->setTitleBarWidget(bar);
+    }
+    addDockWidget(Qt::RightDockWidgetArea, mergeDock_);
 
     // 浏览剪切控制器
     browseClipper_ = new BrowseClipper(player_, timeline_, this);
@@ -162,6 +223,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(exportWorker_, &ExportWorker::errorOccurred, this, [](const QString& msg) {
         QMessageBox::warning(nullptr, "导出错误", msg);
     });
+    connect(ui->actionMerge, &QAction::triggered, this, &MainWindow::onMergeTriggered);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
 
     rebuildRecentMenu();
@@ -186,6 +248,7 @@ MainWindow::~MainWindow() {
     // 但它们内部持有 player_ 裸指针，必须在 delete player_ 之前手动提前删除。
     delete filterDock_;  filterDock_  = nullptr;
     delete trimDock_;    trimDock_    = nullptr;
+    delete mergeDock_;   mergeDock_   = nullptr;
 
     delete player_;
     player_ = nullptr;
@@ -248,25 +311,52 @@ void MainWindow::updateRecentFiles(const QString& path) {
     rebuildRecentMenu();
 }
 
-// 重建最近文件子菜单：先删除 actionClearRecent 之前的动态条目，再按列表顺序插入新条目。
+// 重建最近文件子菜单：用原生 QAction 保证和"清除所有"风格完全一致。
+// 悬浮 × 按钮（recentRemoveBtn_）覆盖在 hover 条目右侧，通过事件过滤器动态定位。
 void MainWindow::rebuildRecentMenu() {
     QSettings s("RambosPlayer", "RambosPlayer");
     QStringList files = s.value("recentFiles").toStringList();
 
-    // 删除所有动态文件条目（跳过静态的 actionClearRecent）
+    // 删除所有动态条目（跳过静态的 actionClearRecent）
     for (QAction* a : ui->menuRecentFiles->actions()) {
         if (a == ui->actionClearRecent) continue;
         ui->menuRecentFiles->removeAction(a);
         delete a;
     }
 
-    // 在 actionClearRecent 之前按顺序插入新条目
+    // 初始化悬浮 × 按钮（只创建一次，后续复用）
+    if (!recentRemoveBtn_) {
+        recentRemoveBtn_ = new QToolButton(ui->menuRecentFiles);
+        recentRemoveBtn_->setText("\xC3\x97");
+        recentRemoveBtn_->setFixedSize(16, 16);
+        recentRemoveBtn_->setCursor(Qt::ArrowCursor);
+        recentRemoveBtn_->setStyleSheet(
+            "QToolButton{color:#999;border:none;background:transparent;font-size:13px;padding:0;}"
+            "QToolButton:hover{color:#e00;}");
+        recentRemoveBtn_->hide();
+        recentRemoveBtn_->raise();
+
+        connect(recentRemoveBtn_, &QToolButton::clicked, this, [this]{
+            QString path = recentRemoveBtn_->property("filePath").toString();
+            recentRemoveBtn_->hide();
+            ui->menuRecentFiles->hide();
+            QSettings s2("RambosPlayer", "RambosPlayer");
+            QStringList f = s2.value("recentFiles").toStringList();
+            f.removeAll(path);
+            s2.setValue("recentFiles", f);
+            rebuildRecentMenu();
+        });
+
+        ui->menuRecentFiles->installEventFilter(this);
+    }
+
     for (int i = 0; i < files.size(); ++i) {
-        QString label = QString("&%1  %2").arg(i + 1)
-                            .arg(QFileInfo(files[i]).fileName());
+        const QString path  = files[i];
+        const QString label = QString("&%1  %2").arg(i + 1)
+                                  .arg(QFileInfo(path).fileName());
         QAction* a = new QAction(label, ui->menuRecentFiles);
-        a->setToolTip(files[i]);   // 悬停时显示完整路径
-        connect(a, &QAction::triggered, this, [this, path = files[i]]{ openFile(path); });
+        a->setToolTip(path);
+        connect(a, &QAction::triggered, this, [this, path]{ openFile(path); });
         ui->menuRecentFiles->insertAction(ui->actionClearRecent, a);
     }
 
@@ -435,6 +525,27 @@ void MainWindow::onPlaybackFinished() {
 // 拦截进度条/音量条的鼠标点击，实现点哪跳哪而非 pageStep 步进。
 // 同时拦截 VideoRenderer 的键盘事件，实现方向键快进/快退与空格暂停。
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    // 最近文件菜单：鼠标移动时将悬浮 × 按钮定位到当前 hover 条目右侧
+    if (obj == ui->menuRecentFiles && recentRemoveBtn_) {
+        if (event->type() == QEvent::MouseMove) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            QAction* a = ui->menuRecentFiles->actionAt(me->pos());
+            if (a && a != ui->actionClearRecent && !a->isSeparator()) {
+                QRect r = ui->menuRecentFiles->actionGeometry(a);
+                int btnY = r.top() + (r.height() - recentRemoveBtn_->height()) / 2;
+                recentRemoveBtn_->move(r.right() - recentRemoveBtn_->width() - 4, btnY);
+                recentRemoveBtn_->setProperty("filePath", a->toolTip());
+                recentRemoveBtn_->show();
+                recentRemoveBtn_->raise();
+            } else {
+                recentRemoveBtn_->hide();
+            }
+        } else if (event->type() == QEvent::Leave ||
+                   event->type() == QEvent::Hide) {
+            recentRemoveBtn_->hide();
+        }
+    }
+
     if (event->type() == QEvent::MouseButtonPress) {
         auto* slider = qobject_cast<QSlider*>(obj);
         if (slider) {
@@ -1024,6 +1135,14 @@ QString MainWindow::formatTime(int64_t ms) {
     return QString("%1:%2")
         .arg(s / 60, 2, 10, QChar('0'))
         .arg(s % 60, 2, 10, QChar('0'));
+}
+
+// 打开合并/混音面板（Dock 切换显隐）
+void MainWindow::onMergeTriggered()
+{
+    mergeDock_->setVisible(!mergeDock_->isVisible());
+    if (mergeDock_->isVisible())
+        mergeDock_->raise();
 }
 
 // 显示"关于"对话框：版本信息、快捷键列表、GitHub 主页链接。

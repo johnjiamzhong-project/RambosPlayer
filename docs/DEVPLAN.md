@@ -452,15 +452,24 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] 确定后填充底部导轨
 - [x] 菜单入口 "多段剪切 (Ctrl+M)"，关于对话框同步更新
 
-### Task 4 — 合并（Concat / Mix / Mux）
-- [ ] ConcatDemuxer：同参数无损拼接
-- [ ] AudioMixer：N 路音频混音
-- [ ] ConcatFilter：异参数重编码拼接
-- [ ] SimpleMuxer：音视频混流
+### Task 4 — 合并（Concat / Mix / Mux）✅
+- [x] ConcatDemuxer：同参数无损拼接（ffconcat demuxer + -c copy，自动绝对路径）
+- [x] AudioMixer → execAudioConcat：音频顺序拼接（逐文件解码 + SwrContext + AAC 重编码）
+- [x] ConcatFilter：异参数视频重编码拼接（顺序解码 + sws_scale + 累积 PTS）
+- [x] SimpleMuxer：替换音频（视频取视频流，音频取音频流，DTS 交错写出）
+- [x] MergeWorker：统一调度线程，自动判断无损/重编码路径，成功后写合成记录文件
+- [x] 单元测试：TstMergeWorker，14 个测试全绿
+- Bug #034 修复：临时音频文件格式不兼容（.aac→.m4a，改用 execAudioConcat 统一重编码）
+- Bug #035 修复：avfilter concat 丢帧导致无声（重写为无 avfilter 的顺序解码方案）
 
-### Task 5 — MergePanel UI + MainWindow 集成
-- [ ] 文件拖入列表、模式自动判断、音量滑块
-- [ ] 进度条、取消、日志
+### Task 5 — MergePanel UI + MainWindow 集成 ✅
+- [x] MergePanel QWidget（.ui + .h + .cpp），三种模式：拼接视频 / 音频拼接 / 替换音频
+- [x] 文件列表支持拖入（dragEnterEvent / dropEvent）和对话框添加
+- [x] 替换音频模式：首文件选视频、后续文件选音频，多段自动拼接后替换原声
+- [x] 进度条（音频拼接 0–50%，合流 50–100%）、日志文本框、取消按钮
+- [x] MainWindow 菜单「工具 → 合并/混音 (Ctrl+G)」，自定义标题栏（26px，白色图标按钮）
+- [x] 最近文件菜单：单条删除（悬浮 × 覆盖层，eventFilter 定位，与原生 QAction 风格一致）
+- Bug #036 修复：QWidgetAction 高度为零条目不显示（改回 QAction + 悬浮覆盖层方案）
 
 **验收：** 三种剪切模式均可正常标记区间并导出，模式切换互斥逻辑完整；各种合并场景输出正确。
 
@@ -479,4 +488,4 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] Phase 9 — 屏幕录制/推流
 - [x] Phase 10 — 视频剪辑器
 - [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
-- [x] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅ Task 3✅）
+- [x] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅ Task 3✅ Task 4✅ Task 5✅）

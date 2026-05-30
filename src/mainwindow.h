@@ -17,7 +17,9 @@ class Timeline;
 class ThumbnailExtractor;
 class ExportWorker;
 class BrowseClipper;
+class MergePanel;
 class QDockWidget;
+class QToolButton;
 
 // MainWindow 是播放器的主窗口，包含视频渲染区（VideoRenderer）和底部控制栏。
 // 控制栏布局全部定义在 mainwindow.ui 中；本类只负责信号连接和交互逻辑。
@@ -53,6 +55,7 @@ private slots:
     void onExportProgress(int64_t currentPts, int64_t totalPts);
     void onExportFinished(bool ok);
     // startNextBatchExport 已移除 — 批量导出改用 ExportWorker::runBatch() 内部循环
+    void onMergeTriggered();
     void onAbout();
 
 private:
@@ -74,6 +77,9 @@ private:
     ThumbnailExtractor* thumbExtractor_ = nullptr; // 缩略图异步提取
     ExportWorker*       exportWorker_  = nullptr; // 无损剪切导出线程
     BrowseClipper*      browseClipper_ = nullptr; // 浏览剪切控制器
+    QDockWidget*        mergeDock_     = nullptr; // 合并/混音 Dock 容器
+    MergePanel*         mergePanel_    = nullptr; // 合并/混音面板
+    QToolButton*        recentRemoveBtn_ = nullptr; // 最近文件悬浮 × 按钮（覆盖层，共用一个）
     // 批量导出状态
     int     batchExportIndex_ = 0;  // 当前导出到第几个（UI 进度显示用）
     int     batchExportTotal_ = 0;  // 总区间数

@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MergePanel</class>
+ <widget class="QWidget" name="MergePanel">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>340</width><height>520</height></rect>
+  </property>
+  <property name="windowTitle"><string>合并 / 混音</string></property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="margin"><number>8</number></property>
+   <property name="spacing"><number>6</number></property>
+
+   <!-- 模式选择 -->
+   <item>
+    <layout class="QHBoxLayout" name="modeRow">
+     <item><widget class="QLabel" name="modeLabel">
+      <property name="text"><string>模式:</string></property>
+     </widget></item>
+     <item><widget class="QComboBox" name="modeCombo">
+      <item><property name="text"><string>拼接视频</string></property></item>
+      <item><property name="text"><string>音频拼接</string></property></item>
+      <item><property name="text"><string>替换音频</string></property></item>
+     </widget></item>
+    </layout>
+   </item>
+
+   <!-- 提示文字 -->
+   <item>
+    <widget class="QLabel" name="hintLabel">
+     <property name="text"><string>拖入文件或点击"添加"</string></property>
+     <property name="alignment"><set>Qt::AlignCenter</set></property>
+     <property name="styleSheet"><string>color: gray; font-size: 11px;</string></property>
+    </widget>
+   </item>
+
+   <!-- 文件列表 -->
+   <item>
+    <widget class="QListWidget" name="fileList">
+     <property name="minimumHeight"><number>100</number></property>
+     <property name="dragDropMode"><enum>QAbstractItemView::InternalMove</enum></property>
+     <property name="defaultDropAction"><enum>Qt::MoveAction</enum></property>
+     <property name="selectionMode"><enum>QAbstractItemView::ExtendedSelection</enum></property>
+    </widget>
+   </item>
+
+   <!-- 文件操作按钮行 -->
+   <item>
+    <layout class="QHBoxLayout" name="fileButtonRow">
+     <item><widget class="QPushButton" name="addFileBtn">
+      <property name="text"><string>添加文件</string></property>
+     </widget></item>
+     <item><widget class="QPushButton" name="removeFileBtn">
+      <property name="text"><string>移除选中</string></property>
+     </widget></item>
+     <item><widget class="QPushButton" name="clearBtn">
+      <property name="text"><string>清空</string></property>
+     </widget></item>
+    </layout>
+   </item>
+
+   <!-- 音量组（预留，当前版本隐藏） -->
+   <item>
+    <widget class="QGroupBox" name="volumeGroup">
+     <property name="title"><string>选中文件音量</string></property>
+     <property name="visible"><bool>false</bool></property>
+     <layout class="QHBoxLayout" name="volumeLayout">
+      <property name="margin"><number>4</number></property>
+      <item><widget class="QSlider" name="volumeSlider">
+       <property name="minimum"><number>0</number></property>
+       <property name="maximum"><number>200</number></property>
+       <property name="value"><number>100</number></property>
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+      </widget></item>
+      <item><widget class="QLabel" name="volumeLabel">
+       <property name="text"><string>100%</string></property>
+       <property name="minimumWidth"><number>40</number></property>
+       <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+      </widget></item>
+     </layout>
+    </widget>
+   </item>
+
+   <!-- 输出路径 -->
+   <item>
+    <layout class="QHBoxLayout" name="outputRow">
+     <item><widget class="QLabel" name="outputLabel">
+      <property name="text"><string>输出:</string></property>
+     </widget></item>
+     <item><widget class="QLineEdit" name="outputEdit">
+      <property name="placeholderText"><string>输出文件路径</string></property>
+     </widget></item>
+     <item><widget class="QPushButton" name="browseBtn">
+      <property name="text"><string>浏览</string></property>
+      <property name="maximumWidth"><number>50</number></property>
+     </widget></item>
+    </layout>
+   </item>
+
+   <!-- 开始 / 取消 -->
+   <item>
+    <layout class="QHBoxLayout" name="actionRow">
+     <item><widget class="QPushButton" name="startBtn">
+      <property name="text"><string>开始合并</string></property>
+      <property name="enabled"><bool>false</bool></property>
+     </widget></item>
+     <item><widget class="QPushButton" name="cancelBtn">
+      <property name="text"><string>取消</string></property>
+      <property name="enabled"><bool>false</bool></property>
+     </widget></item>
+    </layout>
+   </item>
+
+   <!-- 进度条 -->
+   <item>
+    <widget class="QProgressBar" name="progressBar">
+     <property name="value"><number>0</number></property>
+     <property name="textVisible"><bool>true</bool></property>
+    </widget>
+   </item>
+
+   <!-- 日志 -->
+   <item>
+    <widget class="QTextEdit" name="logEdit">
+     <property name="readOnly"><bool>true</bool></property>
+     <property name="minimumHeight"><number>80</number></property>
+     <property name="placeholderText"><string>运行日志...</string></property>
+     <property name="styleSheet"><string>font-size: 11px; font-family: Consolas, monospace;</string></property>
+    </widget>
+   </item>
+
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
