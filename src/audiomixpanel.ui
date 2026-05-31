@@ -1,0 +1,477 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AudioMixPanel</class>
+ <widget class="QWidget" name="AudioMixPanel">
+  <property name="windowTitle">
+   <string>音频混合</string>
+  </property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="margin">
+    <number>8</number>
+   </property>
+   <property name="spacing">
+    <number>6</number>
+   </property>
+
+   <!-- 源视频 -->
+   <item>
+    <widget class="QGroupBox" name="sourceGroup">
+     <property name="title">
+      <string>源视频</string>
+     </property>
+     <layout class="QHBoxLayout" name="sourceLayout">
+      <property name="margin">
+       <number>6</number>
+      </property>
+      <item>
+       <widget class="QLineEdit" name="sourcePathEdit">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <property name="placeholderText">
+         <string>请选择源视频文件…</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="openSourceBtn">
+        <property name="text">
+         <string>选择</string>
+        </property>
+        <property name="maximumWidth">
+         <number>50</number>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+
+   <!-- 音频区间列表 -->
+   <item>
+    <widget class="QGroupBox" name="regionsGroup">
+     <property name="title">
+      <string>音频区间列表</string>
+     </property>
+     <layout class="QVBoxLayout" name="regionsLayout">
+      <property name="margin">
+       <number>6</number>
+      </property>
+      <property name="spacing">
+       <number>4</number>
+      </property>
+      <item>
+       <widget class="QTableWidget" name="regionsTable">
+        <property name="minimumHeight">
+         <number>100</number>
+        </property>
+        <property name="selectionBehavior">
+         <enum>QAbstractItemView::SelectRows</enum>
+        </property>
+        <property name="selectionMode">
+         <enum>QAbstractItemView::SingleSelection</enum>
+        </property>
+        <property name="editTriggers">
+         <set>QAbstractItemView::NoEditTriggers</set>
+        </property>
+        <property name="alternatingRowColors">
+         <bool>true</bool>
+        </property>
+        <column>
+         <property name="text"><string>音频文件</string></property>
+        </column>
+        <column>
+         <property name="text"><string>贴入时间</string></property>
+        </column>
+        <column>
+         <property name="text"><string>时长</string></property>
+        </column>
+        <column>
+         <property name="text"><string>源音量</string></property>
+        </column>
+        <column>
+         <property name="text"><string>混音量</string></property>
+        </column>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QPushButton" name="removeRegionBtn">
+          <property name="text">
+           <string>移除选中</string>
+          </property>
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer>
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+
+   <!-- 添加音频 -->
+   <item>
+    <widget class="QGroupBox" name="addGroup">
+     <property name="title">
+      <string>添加音频</string>
+     </property>
+     <layout class="QVBoxLayout" name="addGroupLayout">
+      <property name="margin">
+       <number>6</number>
+      </property>
+      <property name="spacing">
+       <number>6</number>
+      </property>
+
+      <!-- 模式切换按钮 -->
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QPushButton" name="switchLocalBtn">
+          <property name="text">
+           <string>本地音频</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="switchRecordBtn">
+          <property name="text">
+           <string>实时录入</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer>
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+
+      <!-- 模式页面 -->
+      <item>
+       <widget class="QStackedWidget" name="addStack">
+        <property name="currentIndex">
+         <number>0</number>
+        </property>
+
+        <!-- 页 0：本地音频 -->
+        <widget class="QWidget" name="localPage">
+         <layout class="QVBoxLayout" name="localLayout">
+          <property name="margin">
+           <number>0</number>
+          </property>
+          <property name="spacing">
+           <number>4</number>
+          </property>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLineEdit" name="audioFileEdit">
+              <property name="placeholderText">
+               <string>音频文件路径…</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="browseAudioBtn">
+              <property name="text">
+               <string>浏览</string>
+              </property>
+              <property name="maximumWidth">
+               <number>50</number>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>贴入视频时间（秒）：</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="videoStartSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>99999</number></property>
+             </widget>
+            </item>
+            <item>
+             <spacer>
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>使用时长（秒，0=全部）：</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="audioDurationSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>99999</number></property>
+             </widget>
+            </item>
+            <item>
+             <spacer>
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel" name="srcVolLabel">
+              <property name="text"><string>源音频 100%</string></property>
+              <property name="minimumWidth"><number>85</number></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSlider" name="srcVolSlider">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>100</number></property>
+              <property name="value"><number>100</number></property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel" name="mixVolLabel">
+              <property name="text"><string>新增音频 0%</string></property>
+              <property name="minimumWidth"><number>85</number></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSlider" name="mixVolSlider">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>100</number></property>
+              <property name="value"><number>0</number></property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <spacer>
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="addRegionBtn">
+              <property name="text">
+               <string>加入列表</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
+         </layout>
+        </widget>
+
+        <!-- 页 1：实时录入 -->
+        <widget class="QWidget" name="recordPage">
+         <layout class="QVBoxLayout" name="recordLayout">
+          <property name="margin">
+           <number>0</number>
+          </property>
+          <property name="spacing">
+           <number>6</number>
+          </property>
+
+          <item>
+           <widget class="QLabel" name="recStatusLabel">
+            <property name="text"><string>就绪：选择录入起始时间后点击开始录入</string></property>
+            <property name="wordWrap"><bool>true</bool></property>
+           </widget>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>录入起始时间（秒）：</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="recVideoStartSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>99999</number></property>
+             </widget>
+            </item>
+            <item>
+             <spacer>
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+
+          <item>
+           <widget class="QLabel">
+            <property name="text">
+             <string>混合比例在本地音频页调整（录音共用同一比例）</string>
+            </property>
+            <property name="wordWrap"><bool>true</bool></property>
+            <property name="styleSheet">
+             <string>color: #888;</string>
+            </property>
+           </widget>
+          </item>
+
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <spacer>
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="recStartStopBtn">
+              <property name="text">
+               <string>开始录入</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
+         </layout>
+        </widget>
+
+       </widget>
+      </item>
+
+     </layout>
+    </widget>
+   </item>
+
+   <!-- 试播放 -->
+   <item>
+    <widget class="QPushButton" name="previewBtn">
+     <property name="text">
+      <string>试播放选中区间</string>
+     </property>
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+
+   <!-- 导出 -->
+   <item>
+    <widget class="QGroupBox" name="exportGroup">
+     <property name="title">
+      <string>导出</string>
+     </property>
+     <layout class="QVBoxLayout" name="exportLayout">
+      <property name="margin">
+       <number>6</number>
+      </property>
+      <property name="spacing">
+       <number>4</number>
+      </property>
+
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QLineEdit" name="outputEdit">
+          <property name="placeholderText">
+           <string>输出文件路径（.mp4）…</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="browseOutputBtn">
+          <property name="text">
+           <string>浏览</string>
+          </property>
+          <property name="maximumWidth">
+           <number>50</number>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+
+      <item>
+       <widget class="QPushButton" name="exportBtn">
+        <property name="text">
+         <string>导出混合视频</string>
+        </property>
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+
+      <item>
+       <widget class="QProgressBar" name="progressBar">
+        <property name="value">
+         <number>0</number>
+        </property>
+        <property name="textVisible">
+         <bool>true</bool>
+        </property>
+        <property name="visible">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+
+     </layout>
+    </widget>
+   </item>
+
+   <item>
+    <spacer>
+     <property name="orientation"><enum>Qt::Vertical</enum></property>
+     <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
+    </spacer>
+   </item>
+
+  </layout>
+ </widget>
+</ui>

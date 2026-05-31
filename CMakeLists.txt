@@ -49,6 +49,8 @@ add_executable(RambosPlayer WIN32
     src/concatfilter.cpp
     src/mergeworker.cpp
     src/mergepanel.cpp
+    src/audiomixworker.cpp
+    src/audiomixpanel.cpp
 )
 
 

@@ -115,7 +115,7 @@ void PlayerController::seek(double seconds) {
 }
 
 // 设置音量，转发给 AudioDecodeThread（线程安全原子量）。
-void PlayerController::setVolume(float v) { audioDec_.setVolume(v); }
+void PlayerController::setVolume(float v) { volume_ = v; audioDec_.setVolume(v); }
 
 // 硬件加速开关，仅在下次 open() 时生效，播放中切换不重启解码器。
 void PlayerController::setHwAccelEnabled(bool on) { hwAccelEnabled_ = on; }

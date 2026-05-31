@@ -18,6 +18,7 @@ class ThumbnailExtractor;
 class ExportWorker;
 class BrowseClipper;
 class MergePanel;
+class AudioMixPanel;
 class QDockWidget;
 class QToolButton;
 
@@ -33,6 +34,7 @@ public:
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private slots:
@@ -56,6 +58,8 @@ private slots:
     void onExportFinished(bool ok);
     // startNextBatchExport 已移除 — 批量导出改用 ExportWorker::runBatch() 内部循环
     void onMergeTriggered();
+    void onAudioMixLocalTriggered();
+    void onAudioMixRecordTriggered();
     void onAbout();
 
 private:
@@ -65,6 +69,7 @@ private:
     void startStreaming(const QList<StreamDestination>& dests);     // 启动推流管线（需文件已打开）
     void reconnectStreaming();                                       // 恢复播放时重新接入推流
     void prepareMpegTsSeek(double seconds);                          // 通知低延迟推流丢弃 seek 预滚输出
+    QDockWidget* createDockWithTitleBar(const QString& title, QWidget* content); // 创建带自定义标题栏的 Dock
 
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权
@@ -79,7 +84,10 @@ private:
     BrowseClipper*      browseClipper_ = nullptr; // 浏览剪切控制器
     QDockWidget*        mergeDock_     = nullptr; // 合并/混音 Dock 容器
     MergePanel*         mergePanel_    = nullptr; // 合并/混音面板
+    QDockWidget*        audioMixDock_  = nullptr; // 音频混合 Dock 容器
+    AudioMixPanel*      audioMixPanel_ = nullptr; // 音频混合面板
     QToolButton*        recentRemoveBtn_ = nullptr; // 最近文件悬浮 × 按钮（覆盖层，共用一个）
+    QTimer*             hideTitleTimer_  = nullptr; // 最大化时标题栏自动隐藏定时器
     // 批量导出状态
     int     batchExportIndex_ = 0;  // 当前导出到第几个（UI 进度显示用）
     int     batchExportTotal_ = 0;  // 总区间数
@@ -90,7 +98,6 @@ private:
     QString             currentFile_;              // 当前打开的文件路径
     int64_t duration_ = 0;          // 当前文件总时长（毫秒），进度条换算用
     int64_t currentPos_ = 0;        // 当前播放位置（毫秒），键盘快进/快退用
-    bool isFullscreen_ = false;     // 全屏状态标志
     bool switchingClipMode_ = false; // 剪辑模式切换中，防止 trimDock_ visibility 循环触发
     QList<StreamDestination> pendingDests_;        // 文件打开前预配置的推流目标，openFile 后自动启动
     QList<StreamDestination> activeDests_;         // 当前正在推流的目标列表（暂停恢复时需要阻塞标志）

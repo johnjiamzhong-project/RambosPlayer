@@ -406,15 +406,6 @@
 
 ---
 
-## #035 — execAudioConcat avfilter concat 导致多段音频全部丢失
-
-- **日期**：2026-05-30
-- **现象**：替换音频模式下，1 个视频 + 3 个音频，合成成功但输出文件完全没有声音；单个音频替换正常
-- **根因**：`execAudioConcat` 使用 `concat=n=N:v=0:a=1` avfilter 拼接音频。该滤镜要求按段顺序驱动，且每段 EOF 前必须先刷新解码器缓冲；代码中未调用 `avcodec_send_packet(nullptr)` 刷新，导致解码器末尾缓存的帧永远不被送入滤镜，concat 滤镜等待超时后不输出任何数据，最终生成的临时音频文件为空，SimpleMuxer 写入的音频流无内容
-- **修复**：完全重写 `execAudioConcat`，改为逐文件顺序解码 + `SwrContext` 重采样 + AAC 编码方案（无 avfilter），每个文件处理完毕后显式用 `avcodec_send_packet(nullptr)` 刷新解码器，确保所有帧都被编码写入
-- **涉及文件**：`src/mergeworker.cpp`
-
----
 
 ## #036 — QWidgetAction 在 QMenu 中高度为零导致最近文件条目不显示
 

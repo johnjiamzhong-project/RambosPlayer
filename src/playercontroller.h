@@ -33,6 +33,7 @@ public:
     void stop();
     void seek(double seconds);
     void setVolume(float v);    // 0.0–1.0
+    float volume() const { return volume_; }  // 当前音量（0.0–1.0）
     void setHwAccelEnabled(bool on);
     bool hwAccelEnabled() const { return hwAccelEnabled_; }
 
@@ -95,6 +96,7 @@ private:
     QTimer* posTimer_ = nullptr;                    // 100ms 定时器，驱动 positionChanged 信号
     std::atomic<bool> playing_{false};              // 播放状态，防止重复 play()
     bool hwAccelEnabled_ = true;                    // 硬件加速开关，默认启用
+    float volume_ = 1.0f;                          // 当前音量（0.0–1.0）
     double lastPositionSec_ = -1.0;                 // 上次位置（秒），用于检测跳变
 
     void stopAllThreads();

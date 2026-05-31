@@ -448,11 +448,17 @@ void Timeline::clearPendingInPoint()
     update();
 }
 
+// 由 AudioMixPanel 调用，设置音频混合区间（微秒对 {start, end}）
+void Timeline::setAudioRegions(const QList<QPair<int64_t, int64_t>>& regions)
+{
+    audioRegions_ = regions;
+    update();
+}
+
 // 绘制底部导轨：显示所有已标记区间的色块 + 时间标签
 void Timeline::drawBottomBar(QPainter& p)
 {
-    // 底部导轨在没有区间也没有待定入点时隐藏
-    bool hasContent = !segments_.isEmpty() || pendingInPts_ >= 0;
+    bool hasContent = !segments_.isEmpty() || pendingInPts_ >= 0 || !audioRegions_.isEmpty();
     if (!bottomBarVisible_ || !hasContent)
         return;
 
@@ -515,6 +521,40 @@ void Timeline::drawBottomBar(QPainter& p)
             int tw = QFontMetrics(f).horizontalAdvance(label);
             int tx = qBound(trackLeft_, x - tw / 2, trackRight_ - tw);
             p.drawText(tx, barTop + barH - 4, label);
+        }
+    }
+
+    // 音频混合区间行（紫色，在绿色剪切区间行下方 2px 处）
+    if (!audioRegions_.isEmpty()) {
+        int aTop = barTop + barH + 2;
+        int aH   = kAudioBarHeight;
+
+        p.fillRect(trackLeft_, aTop, trackRight_ - trackLeft_, aH, QColor(28, 25, 45));
+        p.setPen(QPen(QColor(80, 65, 110), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(trackLeft_, aTop, trackRight_ - trackLeft_, aH);
+
+        QFont af = p.font();
+        af.setPixelSize(9);
+        p.setFont(af);
+
+        for (const auto& ar : audioRegions_) {
+            int x1 = ptsToX(ar.first);
+            int x2 = ptsToX(ar.second);
+            if (x2 <= x1) continue;
+
+            p.fillRect(x1, aTop + 2, x2 - x1, aH - 4, QColor(120, 75, 200, 160));
+            p.setPen(QPen(QColor(160, 110, 240), 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(x1, aTop + 2, x2 - x1, aH - 4);
+
+            // 时间标签（起始时间）
+            QString lbl = usToLabel(ar.first);
+            p.setPen(QColor(210, 195, 240));
+            int tw = QFontMetrics(af).horizontalAdvance(lbl);
+            int tx = x1 + 2;
+            if (tx + tw > trackRight_) tx = qMax(trackLeft_, trackRight_ - tw);
+            p.drawText(tx, aTop + aH - 4, lbl);
         }
     }
 }

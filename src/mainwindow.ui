@@ -211,6 +211,14 @@
      <string>工具(&amp;T)</string>
     </property>
     <addaction name="actionMerge"/>
+    <addaction name="menuAudioMix"/>
+   </widget>
+   <widget class="QMenu" name="menuAudioMix">
+    <property name="title">
+     <string>音频混合(&amp;A)</string>
+    </property>
+    <addaction name="actionAudioMixLocal"/>
+    <addaction name="actionAudioMixRecord"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -320,6 +328,16 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+G</string>
+   </property>
+  </action>
+  <action name="actionAudioMixLocal">
+   <property name="text">
+    <string>本地音频(&amp;L)...</string>
+   </property>
+  </action>
+  <action name="actionAudioMixRecord">
+   <property name="text">
+    <string>实时录入(&amp;R)...</string>
    </property>
   </action>
  </widget>

@@ -70,7 +70,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tst_mergeworker.cpp")
     add_qt_test(TstMergeWorker tst_mergeworker.cpp)
     target_sources(TstMergeWorker PRIVATE
         ${CMAKE_SOURCE_DIR}/src/concatdemuxer.cpp
-        ${CMAKE_SOURCE_DIR}/src/simplemuxer.cpp
         ${CMAKE_SOURCE_DIR}/src/audiomixer.cpp
         ${CMAKE_SOURCE_DIR}/src/concatfilter.cpp
         ${CMAKE_SOURCE_DIR}/src/mergeworker.cpp

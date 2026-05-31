@@ -2,7 +2,7 @@
 
 > 基于 FFmpeg + Qt 的多线程多媒体播放器，目标是覆盖 FFmpeg 全链路实战 —— 能播、能录、能推、能剪。
 
-
+---
 
 ## 文档
 
@@ -16,6 +16,10 @@
 - 导出管线优化分析：[docs/EXPORT_OPTIMIZATION.md](docs/EXPORT_OPTIMIZATION.md)（架构、瓶颈、6 项优化策略）
 - 导出性能基准记录：[docs/EXPORT_BENCHMARK.md](docs/EXPORT_BENCHMARK.md)（各阶段实测数据，11 次测试）
 
+---
+
+## 功能概览
+
 | 功能 | 状态 |
 |------|:----:|
 | 功能1 — 核心播放器 | ✅ 完成 |
@@ -25,7 +29,8 @@
 | 功能5 — 推流播放内容（音视频双流，RTMP/SRT/HTTP-FLV） | ✅ 完成 |
 | 功能6 — 视频剪辑器（自由剪切） | ✅ 完成 |
 | 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | ✅ 完成 |
-| 功能8 — 三模式剪切（浏览/多段）+ 视频合并 | ✅ 三模式完成 / 🚧 合并计划中 |
+| 功能8 — 三模式剪切（浏览/多段）+ 视频合并 | ✅ 完成 |
+| 功能9 — 音频混合（本地音频 / 实时录入，可调比例叠加） | ✅ 完成 |
 
 ---
 
@@ -62,9 +67,11 @@
 | 视频滤镜（亮度/对比度/饱和度/水印） | 菜单 → 滤镜编辑器，实时预览 |
 | 推流播放内容（RTMP / SRT / HTTP-FLV） | 菜单 → 推流，支持多路同时推流；HTTP-FLV 无需外部服务器，局域网浏览器直接打开链接收看 |
 | 视频剪辑（自由剪切） | 菜单 → 剪辑 → 自由剪切（Ctrl+T），拖拽入/出点，Ctrl+E 导出 |
-| 浏览剪切（边播边标） | 菜单 → 剪辑 → 浏览剪切（Ctrl+B），播放中标记入点/出点，自动追加到底部导轨 | ✅ 完成 |
-| 多段剪切（批量区间） | 菜单 → 剪辑 → 多段剪切（Ctrl+M），逐行输入时间区间，批量导出 | ✅ 完成 |
-| 视频拼接 / 音频混音 / 混流 | 菜单 → 合并（Ctrl+G），拖入多个文件，自动判断合并模式 | 🚧 计划中 |
+| 浏览剪切（边播边标） | 菜单 → 剪辑 → 浏览剪切（Ctrl+B），播放中标记入点/出点，自动追加到底部导轨 |
+| 多段剪切（批量区间） | 菜单 → 剪辑 → 多段剪切（Ctrl+M），逐行输入时间区间，批量导出 |
+| 视频拼接 / 混流 | 菜单 → 合并（Ctrl+G），拖入多个文件，自动判断合并模式 |
+| 音频混合（本地音频） | 菜单 → 工具 → 音频混合 → 本地音频；选择音频文件，设定贴入时间（秒精度）和混合比例（源音量 + 新增音量 = 100%），支持多段叠加后统一导出 |
+| 音频混合（实时录入） | 菜单 → 工具 → 音频混合 → 实时录入；视频静音播放同时录制麦克风，录入结果与本地音频统一管理，可设比例和试播放 |
 
 ---
 
@@ -150,6 +157,8 @@ DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP
 | `ExportWorker` | `src/exportworker.h/.cpp` | 帧精确重编码导出线程（QThread）；解码源文件 → H.264 + AAC 重编码 → MP4 封装，支持单段/批量导出。CRF 17 / CQP 18 高画质，superfast 预设快速编码。详见 [导出优化分析](docs/EXPORT_OPTIMIZATION.md) |
 | `HttpFlvServer` | `src/httpflvserver.h/.cpp` | 内置 HTTP-FLV 流媒体服务器；FFmpeg FLV muxer 通过自定义 avio 将数据广播给所有已连接的浏览器客户端；含音视频 PTS 对齐、关键帧门控、内嵌 flv.js 播放页 |
 | `StreamController` | `src/streamcontroller.h/.cpp` | 管理多路 MuxThread / HttpFlvServer 生命周期；向 DemuxThread 提供 restream 分叉队列入口 |
+| `AudioMixPanel` | `src/audiomixpanel.h/.cpp/.ui` | 音频混合面板（QDockWidget），支持本地音频和实时录音两种模式，区间列表 + 音量联动 Slider（srcVol+mixVol=100%），试播放（双播放器近似同步），WAV 录音写入 |
+| `AudioMixWorker` | `src/audiomixworker.h/.cpp` | 音频混合线程（QThread）；两步执行：①用 amix+adelay avfilter 将各区间音频混入源音频 → 临时 AAC；②`-c:v copy` 直通复制视频流 + 新 AAC 封装 → 输出 MP4 |
 
 ---
 
@@ -179,28 +188,20 @@ RambosPlayer/
 
 ---
 
-
-
-# 其他
-
 ## 已知问题
 
-| 问题       |   状态   | 说明                                                         |
-| ---------- | :------: | ------------------------------------------------------------ |
+| 问题 | 状态 | 说明 |
+|------|:----:|------|
 | 水印不显示 | 🔴 待解决 | FFmpeg `movie` 滤镜无法正确解析含盘符的 Windows 绝对路径（`G:/...`）。盘符中的 `:` 经 `avfilter_graph_parse_ptr` → `av_get_token` → `avfilter_init_str` → `av_set_options_string` 四层解析后始终无法正确传递到 movie filter 的 `filename` 选项。`avformat_open_input` 直接打开文件正常（验证文件存在且可读），但通过滤镜图字符串传参时多层 `\` 转义均无法穿透。需研究 FFmpeg 源码中 `avfilter_graph_parse2` 对 movie 源滤镜的选项传递机制后再解决。 |
 
 ---
 
-## 
-
-### 为什么一个"播放器"有推流和剪辑？
+## 为什么一个"播放器"有推流和剪辑？
 
 传统播放器（VLC、PotPlayer、MPC-HC）只需解复用→解码→渲染，但本项目的学习目标是 **FFmpeg 全链路**：
 
 - **解码链路（播放）**：`av_read_frame` / `avcodec_send_packet` / `sws_scale` — 数据从文件流向屏幕
-
 - **编码链路（推流）**：`avcodec_send_frame` / `av_interleaved_write_frame` — 解码帧直接分叉进入编码管线，推送到 RTMP 服务器或 SRT 对端；音视频双流，支持多路同时推流
-
 - **重编码链路（剪辑导出）**：解码 → 像素格式转换 → H.264 重编码（CRF 17 / CQP 18）+ AAC 音频重编码 → MP4 封装；帧精确裁剪，输出时长与选中区间完全一致。详见 [导出管线优化分析](docs/EXPORT_OPTIMIZATION.md)
 
-  三条链路合在一起才构成完整的 FFmpeg 技能树，所以定位更接近**"多媒体处理工具箱"**而非纯播放器。
+三条链路合在一起才构成完整的 FFmpeg 技能树，所以定位更接近**"多媒体处理工具箱"**而非纯播放器。

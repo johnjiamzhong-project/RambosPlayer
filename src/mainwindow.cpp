@@ -11,6 +11,7 @@
 #include "thumbnailextractor.h"
 #include "exportworker.h"
 #include "mergepanel.h"
+#include "audiomixpanel.h"
 #include <QMessageBox>
 #include <QDockWidget>
 #include <QHBoxLayout>
@@ -35,6 +36,11 @@
 #include <QStatusBar>
 #include <QDebug>
 #include <algorithm>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 // 毫秒转文件名安全的时间字符串（冒号在 Windows 文件名中非法）。
 // 格式：MMmSSs（如 01m23s），超过 1 小时则为 HHhMMmSSs。
@@ -64,6 +70,38 @@ MainWindow::MainWindow(QWidget* parent)
     renderer_->installEventFilter(this);
     renderer_->setFocusPolicy(Qt::StrongFocus);
 
+    // 标题栏自动隐藏定时器（最大化时使用）
+    // 用 200ms 轮询鼠标位置，MouseMove 在未按下时不传递到 QMainWindow
+    hideTitleTimer_ = new QTimer(this);
+    hideTitleTimer_->setInterval(200);
+    connect(hideTitleTimer_, &QTimer::timeout, this, [this]{
+        if (!isMaximized()) return;
+#ifdef Q_OS_WIN
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+        bool hasCaption = (style & WS_CAPTION) != 0;
+        int winTop = geometry().top();
+        int mouseY = QCursor::pos().y();
+        if (mouseY <= winTop + 10) {
+            // 鼠标靠近顶部 → 显示标题栏 + 菜单栏
+            if (!hasCaption) {
+                ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
+                ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            }
+            menuBar()->show();
+        } else {
+            // 鼠标离开 → 隐藏标题栏 + 菜单栏
+            menuBar()->hide();
+            if (hasCaption) {
+                ::SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_CAPTION);
+                ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            }
+        }
+#endif
+    });
+
     // 控制栏控件不抢焦点：鼠标点击后焦点仍留在 renderer_，
     // 保证进度条拖拽 / 点击后方向键快进快退依然有效。
     ui->progressSlider->setFocusPolicy(Qt::NoFocus);
@@ -87,58 +125,19 @@ MainWindow::MainWindow(QWidget* parent)
 
     // 合并/混音面板 Dock（右侧，默认隐藏）
     mergePanel_ = new MergePanel();
-    mergeDock_  = new QDockWidget("合并 / 混音", this);
-    mergeDock_->setWidget(mergePanel_);
+    mergeDock_  = createDockWithTitleBar("合并 / 混音", mergePanel_);
     mergeDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     mergeDock_->setVisible(false);
-
-    // 自定义标题栏：QSS 无法同时控制标题栏高度和按钮尺寸（两者绑定），
-    // setTitleBarWidget 让高度和按钮大小各自独立。
-    {
-        auto* bar = new QWidget();
-        bar->setFixedHeight(26);
-        bar->setStyleSheet("background:#3c3c3c;");
-
-        auto* layout = new QHBoxLayout(bar);
-        layout->setContentsMargins(8, 0, 4, 0);
-        layout->setSpacing(2);
-
-        auto* title = new QLabel("合并 / 混音");
-        title->setStyleSheet("color:#f0f0f0; font-weight:bold; font-size:12px;");
-        layout->addWidget(title);
-        layout->addStretch();
-
-        const QString btnStyle =
-            "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
-            "QPushButton:hover{background:#5a5a5a;}"
-            "QPushButton:pressed{background:#444;}";
-
-        auto* floatBtn = new QPushButton();
-        floatBtn->setFixedSize(20, 20);
-        floatBtn->setIcon(QIcon(":/icons/dock_float.svg"));
-        floatBtn->setIconSize(QSize(14, 14));
-        floatBtn->setToolTip("浮动/停靠");
-        floatBtn->setStyleSheet(btnStyle);
-        connect(floatBtn, &QPushButton::clicked, this, [this]{
-            mergeDock_->setFloating(!mergeDock_->isFloating());
-        });
-        layout->addWidget(floatBtn);
-
-        auto* closeBtn = new QPushButton();
-        closeBtn->setFixedSize(20, 20);
-        closeBtn->setIcon(QIcon(":/icons/dock_close.svg"));
-        closeBtn->setIconSize(QSize(14, 14));
-        closeBtn->setToolTip("关闭");
-        closeBtn->setStyleSheet(
-            "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
-            "QPushButton:hover{background:#c0392b;}"
-            "QPushButton:pressed{background:#922b21;}");
-        connect(closeBtn, &QPushButton::clicked, this, [this]{ mergeDock_->hide(); });
-        layout->addWidget(closeBtn);
-
-        mergeDock_->setTitleBarWidget(bar);
-    }
     addDockWidget(Qt::RightDockWidgetArea, mergeDock_);
+
+    // 音频混合面板 Dock（右侧，默认隐藏）
+    audioMixPanel_ = new AudioMixPanel();
+    audioMixPanel_->setPlayerController(player_);
+    audioMixPanel_->setTimeline(timeline_);
+    audioMixDock_  = createDockWithTitleBar("音频混合", audioMixPanel_);
+    audioMixDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    audioMixDock_->setVisible(false);
+    addDockWidget(Qt::RightDockWidgetArea, audioMixDock_);
 
     // 浏览剪切控制器
     browseClipper_ = new BrowseClipper(player_, timeline_, this);
@@ -223,8 +222,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(exportWorker_, &ExportWorker::errorOccurred, this, [](const QString& msg) {
         QMessageBox::warning(nullptr, "导出错误", msg);
     });
-    connect(ui->actionMerge, &QAction::triggered, this, &MainWindow::onMergeTriggered);
-    connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onAbout);
+    connect(ui->actionMerge,          &QAction::triggered, this, &MainWindow::onMergeTriggered);
+    connect(ui->actionAudioMixLocal,  &QAction::triggered, this, &MainWindow::onAudioMixLocalTriggered);
+    connect(ui->actionAudioMixRecord, &QAction::triggered, this, &MainWindow::onAudioMixRecordTriggered);
+    connect(ui->actionAbout,          &QAction::triggered, this, &MainWindow::onAbout);
 
     rebuildRecentMenu();
 }
@@ -246,9 +247,10 @@ MainWindow::~MainWindow() {
 
     // filterDock_ 和 trimDock_ 作为 addDockWidget 子控件默认由 QMainWindow 基类析构删除，
     // 但它们内部持有 player_ 裸指针，必须在 delete player_ 之前手动提前删除。
-    delete filterDock_;  filterDock_  = nullptr;
-    delete trimDock_;    trimDock_    = nullptr;
-    delete mergeDock_;   mergeDock_   = nullptr;
+    delete filterDock_;   filterDock_   = nullptr;
+    delete trimDock_;     trimDock_     = nullptr;
+    delete mergeDock_;    mergeDock_    = nullptr;
+    delete audioMixDock_; audioMixDock_ = nullptr;
 
     delete player_;
     player_ = nullptr;
@@ -282,6 +284,9 @@ void MainWindow::openFile(const QString& path) {
         // 剪辑模式下自动提取缩略图
         if (trimDock_->isVisible())
             thumbExtractor_->extract(path);
+
+        // 同步源视频路径到音频混合面板
+        audioMixPanel_->setSourceFile(path);
     }
 }
 
@@ -603,6 +608,26 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
 
 // 空格暂停/恢复，左右方向键快退/快进 10 秒。
 // 仅当焦点不在 VideoRenderer 时作为降级路径；正常情况由 eventFilter 拦截。
+
+// 窗口状态变化：还原时恢复窗口边框并停止自动隐藏定时器
+void MainWindow::changeEvent(QEvent* event) {
+    if (event->type() == QEvent::WindowStateChange) {
+        if (!isMaximized()) {
+#ifdef Q_OS_WIN
+            HWND hwnd = reinterpret_cast<HWND>(winId());
+            LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+            if (!(style & WS_CAPTION)) {
+                ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
+                ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            }
+            menuBar()->show();
+#endif
+            hideTitleTimer_->stop();
+        }
+    }
+    QMainWindow::changeEvent(event);
+}
 void MainWindow::keyPressEvent(QKeyEvent* event) {
     if (event->isAutoRepeat()) return;
     if (event->key() == Qt::Key_Space) {
@@ -628,10 +653,33 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
     }
 }
 
-// 双击切换全屏/窗口模式。
+// 双击切换最大化/窗口模式。最大化后标题栏自动隐藏，鼠标移到顶部时自动显示。
 void MainWindow::mouseDoubleClickEvent(QMouseEvent*) {
-    isFullscreen_ = !isFullscreen_;
-    isFullscreen_ ? showFullScreen() : showNormal();
+    if (isMaximized()) {
+#ifdef Q_OS_WIN
+        // 还原前先恢复标题栏 + 菜单栏
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
+        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        menuBar()->show();
+#endif
+        showNormal();
+        hideTitleTimer_->stop();
+    } else {
+        showMaximized();
+#ifdef Q_OS_WIN
+        // 最大化后隐藏标题栏 + 菜单栏
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_CAPTION);
+        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        menuBar()->hide();
+#endif
+        hideTitleTimer_->start();
+    }
 }
 
 // 推流配置对话框入口：
@@ -1129,6 +1177,58 @@ void MainWindow::startStreaming(const QList<StreamDestination>& dests) {
     }
 }
 
+// 创建带自定义标题栏的 QDockWidget：QSS 无法同时控制标题栏高度和按钮尺寸（两者绑定），
+// setTitleBarWidget 让高度和按钮大小各自独立。
+QDockWidget* MainWindow::createDockWithTitleBar(const QString& title, QWidget* content)
+{
+    auto* dock = new QDockWidget(title, this);
+    dock->setWidget(content);
+
+    auto* bar = new QWidget();
+    bar->setFixedHeight(26);
+    bar->setStyleSheet("background:#3c3c3c;");
+
+    auto* layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(8, 0, 4, 0);
+    layout->setSpacing(2);
+
+    auto* label = new QLabel(title);
+    label->setStyleSheet("color:#f0f0f0; font-weight:bold; font-size:12px;");
+    layout->addWidget(label);
+    layout->addStretch();
+
+    const QString btnStyle =
+        "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+        "QPushButton:hover{background:#5a5a5a;}"
+        "QPushButton:pressed{background:#444;}";
+
+    auto* floatBtn = new QPushButton();
+    floatBtn->setFixedSize(20, 20);
+    floatBtn->setIcon(QIcon(":/icons/dock_float.svg"));
+    floatBtn->setIconSize(QSize(14, 14));
+    floatBtn->setToolTip("浮动/停靠");
+    floatBtn->setStyleSheet(btnStyle);
+    connect(floatBtn, &QPushButton::clicked, this, [dock]{
+        dock->setFloating(!dock->isFloating());
+    });
+    layout->addWidget(floatBtn);
+
+    auto* closeBtn = new QPushButton();
+    closeBtn->setFixedSize(20, 20);
+    closeBtn->setIcon(QIcon(":/icons/dock_close.svg"));
+    closeBtn->setIconSize(QSize(14, 14));
+    closeBtn->setToolTip("关闭");
+    closeBtn->setStyleSheet(
+        "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+        "QPushButton:hover{background:#c0392b;}"
+        "QPushButton:pressed{background:#922b21;}");
+    connect(closeBtn, &QPushButton::clicked, this, [dock]{ dock->hide(); });
+    layout->addWidget(closeBtn);
+
+    dock->setTitleBarWidget(bar);
+    return dock;
+}
+
 // 毫秒转 "MM:SS" 字符串，用于时间标签显示。
 QString MainWindow::formatTime(int64_t ms) {
     int s = (int)(ms / 1000);
@@ -1143,6 +1243,33 @@ void MainWindow::onMergeTriggered()
     mergeDock_->setVisible(!mergeDock_->isVisible());
     if (mergeDock_->isVisible())
         mergeDock_->raise();
+}
+
+// 打开音频混合面板并切换到本地音频模式
+void MainWindow::onAudioMixLocalTriggered()
+{
+    audioMixDock_->setVisible(true);
+    audioMixDock_->raise();
+    audioMixPanel_->switchToLocalMode();
+    // 确保时间轴 Dock 可见以显示音频区间
+    if (!trimDock_->isVisible()) {
+        trimDock_->setVisible(true);
+        if (!currentFile_.isEmpty())
+            thumbExtractor_->extract(currentFile_);
+    }
+}
+
+// 打开音频混合面板并切换到实时录入模式
+void MainWindow::onAudioMixRecordTriggered()
+{
+    audioMixDock_->setVisible(true);
+    audioMixDock_->raise();
+    audioMixPanel_->switchToRecordMode();
+    if (!trimDock_->isVisible()) {
+        trimDock_->setVisible(true);
+        if (!currentFile_.isEmpty())
+            thumbExtractor_->extract(currentFile_);
+    }
 }
 
 // 显示"关于"对话框：版本信息、快捷键列表、GitHub 主页链接。
