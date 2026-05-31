@@ -1,4 +1,4 @@
-#include "concatfilter.h"
+﻿#include "concatfilter.h"
 #include "logger.h"
 
 extern "C" {
@@ -50,12 +50,21 @@ static AVCodecContext* openVideoEncoder(int w, int h, AVRational fps)
         avcodec_free_context(&ctx);
         return nullptr;
     }
+    qInfo() << "[ConcatFilter] 视频编码器:" << codec->name
+            << "hw=" << hw
+            << "resolution=" << w << "x" << h
+            << "fps=" << fps.num << "/" << fps.den
+            << "time_base=" << ctx->time_base.num << "/" << ctx->time_base.den;
     return ctx;
 }
 
 bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
 {
     if (inputs.isEmpty()) { emit errorOccurred("输入文件列表为空"); return false; }
+
+    qInfo() << "[ConcatFilter] === 开始重编码拼接 ===";
+    qInfo() << "[ConcatFilter] 输入文件数:" << inputs.size();
+    qInfo() << "[ConcatFilter] 输出文件:" << output;
 
     // 从第一个文件获取目标分辨率和帧率
     int targetW = 0, targetH = 0;
@@ -76,10 +85,17 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
             targetH   = probe->streams[vi]->codecpar->height;
             targetFps = av_guess_frame_rate(probe, probe->streams[vi], nullptr);
             if (targetFps.num <= 0 || targetFps.den <= 0) targetFps = {30, 1};
+            qInfo() << "[ConcatFilter] 目标参数(来自首个文件):"
+                    << "resolution=" << targetW << "x" << targetH
+                    << "fps=" << targetFps.num << "/" << targetFps.den
+                    << "pix_fmt=" << probe->streams[vi]->codecpar->format;
         }
         if (ai >= 0) {
             targetSampleRate = probe->streams[ai]->codecpar->sample_rate;
             av_channel_layout_copy(&targetCh, &probe->streams[ai]->codecpar->ch_layout);
+            qInfo() << "[ConcatFilter] 目标音频参数:"
+                    << "sample_rate=" << targetSampleRate
+                    << "channels=" << targetCh.nb_channels;
         }
         avformat_close_input(&probe);
     }
@@ -104,6 +120,10 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
             avcodec_free_context(&aEncCtx);
             aEncCtx = nullptr;
         }
+        qInfo() << "[ConcatFilter] 音频编码器: AAC"
+                << "sample_rate=" << aEncCtx->sample_rate
+                << "bit_rate=" << aEncCtx->bit_rate
+                << "time_base=" << aEncCtx->time_base.num << "/" << aEncCtx->time_base.den;
     }
     av_channel_layout_uninit(&targetCh);
 
@@ -121,10 +141,12 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
     vOutStream = avformat_new_stream(outCtx, nullptr);
     avcodec_parameters_from_context(vOutStream->codecpar, vEncCtx);
     vOutStream->time_base = vEncCtx->time_base;
+    qInfo() << "[ConcatFilter] 输出视频流 time_base=" << vOutStream->time_base.num << "/" << vOutStream->time_base.den;
     if (aEncCtx) {
         aOutStream = avformat_new_stream(outCtx, nullptr);
         avcodec_parameters_from_context(aOutStream->codecpar, aEncCtx);
         aOutStream->time_base = aEncCtx->time_base;
+        qInfo() << "[ConcatFilter] 输出音频流 time_base=" << aOutStream->time_base.num << "/" << aOutStream->time_base.den;
     }
     if (!(outCtx->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&outCtx->pb, output.toUtf8().constData(), AVIO_FLAG_WRITE) < 0) {
@@ -139,19 +161,43 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
 
     // ===== 估算总时长（用于进度）=====
     int64_t totalUs = 0;
-    for (const QString& f : inputs) {
+    int64_t totalDurFromFiles = 0;
+    qInfo() << "[ConcatFilter] === 逐个文件探测时长 ===";
+    for (int i = 0; i < inputs.size(); ++i) {
         AVFormatContext* tmp = nullptr;
-        if (avformat_open_input(&tmp, f.toUtf8().constData(), nullptr, nullptr) >= 0) {
+        if (avformat_open_input(&tmp, inputs[i].toUtf8().constData(), nullptr, nullptr) >= 0) {
             avformat_find_stream_info(tmp, nullptr);
-            totalUs += av_rescale_q(tmp->duration, AV_TIME_BASE_Q, AV_TIME_BASE_Q);
+            int64_t fileUs = av_rescale_q(tmp->duration, AV_TIME_BASE_Q, AV_TIME_BASE_Q);
+            totalUs += fileUs;
+            totalDurFromFiles += tmp->duration;
+            qInfo() << "  文件[" << i << "]:"
+                    << inputs[i]
+                    << "container_duration(us)=" << fileUs
+                    << "container_duration(s)=" << (fileUs / 1000000.0)
+                    << "nb_streams=" << tmp->nb_streams;
+            for (unsigned si = 0; si < tmp->nb_streams; ++si) {
+                AVStream* st = tmp->streams[si];
+                int64_t sdurUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+                qInfo() << "    流#" << si
+                        << "type=" << av_get_media_type_string(st->codecpar->codec_type)
+                        << "duration(us)=" << sdurUs
+                        << "duration(s)=" << (sdurUs / 1000000.0)
+                        << "time_base=" << st->time_base.num << "/" << st->time_base.den;
+            }
             avformat_close_input(&tmp);
         }
     }
+    qInfo() << "[ConcatFilter] 累计预估输出总时长(us)=" << totalUs
+            << " S=" << (totalUs / 1000000.0) << "s";
 
     // ===== 逐文件顺序解码并编码 =====
     int64_t videoPtsAccum = 0;  // 视频 PTS 续接基点（AV_TIME_BASE 单位）
     int64_t audioPtsAccum = 0;  // 音频 PTS 续接基点（采样数单位）
     int64_t processedUs   = 0;
+    int64_t totalEncodedVideoFrames = 0;
+    int64_t totalEncodedVideoPackets = 0;
+    int64_t totalEncodedAudioFrames = 0;
+    int64_t totalEncodedAudioPackets = 0;
     bool ok = true;
 
     AVPacket* inPkt   = av_packet_alloc();
@@ -173,6 +219,14 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
         SwsContext*      swsCtx  = nullptr;
         SwrContext*      swrCtx  = nullptr;
         AVFrame*         swrFrame = nullptr;
+
+        qInfo() << "[ConcatFilter] --- 处理文件[" << fi << "]:"
+                << inputs[fi] << " ---";
+        qInfo() << "  videoPtsAccum(before)=" << videoPtsAccum
+                << "=" << (videoPtsAccum / 1000000.0) << "s";
+        qInfo() << "  audioPtsAccum(before)=" << audioPtsAccum
+                << "=" << (audioPtsAccum * 1.0 / aEncCtx->sample_rate) << "s";
+        qInfo() << "  processedUs(before)=" << processedUs;
 
         // 打开输入文件
         if (avformat_open_input(&inCtx, inputs[fi].toUtf8().constData(),
@@ -198,6 +252,11 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                 if (avcodec_open2(vDecCtx, codec, nullptr) < 0) {
                     emit errorOccurred("视频解码器打开失败"); ok = false; goto next_file;
                 }
+                qInfo() << "  视频流#"<< vi << ": codec=" << codec->name
+                        << "pix_fmt=" << vDecCtx->pix_fmt
+                        << "resolution=" << vDecCtx->width << "x" << vDecCtx->height
+                        << "time_base=" << inCtx->streams[vi]->time_base.num
+                        << "/" << inCtx->streams[vi]->time_base.den;
             }
 
             // SwsContext（来源像素格式 → YUV420P，同时缩放到目标分辨率）
@@ -225,6 +284,11 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                         swr_init(swrCtx);
 
                         swrFrame = av_frame_alloc();
+                        qInfo() << "  音频流#"<< ai << ": codec=" << codec->name
+                                << "sample_rate=" << aDecCtx->sample_rate
+                                << "channels=" << aDecCtx->ch_layout.nb_channels
+                                << "time_base=" << inCtx->streams[ai]->time_base.num
+                                << "/" << inCtx->streams[ai]->time_base.den;
                     }
                 }
             }
@@ -239,15 +303,31 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                     {1, aEncCtx ? aEncCtx->sample_rate : targetSampleRate})
                 : 0;
 
+            qInfo() << "  本文件视频时长(us)=" << vDurUs
+                    << "=" << (vDurUs / 1000000.0) << "s";
+            qInfo() << "  本文件音频时长(samples)=" << aDurSamples
+                    << "=" << (aDurSamples * 1.0 / targetSampleRate) << "s";
+
             // --- 解码循环 ---
+            int64_t fileVideoFrames = 0;
+            int64_t fileVideoPackets = 0;
+            int64_t fileAudioFrames = 0;
+            int64_t fileAudioPackets = 0;
+            int64_t firstVFramePtsUs = AV_NOPTS_VALUE;
+            int64_t lastVFramePtsUs  = 0;
             while (av_read_frame(inCtx, inPkt) >= 0) {
                 if (inPkt->stream_index == vi) {
                     avcodec_send_packet(vDecCtx, inPkt);
                     while (avcodec_receive_frame(vDecCtx, vFrame) >= 0) {
+                        ++fileVideoFrames;
                         // 将原始 pts 映射到微秒后加上累积基点
                         int64_t fPtsUs = (vFrame->pts != AV_NOPTS_VALUE)
                             ? av_rescale_q(vFrame->pts, vTb, AV_TIME_BASE_Q) : 0;
                         swsFrame->pts = videoPtsAccum + fPtsUs;
+
+                        if (firstVFramePtsUs == AV_NOPTS_VALUE)
+                            firstVFramePtsUs = swsFrame->pts;
+                        lastVFramePtsUs = swsFrame->pts;
 
                         // 缩放到目标分辨率
                         sws_scale(swsCtx, vFrame->data, vFrame->linesize, 0, vDecCtx->height,
@@ -260,6 +340,8 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                             encPkt->pos = -1;
                             av_write_frame(outCtx, encPkt);
                             av_packet_unref(encPkt);
+                            ++fileVideoPackets;
+                            ++totalEncodedVideoPackets;
                         }
 
                         // 进度：基于已处理时间
@@ -273,6 +355,7 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                             av_find_best_stream(inCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0)) {
                     avcodec_send_packet(aDecCtx, inPkt);
                     while (avcodec_receive_frame(aDecCtx, aFrame) >= 0) {
+                        ++fileAudioFrames;
                         // 重采样
                         int outSamples = (int)av_rescale_rnd(
                             swr_get_delay(swrCtx, aEncCtx->sample_rate) + aFrame->nb_samples,
@@ -294,6 +377,8 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                             encPkt->pos = -1;
                             av_write_frame(outCtx, encPkt);
                             av_packet_unref(encPkt);
+                            ++fileAudioPackets;
+                            ++totalEncodedAudioPackets;
                         }
                         av_frame_unref(aFrame);
                     }
@@ -301,10 +386,28 @@ bool ConcatFilter::exec(const QStringList& inputs, const QString& output)
                 av_packet_unref(inPkt);
             }
 
+            totalEncodedVideoFrames += fileVideoFrames;
+            totalEncodedAudioFrames += fileAudioFrames;
+
+            qInfo() << "  文件[" << fi << "] 解码统计:"
+                    << "视频帧数=" << fileVideoFrames
+                    << "视频编码包数=" << fileVideoPackets
+                    << "首帧PTS(us)=" << firstVFramePtsUs
+                    << "末帧PTS(us)=" << lastVFramePtsUs
+                    << "音频帧数=" << fileAudioFrames
+                    << "音频编码包数=" << fileAudioPackets;
+
             // 更新累积 PTS 基点（当前文件时长）
+            int64_t oldVideoAccum = videoPtsAccum;
             videoPtsAccum += vDurUs;
             processedUs   += vDurUs;
             (void)aDurSamples;  // audioPtsAccum 已在帧循环中累积
+
+            qInfo() << "  文件[" << fi << "] 完成:"
+                    << "videoPtsAccum: " << oldVideoAccum << "->" << videoPtsAccum
+                    << " (delta=" << (videoPtsAccum - oldVideoAccum) << "us)"
+                    << "audioPtsAccum=" << audioPtsAccum
+                    << " processedUs=" << processedUs;
         }
 
 next_file:
@@ -318,6 +421,7 @@ next_file:
 
     // ===== Flush 编码器 =====
     if (ok) {
+        int64_t flushVidPkts = 0;
         avcodec_send_frame(vEncCtx, nullptr);
         while (avcodec_receive_packet(vEncCtx, encPkt) >= 0) {
             av_packet_rescale_ts(encPkt, vEncCtx->time_base, vOutStream->time_base);
@@ -325,7 +429,9 @@ next_file:
             encPkt->pos = -1;
             av_write_frame(outCtx, encPkt);
             av_packet_unref(encPkt);
+            ++flushVidPkts;
         }
+        int64_t flushAudPkts = 0;
         if (aEncCtx) {
             avcodec_send_frame(aEncCtx, nullptr);
             while (avcodec_receive_packet(aEncCtx, encPkt) >= 0) {
@@ -334,9 +440,40 @@ next_file:
                 encPkt->pos = -1;
                 av_write_frame(outCtx, encPkt);
                 av_packet_unref(encPkt);
+                ++flushAudPkts;
             }
         }
+        qInfo() << "[ConcatFilter] Flush 编码器:"
+                << "视频flush包数=" << flushVidPkts
+                << "音频flush包数=" << flushAudPkts;
+
         av_write_trailer(outCtx);
+
+        // ── Log: 输出流实际时长 ──
+        qInfo() << "[ConcatFilter] === 输出统计 ===";
+        qInfo() << "  编码视频帧总数:" << totalEncodedVideoFrames;
+        qInfo() << "  编码视频包总数:" << totalEncodedVideoPackets;
+        qInfo() << "  编码音频帧总数:" << totalEncodedAudioFrames;
+        qInfo() << "  编码音频包总数:" << totalEncodedAudioPackets;
+        qInfo() << "  最终videoPtsAccum(us)=" << videoPtsAccum
+                << " =" << (videoPtsAccum / 1000000.0) << "s";
+        qInfo() << "  最终audioPtsAccum(samples)=" << audioPtsAccum
+                << " =" << (audioPtsAccum * 1.0 / targetSampleRate) << "s";
+
+        qInfo() << "[ConcatFilter] === 写trailer后输出流状态 ===";
+        for (unsigned i = 0; i < outCtx->nb_streams; ++i) {
+            AVStream* st = outCtx->streams[i];
+            int64_t durUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+            qInfo() << "  输出流#" << i
+                    << " type=" << av_get_media_type_string(st->codecpar->codec_type)
+                    << " duration(ts)=" << st->duration
+                    << " duration(us)=" << durUs
+                    << " duration(s)=" << (durUs / 1000000.0)
+                    << " nb_frames=" << st->nb_frames
+                    << " time_base=" << st->time_base.num << "/" << st->time_base.den
+                    << " start_time=" << st->start_time;
+        }
+
         qInfo() << "ConcatFilter 完成:" << output;
     }
 
@@ -351,6 +488,33 @@ next_file:
         if (!(outCtx->oformat->flags & AVFMT_NOFILE) && outCtx->pb)
             avio_closep(&outCtx->pb);
         avformat_free_context(outCtx);
+    }
+
+    // ── Log: 输出文件实际时长验证 ──
+    if (ok) {
+        qInfo() << "[ConcatFilter] === 输出文件验证（重新打开） ===";
+        AVFormatContext* verifyCtx = nullptr;
+        if (avformat_open_input(&verifyCtx, output.toUtf8().constData(), nullptr, nullptr) >= 0) {
+            avformat_find_stream_info(verifyCtx, nullptr);
+            qInfo() << "  container duration(us)=" << verifyCtx->duration
+                    << " =" << (verifyCtx->duration / 1000000.0) << "s"
+                    << " bit_rate=" << verifyCtx->bit_rate
+                    << " nb_streams=" << verifyCtx->nb_streams;
+            for (unsigned i = 0; i < verifyCtx->nb_streams; ++i) {
+                AVStream* st = verifyCtx->streams[i];
+                int64_t durUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+                qInfo() << "  流#" << i
+                        << " type=" << av_get_media_type_string(st->codecpar->codec_type)
+                        << " duration(us)=" << durUs
+                        << " duration(s)=" << (durUs / 1000000.0)
+                        << " time_base=" << st->time_base.num << "/" << st->time_base.den
+                        << " start_time=" << st->start_time
+                        << " nb_frames=" << st->nb_frames;
+            }
+            avformat_close_input(&verifyCtx);
+        } else {
+            qWarning() << "  无法重新打开输出文件进行验证:" << output;
+        }
     }
 
     return ok;

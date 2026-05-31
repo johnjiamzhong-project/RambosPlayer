@@ -1,4 +1,4 @@
-#include "concatdemuxer.h"
+﻿#include "concatdemuxer.h"
 #include "logger.h"
 #include <QTemporaryFile>
 #include <QTextStream>
@@ -155,6 +155,23 @@ bool ConcatDemuxer::exec(const QStringList& inputs, const QString& output)
         }
     }
 
+    // ── Log: 输入流信息 ──
+    qInfo() << "[ConcatDemuxer] 输入文件数:" << inputs.size();
+    qInfo() << "[ConcatDemuxer] concat demuxer 共" << inCtx->nb_streams << "条流";
+    for (unsigned i = 0; i < inCtx->nb_streams; ++i) {
+        AVStream* st = inCtx->streams[i];
+        int64_t durUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+        qInfo() << "[ConcatDemuxer] 流#" << i
+                << "type=" << av_get_media_type_string(st->codecpar->codec_type)
+                << "codec=" << avcodec_get_name(st->codecpar->codec_id)
+                << "time_base=" << st->time_base.num << "/" << st->time_base.den
+                << "duration(ts)=" << st->duration
+                << "duration(us)=" << durUs
+                << "duration(s)=" << (durUs / 1000000.0)
+                << "start_time=" << st->start_time
+                << "nb_frames=" << st->nb_frames;
+    }
+
     // 估算总时长（用于进度）
     int64_t totalUs = 0;
     for (unsigned i = 0; i < inCtx->nb_streams; ++i) {
@@ -165,10 +182,20 @@ bool ConcatDemuxer::exec(const QStringList& inputs, const QString& output)
             break;
         }
     }
+    qInfo() << "[ConcatDemuxer] 预估输出总时长(us)=" << totalUs
+            << " S=" << (totalUs / 1000000.0) << "s";
 
     // 直通复制包
     AVPacket* pkt = av_packet_alloc();
     int64_t lastPts = 0;
+    int64_t firstVideoPts = AV_NOPTS_VALUE;
+    int64_t lastVideoPts  = 0;
+    int64_t firstAudioPts = AV_NOPTS_VALUE;
+    int64_t lastAudioPts  = 0;
+    int64_t videoPktCount = 0;
+    int64_t audioPktCount = 0;
+    int64_t maxVideoPtsUs = 0;
+    int64_t maxAudioPtsUs = 0;
     while (av_read_frame(inCtx, pkt) >= 0) {
         AVStream* inStream  = inCtx->streams[pkt->stream_index];
         AVStream* outStream = outCtx->streams[pkt->stream_index];
@@ -176,24 +203,97 @@ bool ConcatDemuxer::exec(const QStringList& inputs, const QString& output)
         pkt->pos = -1;
         av_interleaved_write_frame(outCtx, pkt);
 
-        // 进度（以视频包的 PTS 计）
-        if (totalUs > 0 && inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO
-            && pkt->pts != AV_NOPTS_VALUE) {
-            int64_t us = av_rescale_q(pkt->pts, outStream->time_base, AV_TIME_BASE_Q);
-            if (us != lastPts) {
-                lastPts = us;
-                emit progressed((int)(us * 100 / totalUs));
+        // 收集 PTS 统计
+        if (inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            ++videoPktCount;
+            if (firstVideoPts == AV_NOPTS_VALUE && pkt->pts != AV_NOPTS_VALUE)
+                firstVideoPts = pkt->pts;
+            if (pkt->pts != AV_NOPTS_VALUE) {
+                lastVideoPts = pkt->pts;
+                int64_t us = av_rescale_q(pkt->pts, outStream->time_base, AV_TIME_BASE_Q);
+                if (us > maxVideoPtsUs) maxVideoPtsUs = us;
+            }
+            // 进度（以视频包的 PTS 计）
+            if (totalUs > 0 && pkt->pts != AV_NOPTS_VALUE) {
+                int64_t us = av_rescale_q(pkt->pts, outStream->time_base, AV_TIME_BASE_Q);
+                if (us != lastPts) {
+                    lastPts = us;
+                    emit progressed((int)(us * 100 / totalUs));
+                }
+            }
+        } else if (inStream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            ++audioPktCount;
+            if (firstAudioPts == AV_NOPTS_VALUE && pkt->pts != AV_NOPTS_VALUE)
+                firstAudioPts = pkt->pts;
+            if (pkt->pts != AV_NOPTS_VALUE) {
+                lastAudioPts = pkt->pts;
+                int64_t us = av_rescale_q(pkt->pts, outStream->time_base, AV_TIME_BASE_Q);
+                if (us > maxAudioPtsUs) maxAudioPtsUs = us;
             }
         }
         av_packet_unref(pkt);
     }
 
+    qInfo() << "[ConcatDemuxer] === 数据包统计 ===";
+    qInfo() << "  视频包数:" << videoPktCount
+            << " PTS范围: first=" << firstVideoPts << " last=" << lastVideoPts
+            << " maxPtsUs=" << maxVideoPtsUs
+            << " maxPtsS=" << (maxVideoPtsUs / 1000000.0);
+    qInfo() << "  音频包数:" << audioPktCount
+            << " PTS范围: first=" << firstAudioPts << " last=" << lastAudioPts
+            << " maxPtsUs=" << maxAudioPtsUs
+            << " maxPtsS=" << (maxAudioPtsUs / 1000000.0);
+    qInfo() << "  预估总时长(us)=" << totalUs
+            << " S=" << (totalUs / 1000000.0);
+
     av_write_trailer(outCtx);
     av_packet_free(&pkt);
+
+    // ── Log: 输出流实际时长 ──
+    qInfo() << "[ConcatDemuxer] === 写trailer后输出流状态 ===";
+    for (unsigned i = 0; i < outCtx->nb_streams; ++i) {
+        AVStream* st = outCtx->streams[i];
+        int64_t durUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+        qInfo() << "  输出流#" << i
+                << " type=" << av_get_media_type_string(st->codecpar->codec_type)
+                << " duration(ts)=" << st->duration
+                << " duration(us)=" << durUs
+                << " duration(s)=" << (durUs / 1000000.0)
+                << " nb_frames=" << st->nb_frames
+                << " time_base=" << st->time_base.num << "/" << st->time_base.den
+                << " start_time=" << st->start_time;
+    }
 
     if (!(outCtx->oformat->flags & AVFMT_NOFILE)) avio_closep(&outCtx->pb);
     avformat_free_context(outCtx);
     avformat_close_input(&inCtx);
+
+    // ── Log: 输出文件实际时长验证 ──
+    qInfo() << "[ConcatDemuxer] === 输出文件验证（重新打开） ===";
+    {
+        AVFormatContext* verifyCtx = nullptr;
+        if (avformat_open_input(&verifyCtx, output.toUtf8().constData(), nullptr, nullptr) >= 0) {
+            avformat_find_stream_info(verifyCtx, nullptr);
+            qInfo() << "  container duration(us)=" << verifyCtx->duration
+                    << " =" << (verifyCtx->duration / 1000000.0) << "s"
+                    << " bit_rate=" << verifyCtx->bit_rate
+                    << " nb_streams=" << verifyCtx->nb_streams;
+            for (unsigned i = 0; i < verifyCtx->nb_streams; ++i) {
+                AVStream* st = verifyCtx->streams[i];
+                int64_t durUs = av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q);
+                qInfo() << "  流#" << i
+                        << " type=" << av_get_media_type_string(st->codecpar->codec_type)
+                        << " duration(us)=" << durUs
+                        << " duration(s)=" << (durUs / 1000000.0)
+                        << " time_base=" << st->time_base.num << "/" << st->time_base.den
+                        << " start_time=" << st->start_time
+                        << " nb_frames=" << st->nb_frames;
+            }
+            avformat_close_input(&verifyCtx);
+        } else {
+            qWarning() << "  无法重新打开输出文件进行验证:" << output;
+        }
+    }
 
     qInfo() << "ConcatDemuxer 完成:" << output;
     return true;

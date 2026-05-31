@@ -77,7 +77,10 @@ void Logger::install(const QString& logDir)
     QString logPath = dir + "/rambos_" + stamp + ".log";
 
     s_file.setFileName(logPath);
-    if (s_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (s_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        // 手动写 UTF-8 BOM（显式长度，避免 strlen 歧义）
+        QByteArray bom("\xEF\xBB\xBF", 3);
+        s_file.write(bom);
         s_stream.setDevice(&s_file);
         s_stream.setCodec("UTF-8");
         s_streamReady = true;

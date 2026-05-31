@@ -316,7 +316,7 @@
   </action>
   <action name="actionMerge">
    <property name="text">
-    <string>合并 / 混音(&amp;G)...</string>
+    <string>合并(&amp;G)...</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+G</string>

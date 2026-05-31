@@ -5,7 +5,7 @@
   <property name="geometry">
    <rect><x>0</x><y>0</y><width>340</width><height>520</height></rect>
   </property>
-  <property name="windowTitle"><string>合并 / 混音</string></property>
+  <property name="windowTitle"><string>合并</string></property>
   <layout class="QVBoxLayout" name="mainLayout">
    <property name="margin"><number>8</number></property>
    <property name="spacing"><number>6</number></property>
@@ -19,7 +19,6 @@
      <item><widget class="QComboBox" name="modeCombo">
       <item><property name="text"><string>拼接视频</string></property></item>
       <item><property name="text"><string>音频拼接</string></property></item>
-      <item><property name="text"><string>替换音频</string></property></item>
      </widget></item>
     </layout>
    </item>

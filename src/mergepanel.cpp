@@ -67,10 +67,7 @@ void MergePanel::dropEvent(QDropEvent* e)
 // 模式切换：调整提示文字、音量组显隐
 void MergePanel::onModeChanged(int index)
 {
-    // 0=拼接视频 1=音频混音 2=音视频合流
-    bool isMux = (index == 2);
-
-    ui->volumeGroup->setVisible(false);  // 当前版本不用音量调节
+    ui->volumeGroup->setVisible(false);
 
     switch (index) {
     case 0:
@@ -79,11 +76,7 @@ void MergePanel::onModeChanged(int index)
     case 1:
         ui->hintLabel->setText("拖入或添加 2+ 个音频文件，首尾相接合成一个文件");
         break;
-    case 2:
-        ui->hintLabel->setText("第一个是视频，其余是音频（按顺序拼接后替换原声）");
-        break;
     }
-
 
     updateStartEnabled();
 }
@@ -95,12 +88,6 @@ void MergePanel::onAddFile()
 
     if (mode == 1) {
         filter = "音频文件 (*.mp3 *.aac *.wav *.flac *.m4a *.ogg *.wma);;视频文件 (*.mp4 *.mkv *.mov *.avi);;所有文件 (*.*)";
-    } else if (mode == 2) {
-        // 替换音频：列表为空时选视频，已有视频后选音频
-        if (ui->fileList->count() == 0)
-            filter = "视频文件 (*.mp4 *.mkv *.mov *.avi *.ts *.flv);;所有文件 (*.*)";
-        else
-            filter = "音频文件 (*.mp3 *.aac *.wav *.flac *.m4a *.ogg *.wma);;视频文件 (*.mp4 *.mkv *.mov *.avi);;所有文件 (*.*)";
     } else {
         filter = "视频文件 (*.mp4 *.mkv *.mov *.avi *.ts *.flv);;所有文件 (*.*)";
     }
@@ -169,7 +156,7 @@ void MergePanel::onBrowseOutput()
         defaultName = "mixed_audio.aac";
     } else {
         filter      = "视频文件 (*.mp4 *.mkv *.mov);;所有文件 (*.*)";
-        defaultName = (mode == 0) ? "concat_output.mp4" : "muxed_output.mp4";
+        defaultName = "concat_output.mp4";
     }
 
     QString path = QFileDialog::getSaveFileName(this, "输出文件", defaultName, filter);
@@ -185,7 +172,6 @@ void MergePanel::onStart()
     switch (ui->modeCombo->currentIndex()) {
     case 0: task.mode = MergeWorker::Mode::ConcatVideo; break;
     case 1: task.mode = MergeWorker::Mode::MixAudio;    break;
-    case 2: task.mode = MergeWorker::Mode::MuxAV;       break;
     }
 
     task.inputFiles = filePaths();
@@ -239,7 +225,7 @@ void MergePanel::updateStartEnabled()
 {
     int n    = ui->fileList->count();
     bool hasOut = !ui->outputEdit->text().trimmed().isEmpty();
-    int minFiles = (ui->modeCombo->currentIndex() == 2) ? 2 : 2;
+    int minFiles = 2;
     ui->startBtn->setEnabled(n >= minFiles && hasOut && !worker_->isRunning());
 }
 

@@ -45,7 +45,6 @@ add_executable(RambosPlayer WIN32
     src/streampipeline.cpp
     src/mpegtsserver.cpp
     src/concatdemuxer.cpp
-    src/simplemuxer.cpp
     src/audiomixer.cpp
     src/concatfilter.cpp
     src/mergeworker.cpp

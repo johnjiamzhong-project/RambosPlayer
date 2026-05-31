@@ -7,16 +7,15 @@
 // MergeWorker：合并任务统一调度线程。
 // 根据 MergeTask 的模式分发到对应实现类：
 //   ConcatVideo → 先检查参数一致性，一致走 ConcatDemuxer（无损），不一致走 ConcatFilter（重编码）
-//   MixAudio    → AudioMixer（amix 多路混音）
-//   MuxAV       → SimpleMuxer（独立视频 + 独立音频合流）
+//   MixAudio    → 先检查参数一致性，一致走 ConcatDemuxer（无损），不一致走 execAudioConcat（重编码 AAC）
 class MergeWorker : public QThread {
     Q_OBJECT
 public:
-    enum class Mode { ConcatVideo, MixAudio, MuxAV };
+    enum class Mode { ConcatVideo, MixAudio };
 
     struct Task {
         Mode        mode;
-        QStringList inputFiles;   // ConcatVideo/MixAudio: N 路；MuxAV: [0]=视频, [1]=音频
+        QStringList inputFiles;
         QString     outputFile;
         QVector<double> volumes;  // MixAudio 各路音量权重（不足时补 1.0）
     };
