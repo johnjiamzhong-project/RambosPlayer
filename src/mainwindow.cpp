@@ -70,36 +70,106 @@ MainWindow::MainWindow(QWidget* parent)
     renderer_->installEventFilter(this);
     renderer_->setFocusPolicy(Qt::StrongFocus);
 
-    // 标题栏自动隐藏定时器（最大化时使用）
-    // 用 200ms 轮询鼠标位置，MouseMove 在未按下时不传递到 QMainWindow
+    // 最大化时浮动标题栏覆盖层（替代系统标题栏，支持滑入/滑出动画）
+    titleOverlay_ = new QWidget(this, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    titleOverlay_->setFixedHeight(48);
+    titleOverlay_->setStyleSheet("background:rgba(30,30,30,200);");
+    auto* overlayLayout = new QHBoxLayout(titleOverlay_);
+    overlayLayout->setContentsMargins(12, 0, 8, 0);
+    overlayLayout->setSpacing(4);
+    // 应用图标
+    auto* appIcon = new QLabel();
+    appIcon->setPixmap(QIcon(":/icons/app.svg").pixmap(20, 20));
+    appIcon->setFixedSize(24, 24);
+    overlayLayout->addWidget(appIcon);
+    overlayTitleLabel_ = new QLabel("RambosPlayer");
+    overlayTitleLabel_->setStyleSheet("color:#e0e0e0; font-size:12px; font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;");
+    overlayTitleLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
+    overlayLayout->addWidget(overlayTitleLabel_, 1); // stretch=1，占满剩余空间
+    const QString oBtnStyle =
+        "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+        "QPushButton:hover{background:rgba(255,255,255,40);}"
+        "QPushButton:pressed{background:rgba(255,255,255,25);}";
+    auto* minBtn = new QPushButton();
+    minBtn->setFixedSize(40, 32);
+    minBtn->setIcon(QIcon(":/icons/title_min.svg"));
+    minBtn->setIconSize(QSize(18, 18));
+    minBtn->setStyleSheet(oBtnStyle);
+    connect(minBtn, &QPushButton::clicked, this, &MainWindow::showMinimized);
+    overlayLayout->addWidget(minBtn);
+    auto* maxBtn = new QPushButton();
+    maxBtn->setFixedSize(40, 32);
+    maxBtn->setIcon(QIcon(":/icons/title_max.svg"));
+    maxBtn->setIconSize(QSize(18, 18));
+    maxBtn->setStyleSheet(oBtnStyle);
+    connect(maxBtn, &QPushButton::clicked, this, [this]{ showNormal(); });
+    overlayLayout->addWidget(maxBtn);
+    auto* closeBtn = new QPushButton();
+    closeBtn->setFixedSize(40, 32);
+    closeBtn->setIcon(QIcon(":/icons/title_close.svg"));
+    closeBtn->setIconSize(QSize(18, 18));
+    closeBtn->setStyleSheet(
+        "QPushButton{background:transparent;border:none;border-radius:3px;padding:0px;}"
+        "QPushButton:hover{background:#c0392b;}"
+        "QPushButton:pressed{background:#922b21;}");
+    connect(closeBtn, &QPushButton::clicked, this, &MainWindow::close);
+    overlayLayout->addWidget(closeBtn);
+    titleOverlay_->setGeometry(0, -48, width(), 48);
+    titleOverlay_->hide();
+
+    // 标题栏动画定时器（16ms ≈ 60fps）+ 鼠标位置检测
     hideTitleTimer_ = new QTimer(this);
-    hideTitleTimer_->setInterval(200);
+    hideTitleTimer_->setInterval(16);
     connect(hideTitleTimer_, &QTimer::timeout, this, [this]{
-        if (!isMaximized()) return;
-#ifdef Q_OS_WIN
-        HWND hwnd = reinterpret_cast<HWND>(winId());
-        LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-        bool hasCaption = (style & WS_CAPTION) != 0;
-        int winTop = geometry().top();
-        int mouseY = QCursor::pos().y();
-        if (mouseY <= winTop + 10) {
-            // 鼠标靠近顶部 → 显示标题栏 + 菜单栏
-            if (!hasCaption) {
-                ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
-                ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        if (titleAnimActive_) {
+            titleAnimProgress_++;
+            int y;
+            if (titleAnimProgress_ >= 15) {
+                y = titleAnimTargetY_;
+                titleAnimActive_ = false;
+                if (!titleAnimShow_) titleOverlay_->hide();
+            } else {
+                y = titleAnimStartY_ + titleAnimStepY_ * titleAnimProgress_;
             }
-            menuBar()->show();
-        } else {
-            // 鼠标离开 → 隐藏标题栏 + 菜单栏
-            menuBar()->hide();
-            if (hasCaption) {
-                ::SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_CAPTION);
-                ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            titleOverlay_->move(0, y);
+            return;
+        }
+        static int pollCounter = 0;
+        static int showHoldFrames = 0;  // 标题栏显示后的保持计数
+        if (++pollCounter < 19) return; // 16ms * 19 ≈ 300ms
+        pollCounter = 0;
+        if (!isActiveWindow()) return;
+        int mouseY = QCursor::pos().y();
+        int winTop = frameGeometry().top();
+        // 鼠标在窗口顶部 60px 内视为"靠近"
+        bool mouseNearTop = (mouseY <= winTop + 60);
+        if (mouseNearTop && !titleOverlay_->isVisible()) {
+            titleOverlay_->resize(width(), 48);
+            titleOverlay_->show();
+            titleAnimStartY_ = -48;
+            titleAnimStepY_ = 3;
+            titleAnimTargetY_ = 0;
+            titleAnimProgress_ = 0;
+            titleAnimShow_ = true;
+            titleAnimActive_ = true;
+            showHoldFrames = 0;
+        } else if (titleOverlay_->isVisible() && !titleAnimActive_) {
+            if (mouseNearTop) {
+                showHoldFrames = 0;  // 鼠标还在顶部区域，重置计时
+            } else {
+                showHoldFrames++;
+                // 鼠标移开后保持 1.5 秒（5 个 300ms 周期）再隐藏
+                if (showHoldFrames >= 5) {
+                    showHoldFrames = 0;
+                    titleAnimStartY_ = 0;
+                    titleAnimStepY_ = -3;
+                    titleAnimTargetY_ = -48;
+                    titleAnimProgress_ = 0;
+                    titleAnimShow_ = false;
+                    titleAnimActive_ = true;
+                }
             }
         }
-#endif
     });
 
     // 控制栏控件不抢焦点：鼠标点击后焦点仍留在 renderer_，
@@ -264,6 +334,9 @@ void MainWindow::openFile(const QString& path) {
     if (player_->open(path)) {
         qInfo() << "MainWindow: opened" << path;
         currentFile_ = path;
+        QString title = "RambosPlayer - " + QFileInfo(path).fileName();
+        setWindowTitle(title);
+        overlayTitleLabel_->setText(title);
         updateRecentFiles(path);
         // 有预配置推流目标时，在 play() 前先注册推流队列，
         // 确保 DemuxThread 启动后首个关键帧即进入推流通道，避免漏等整个 GOP
@@ -609,10 +682,12 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
 // 空格暂停/恢复，左右方向键快退/快进 10 秒。
 // 仅当焦点不在 VideoRenderer 时作为降级路径；正常情况由 eventFilter 拦截。
 
-// 窗口状态变化：还原时恢复窗口边框并停止自动隐藏定时器
+// 窗口状态变化：还原时恢复系统标题栏并停止动画
 void MainWindow::changeEvent(QEvent* event) {
     if (event->type() == QEvent::WindowStateChange) {
         if (!isMaximized()) {
+            titleAnimActive_ = false;
+            titleOverlay_->hide();
 #ifdef Q_OS_WIN
             HWND hwnd = reinterpret_cast<HWND>(winId());
             LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -653,24 +728,28 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
     }
 }
 
-// 双击切换最大化/窗口模式。最大化后标题栏自动隐藏，鼠标移到顶部时自动显示。
+// 双击切换最大化/窗口模式。最大化后隐藏系统标题栏，用浮动覆盖层替代。
 void MainWindow::mouseDoubleClickEvent(QMouseEvent*) {
     if (isMaximized()) {
+        // 还原：停止动画，隐藏覆盖层，恢复系统标题栏
+        titleAnimActive_ = false;
+        titleOverlay_->hide();
 #ifdef Q_OS_WIN
-        // 还原前先恢复标题栏 + 菜单栏
         HWND hwnd = reinterpret_cast<HWND>(winId());
         LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-        ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
-        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        if (!(style & WS_CAPTION)) {
+            ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION);
+            ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        }
         menuBar()->show();
 #endif
         showNormal();
         hideTitleTimer_->stop();
     } else {
         showMaximized();
+        // 隐藏系统标题栏和菜单栏，内容区填满整个屏幕
 #ifdef Q_OS_WIN
-        // 最大化后隐藏标题栏 + 菜单栏
         HWND hwnd = reinterpret_cast<HWND>(winId());
         LONG style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
         ::SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_CAPTION);

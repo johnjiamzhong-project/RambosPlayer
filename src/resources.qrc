@@ -5,7 +5,11 @@
         <file>icons/pause.svg</file>
         <file>icons/dock_close.svg</file>
         <file>icons/dock_float.svg</file>
+        <file>icons/app.svg</file>
         <file>icons/app.ico</file>
+        <file>icons/title_min.svg</file>
+        <file>icons/title_max.svg</file>
+        <file>icons/title_close.svg</file>
         <file>mpegts.min.js</file>
     </qresource>
 </RCC>

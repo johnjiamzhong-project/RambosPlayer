@@ -21,6 +21,7 @@ class MergePanel;
 class AudioMixPanel;
 class QDockWidget;
 class QToolButton;
+class QLabel;
 
 // MainWindow 是播放器的主窗口，包含视频渲染区（VideoRenderer）和底部控制栏。
 // 控制栏布局全部定义在 mainwindow.ui 中；本类只负责信号连接和交互逻辑。
@@ -88,6 +89,15 @@ private:
     AudioMixPanel*      audioMixPanel_ = nullptr; // 音频混合面板
     QToolButton*        recentRemoveBtn_ = nullptr; // 最近文件悬浮 × 按钮（覆盖层，共用一个）
     QTimer*             hideTitleTimer_  = nullptr; // 最大化时标题栏自动隐藏定时器
+    QWidget*            titleOverlay_    = nullptr; // 最大化时浮动标题栏覆盖层
+    QLabel*             overlayTitleLabel_ = nullptr; // 覆盖层标题文字（显示文件名）
+    // 标题栏滑动动画状态
+    bool    titleAnimActive_  = false;   // 动画进行中
+    bool    titleAnimShow_    = false;   // true=显示, false=隐藏
+    int     titleAnimProgress_ = 0;     // 当前帧（0–15）
+    int     titleAnimStepY_   = 0;      // 每帧 Y 位移
+    int     titleAnimTargetY_ = 0;      // 目标 Y
+    int     titleAnimStartY_  = 0;      // 动画起始 Y
     // 批量导出状态
     int     batchExportIndex_ = 0;  // 当前导出到第几个（UI 进度显示用）
     int     batchExportTotal_ = 0;  // 总区间数
