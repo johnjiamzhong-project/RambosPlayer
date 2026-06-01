@@ -15,6 +15,7 @@
 - 推流方案对比架构图：[docs/推流方案对比架构图.html](docs/推流方案对比架构图.html)（HTTP-FLV vs HTTP-MPEG-TS 管线对比）
 - 导出管线优化分析：[docs/EXPORT_OPTIMIZATION.md](docs/EXPORT_OPTIMIZATION.md)（架构、瓶颈、6 项优化策略）
 - 导出性能基准记录：[docs/EXPORT_BENCHMARK.md](docs/EXPORT_BENCHMARK.md)（各阶段实测数据，11 次测试）
+- 音频混合架构图：[docs/audio-mix-architecture.html](docs/audio-mix-architecture.html)
 
 ---
 

@@ -59,8 +59,7 @@ private slots:
     void onExportFinished(bool ok);
     // startNextBatchExport 已移除 — 批量导出改用 ExportWorker::runBatch() 内部循环
     void onMergeTriggered();
-    void onAudioMixLocalTriggered();
-    void onAudioMixRecordTriggered();
+    void onAudioMixTriggered();
     void onAbout();
 
 private:

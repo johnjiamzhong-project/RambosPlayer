@@ -1,5 +1,6 @@
 #include "audiomixpanel.h"
 #include "audiomixworker.h"
+#include "audiopreviewwindow.h"
 #include "playercontroller.h"
 #include "timeline.h"
 #include "ui_audiomixpanel.h"
@@ -38,6 +39,7 @@ AudioMixPanel::AudioMixPanel(QWidget* parent)
     connect(ui->mixVolSlider,    &QSlider::valueChanged, this, &AudioMixPanel::onMixVolChanged);
     connect(ui->addRegionBtn,    &QPushButton::clicked, this, &AudioMixPanel::onAddRegion);
     connect(ui->removeRegionBtn, &QPushButton::clicked, this, &AudioMixPanel::onRemoveRegion);
+    connect(ui->listenBtn,       &QPushButton::clicked, this, &AudioMixPanel::onListen);
     connect(ui->previewBtn,      &QPushButton::clicked, this, &AudioMixPanel::onPreview);
     connect(ui->browseOutputBtn, &QPushButton::clicked, this, &AudioMixPanel::onBrowseOutput);
     connect(ui->exportBtn,       &QPushButton::clicked, this, &AudioMixPanel::onExport);
@@ -59,15 +61,23 @@ AudioMixPanel::AudioMixPanel(QWidget* parent)
     connect(ui->regionsTable, &QTableWidget::itemSelectionChanged, this, [this]{
         bool sel = !ui->regionsTable->selectedItems().isEmpty();
         ui->removeRegionBtn->setEnabled(sel);
+        ui->listenBtn->setEnabled(sel);
         ui->previewBtn->setEnabled(sel && player_ != nullptr);
     });
 
-    // 表格列宽
+    // 表格列宽：音频文件列拉伸填充，数值列固定像素宽
+    ui->regionsTable->horizontalHeader()->setStretchLastSection(false);
     ui->regionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
+    ui->regionsTable->setColumnWidth(1, 65);   // 贴入时间（HH:mm:ss）
+    ui->regionsTable->setColumnWidth(2, 65);   // 时长
+    ui->regionsTable->setColumnWidth(3, 55);   // 源音量
+    ui->regionsTable->setColumnWidth(4, 55);   // 混音量
+    // 鼠标追踪：启用后 hover 样式（整行高亮）才能生效
+    ui->regionsTable->setMouseTracking(true);
 }
 
 AudioMixPanel::~AudioMixPanel()
@@ -126,6 +136,7 @@ void AudioMixPanel::onOpenSource()
         "视频文件 (*.mp4 *.mkv *.avi *.mov *.flv *.wmv);;所有文件 (*)");
     if (path.isEmpty()) return;
     setSourceFile(path);
+    emit sourceFileSelected(path);  // 通知 MainWindow 加载到播放器
 }
 
 void AudioMixPanel::onBrowseAudio()
@@ -203,6 +214,21 @@ void AudioMixPanel::onRemoveRegion()
     rebuildTable();
     updateTimeline();
     updateExportEnabled();
+}
+
+// 试听：弹出简洁播放窗口预览选中的音频文件
+void AudioMixPanel::onListen()
+{
+    int row = ui->regionsTable->currentRow();
+    if (row < 0 || row >= regions_.size()) return;
+    const AudioMixRegion& r = regions_[row];
+
+    auto* win = new AudioPreviewWindow(r.sourcePath, this->window());
+    win->setAttribute(Qt::WA_DeleteOnClose);
+    // 居中显示在父窗口上方
+    QPoint center = this->window()->geometry().center();
+    win->move(center.x() - win->width() / 2, center.y() - win->height() / 2);
+    win->show();
 }
 
 // 试播放：视频 seek 到区间起始，同时 QMediaPlayer 播放新增音频
@@ -405,7 +431,10 @@ void AudioMixPanel::rebuildTable()
             return item;
         };
 
-        ui->regionsTable->setItem(row, 0, makeItem(r.displayName));
+        // 音频文件列：tooltip 显示完整路径，鼠标悬停可查看
+        auto* nameItem = makeItem(r.displayName);
+        nameItem->setToolTip(r.sourcePath);
+        ui->regionsTable->setItem(row, 0, nameItem);
         ui->regionsTable->setItem(row, 1, makeItem(
             QTime(0, 0).addSecs(r.videoStartUs / 1000000LL).toString("HH:mm:ss")));
         ui->regionsTable->setItem(row, 2, makeItem(

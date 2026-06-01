@@ -275,6 +275,58 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
 }
 
+/* === 表格 === */
+QTableWidget {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    gridline-color: #3e3e42;
+    border: 1px solid #3e3e42;
+    border-radius: 3px;
+    font-size: 13px;
+}
+
+QTableWidget::item {
+    padding: 4px 6px;
+}
+
+QTableWidget::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QTableWidget::item:hover {
+    background-color: #2a2d2e;
+}
+
+/* 交替行底色 */
+QTableWidget[alternatingRowColors="true"]::item:alternate {
+    background-color: #252526;
+}
+
+/* === 表头 === */
+QHeaderView::section {
+    background-color: #2d2d30;
+    color: #cccccc;
+    border: none;
+    border-right: 1px solid #3e3e42;
+    border-bottom: 1px solid #3e3e42;
+    padding: 5px 6px;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+QHeaderView::section:hover {
+    background-color: #3e3e42;
+}
+
+/* 表格左上角角落按钮，与表头保持一致 */
+QTableCornerButton::section {
+    background-color: #2d2d30;
+    border: none;
+    border-right: 1px solid #3e3e42;
+    border-bottom: 1px solid #3e3e42;
+}
+
 /* === 分隔线 === */
 QFrame[frameShape="4"], QFrame[frameShape="5"] {
     color: #3e3e42;

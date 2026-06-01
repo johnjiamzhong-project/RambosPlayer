@@ -204,9 +204,11 @@ MainWindow::MainWindow(QWidget* parent)
     audioMixPanel_ = new AudioMixPanel();
     audioMixPanel_->setPlayerController(player_);
     audioMixPanel_->setTimeline(timeline_);
+    connect(audioMixPanel_, &AudioMixPanel::sourceFileSelected, this, &MainWindow::openFile);
     audioMixDock_  = createDockWithTitleBar("音频混合", audioMixPanel_);
     audioMixDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     audioMixDock_->setVisible(false);
+    audioMixDock_->setMinimumWidth(420);
     addDockWidget(Qt::RightDockWidgetArea, audioMixDock_);
 
     // 浏览剪切控制器
@@ -293,8 +295,7 @@ MainWindow::MainWindow(QWidget* parent)
         QMessageBox::warning(nullptr, "导出错误", msg);
     });
     connect(ui->actionMerge,          &QAction::triggered, this, &MainWindow::onMergeTriggered);
-    connect(ui->actionAudioMixLocal,  &QAction::triggered, this, &MainWindow::onAudioMixLocalTriggered);
-    connect(ui->actionAudioMixRecord, &QAction::triggered, this, &MainWindow::onAudioMixRecordTriggered);
+    connect(ui->actionAudioMix,       &QAction::triggered, this, &MainWindow::onAudioMixTriggered);
     connect(ui->actionAbout,          &QAction::triggered, this, &MainWindow::onAbout);
 
     rebuildRecentMenu();
@@ -1324,26 +1325,13 @@ void MainWindow::onMergeTriggered()
         mergeDock_->raise();
 }
 
-// 打开音频混合面板并切换到本地音频模式
-void MainWindow::onAudioMixLocalTriggered()
+// 打开音频混合面板（默认本地音频模式）
+void MainWindow::onAudioMixTriggered()
 {
     audioMixDock_->setVisible(true);
     audioMixDock_->raise();
     audioMixPanel_->switchToLocalMode();
     // 确保时间轴 Dock 可见以显示音频区间
-    if (!trimDock_->isVisible()) {
-        trimDock_->setVisible(true);
-        if (!currentFile_.isEmpty())
-            thumbExtractor_->extract(currentFile_);
-    }
-}
-
-// 打开音频混合面板并切换到实时录入模式
-void MainWindow::onAudioMixRecordTriggered()
-{
-    audioMixDock_->setVisible(true);
-    audioMixDock_->raise();
-    audioMixPanel_->switchToRecordMode();
     if (!trimDock_->isVisible()) {
         trimDock_->setVisible(true);
         if (!currentFile_.isEmpty())
@@ -1359,7 +1347,7 @@ void MainWindow::onAbout() {
     dlg->setWindowTitle("关于 RambosPlayer");
     dlg->setTextFormat(Qt::RichText);
     dlg->setText(
-        "<b>RambosPlayer v1.0.0</b><br>"
+        "<b>RambosPlayer v1.1.0</b><br>"
         "基于 FFmpeg + Qt 的多媒体播放器<br><br>"
         "<b>基本操作</b><br>"
         "<table cellspacing='4'>"
@@ -1368,11 +1356,16 @@ void MainWindow::onAbout() {
         "<tr><td><b>← / →</b></td><td>快退 / 快进 5 秒</td></tr>"
         "<tr><td><b>双击视频</b></td><td>切换全屏</td></tr>"
         "<tr><td><b>Esc</b></td><td>退出全屏</td></tr>"
-        "<tr><td><b>Ctrl+Shift+S</b></td><td>推流设置（HTTP-FLV / SRT / 本地录制）</td></tr>"
         "<tr><td><b>Ctrl+T</b></td><td>剪辑模式（自由剪辑）</td></tr>"
         "<tr><td><b>Ctrl+B</b></td><td>浏览剪切</td></tr>"
         "<tr><td><b>Ctrl+M</b></td><td>多段剪切（批量输入区间）</td></tr>"
         "<tr><td><b>Ctrl+E</b></td><td>导出片段</td></tr>"
+        "</table><br>"
+        "<b>工具</b><br>"
+        "<table cellspacing='4'>"
+        "<tr><td><b>合并</b></td><td>多视频拼接合并</td></tr>"
+        "<tr><td><b>音频混合</b></td><td>为视频叠加背景音乐 / 录音</td></tr>"
+        "<tr><td><b>推流设置</b></td><td>HTTP-MPEG-TS 低延迟推流</td></tr>"
         "</table><br>"
         "<a href='https://github.com/johnjiamzhong-project/RambosPlayer'>"
         "https://github.com/johnjiamzhong-project/RambosPlayer</a>"

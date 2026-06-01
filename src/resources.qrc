@@ -10,6 +10,9 @@
         <file>icons/title_min.svg</file>
         <file>icons/title_max.svg</file>
         <file>icons/title_close.svg</file>
+        <file>icons/skip_backward.svg</file>
+        <file>icons/skip_forward.svg</file>
+        <file>icons/close_small.svg</file>
         <file>mpegts.min.js</file>
     </qresource>
 </RCC>

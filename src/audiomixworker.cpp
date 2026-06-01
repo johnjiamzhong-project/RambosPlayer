@@ -114,6 +114,7 @@ QString AudioMixWorker::buildFilterStr() const
 bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
 {
     const int N = task_.regions.size();
+    qInfo() << "AudioMixWorker::execMixAudio 开始: 区间=" << N << "临时文件=" << tempAacPath;
 
     struct Src {
         AVFormatContext* fmtCtx    = nullptr;
@@ -156,6 +157,8 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
             if (avcodec_open2(s.decCtx, codec, nullptr) < 0) {
                 emit errorOccurred("源视频音频解码器打开失败"); goto done;
             }
+            qInfo() << "AudioMixWorker: 源视频音频 codec=" << codec->name
+                     << "sr=" << s.decCtx->sample_rate << "ch=" << s.decCtx->ch_layout.nb_channels;
         }
     }
 
@@ -178,6 +181,8 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
             if (avcodec_open2(s.decCtx, codec, nullptr) < 0) {
                 emit errorOccurred("音频解码器打开失败: " + path); goto done;
             }
+            qInfo() << "AudioMixWorker: 区间[" << i << "] opened," << path
+                     << "codec=" << codec->name << "sr=" << s.decCtx->sample_rate;
         }
     }
 
@@ -266,6 +271,7 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
         if (avcodec_open2(aEncCtx, aac, nullptr) < 0) {
             emit errorOccurred("AAC 编码器打开失败"); goto done;
         }
+        qInfo() << "AudioMixWorker: AAC 编码器 sr=" << outRate << "bitrate=" << aEncCtx->bit_rate;
 
         if (avformat_alloc_output_context2(&outCtx, nullptr, nullptr,
                                             tempAacPath.toUtf8().constData()) < 0) {
@@ -296,6 +302,7 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
         int64_t filterPts = 0;
         int64_t lastProgressUs = 0;
         int activeSrcs = N + 1;
+        qInfo() << "AudioMixWorker: 开始主循环, totalUs=" << totalUs << "activeSrcs=" << activeSrcs;
 
         while (activeSrcs > 0) {
             if (isInterruptionRequested()) goto done;
@@ -358,9 +365,11 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
         }
 
         // 继续排空 sink
+        qInfo() << "AudioMixWorker: drain sink...";
         drainAndEncode(bufSink, aEncCtx, outCtx, outStream, filt, encPkt, filterPts);
 
         // 冲刷编码器
+        qInfo() << "AudioMixWorker: flush 编码器...";
         avcodec_send_frame(aEncCtx, nullptr);
         while (avcodec_receive_packet(aEncCtx, encPkt) >= 0) {
             av_packet_rescale_ts(encPkt, aEncCtx->time_base, outStream->time_base);
@@ -370,6 +379,7 @@ bool AudioMixWorker::execMixAudio(const QString& tempAacPath)
             av_packet_unref(encPkt);
         }
 
+        qInfo() << "AudioMixWorker: 写入临时 AAC trailer...";
         av_write_trailer(outCtx);
     }
 
@@ -398,6 +408,9 @@ done:
 // 步骤2：复制源视频流 + 新 AAC 音频流 → 输出 MP4
 bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
 {
+    qInfo() << "AudioMixWorker::execMuxFinal 开始: 临时音频=" << tempAacPath
+             << "输出=" << task_.outputPath;
+
     AVFormatContext* videoCtx  = nullptr;
     AVFormatContext* audioCtx  = nullptr;
     AVFormatContext* outCtx    = nullptr;
@@ -412,6 +425,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
     avformat_find_stream_info(videoCtx, nullptr);
     int videoStreamIdx = av_find_best_stream(videoCtx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (videoStreamIdx < 0) { emit errorOccurred("封装：源视频无视频流"); goto done; }
+    qInfo() << "AudioMixWorker: 源视频流 idx=" << videoStreamIdx;
 
     // 打开临时 AAC
     if (avformat_open_input(&audioCtx, tempAacPath.toUtf8().constData(),
@@ -421,6 +435,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
     avformat_find_stream_info(audioCtx, nullptr);
     int audioStreamIdx = av_find_best_stream(audioCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     if (audioStreamIdx < 0) { emit errorOccurred("封装：临时音频无音频流"); goto done; }
+    qInfo() << "AudioMixWorker: 临时音频流 idx=" << audioStreamIdx;
 
     // 创建输出
     if (avformat_alloc_output_context2(&outCtx, nullptr, nullptr,
@@ -461,6 +476,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
         AVRational srcVideoTB = videoCtx->streams[videoStreamIdx]->time_base;
         AVRational srcAudioTB = audioCtx->streams[audioStreamIdx]->time_base;
 
+        qInfo() << "AudioMixWorker: 开始双源交替 mux 循环...";
         // 双源交替读取：按 DTS 顺序混合写入，保证长视频音画交错正确
         bool videoDone = false, audioDone = false;
         AVPacket* videoPkt = av_packet_alloc();
@@ -525,6 +541,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
         av_packet_free(&audioPkt);
         emit progressed(90);
 
+        qInfo() << "AudioMixWorker: mux 循环结束, 写入 trailer...";
         av_write_trailer(outCtx);
     }
 
@@ -545,6 +562,9 @@ done:
 
 void AudioMixWorker::run()
 {
+    qInfo() << "AudioMixWorker::run 开始: 源视频=" << task_.originalVideoPath
+             << "区间数=" << task_.regions.size() << "输出=" << task_.outputPath;
+
     if (task_.regions.isEmpty()) {
         emit errorOccurred("没有音频区间，请先添加音频");
         emit finished(false);
@@ -557,6 +577,7 @@ void AudioMixWorker::run()
         QString("rambos_audiomix_%1.aac").arg(QDateTime::currentMSecsSinceEpoch()));
 
     if (!execMixAudio(tempAac)) {
+        qWarning() << "AudioMixWorker::run execMixAudio 失败";
         QFile::remove(tempAac);
         emit finished(false);
         return;
@@ -565,12 +586,14 @@ void AudioMixWorker::run()
     emit progressed(60);
 
     if (!execMuxFinal(tempAac)) {
+        qWarning() << "AudioMixWorker::run execMuxFinal 失败";
         QFile::remove(tempAac);
         emit finished(false);
         return;
     }
 
     QFile::remove(tempAac);
+    qInfo() << "AudioMixWorker::run 完成: 输出=" << task_.outputPath;
     emit progressed(100);
     emit finished(true);
 }

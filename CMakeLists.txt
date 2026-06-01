@@ -45,12 +45,12 @@ add_executable(RambosPlayer WIN32
     src/streampipeline.cpp
     src/mpegtsserver.cpp
     src/concatdemuxer.cpp
-    src/audiomixer.cpp
     src/concatfilter.cpp
     src/mergeworker.cpp
     src/mergepanel.cpp
     src/audiomixworker.cpp
     src/audiomixpanel.cpp
+    src/audiopreviewwindow.cpp
 )
 
 

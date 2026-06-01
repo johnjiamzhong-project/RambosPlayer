@@ -43,6 +43,9 @@ public:
     void switchToLocalMode();                 // 菜单"本地音频"触发
     void switchToRecordMode();                // 菜单"实时录入"触发
 
+signals:
+    void sourceFileSelected(const QString& path);  // 用户在面板内选择了源视频，请求 MainWindow 打开
+
 private slots:
     void onOpenSource();
     void onBrowseAudio();
@@ -50,6 +53,7 @@ private slots:
     void onMixVolChanged(int value);
     void onAddRegion();
     void onRemoveRegion();
+    void onListen();
     void onPreview();
     void onBrowseOutput();
     void onExport();
