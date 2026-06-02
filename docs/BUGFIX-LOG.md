@@ -407,6 +407,20 @@
 ---
 
 
+## #035 — 音频混合导出后 BGM 完全无声（abuffersrc time_base 与流不匹配）
+
+- **日期**：2026-06-02
+- **现象**：音频混合功能导出的视频，在 BGM 叠加区间（如 2–32s）内只有源音频，BGM 完全听不到；用 `ffprobe volumedetect` 测量，混合区间音量 -31.5 dB，与"源音频×22%"（-31.55 dB）精确吻合，BGM 贡献为零
+- **根因**：`execMixAudio` 为每路输入创建 `abuffersrc` 滤镜节点时，将 `time_base` 硬编码为 `1/sample_rate`（如 `1/44100`）。但 MP3 文件的容器流 `time_base` 实际为 `1/14112000`（= 44100 × 320），`avcodec_receive_frame` 返回的 `frame->pts` 直接继承 packet 的原始时间戳单位，不会自动换算。滤镜图把第 2 帧 PTS=368640 误算为 `t = 368640/44100 = 8.36s`，第 5 帧 PTS=1474560 被算为 `t = 33.4s`，超过 `atrim:end=30`。结果 30 秒 BGM 只有约 4 帧（0.1 秒）穿过 `atrim`，其余全被截断，`amix` 收到的 in1 几乎全是 `apad` 补出的静音，输出等同于纯源音频
+- **排查中间弯路**：
+  1. 初步误判为"BGM 区间仅 30 秒而视频 598 秒，用户在区间外播放"，被用户否定
+  2. 尝试 `decCtx->pkt_timebase = stream->time_base` 让解码器自动换算 PTS，重新编译后问题依旧——该版本 FFmpeg 的 `avcodec_receive_frame` 并不因 `pkt_timebase` 而修改 `frame->pts`，时间戳仍是原始容器单位
+  3. 通过 `ffprobe volumedetect` 对比源文件与混合输出在 BGM 区间的响度，确认 BGM 贡献为零，锁定为 `atrim` 截断问题；再用 `ffprobe -show_packets` 确认 MP3 流 `time_base = 1/14112000`，完整还原根因
+- **修复**：在 `execMixAudio` 的 `abuffersrc` 参数生成处，将 `time_base=1/%d`（固定用 `sample_rate`）改为 `time_base=%d/%d`（用 `srcs[idx].fmtCtx->streams[streamIdx]->time_base`），使滤镜时间表达式（`atrim`、`adelay`、`between()` 等）能正确解析 frame->pts 对应的秒数。同时撤销无效的 `pkt_timebase` 改动
+- **涉及文件**：`src/audiomixworker.cpp`
+
+---
+
 ## #036 — QWidgetAction 在 QMenu 中高度为零导致最近文件条目不显示
 
 - **日期**：2026-05-30

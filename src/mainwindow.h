@@ -63,7 +63,7 @@ private slots:
     void onAbout();
 
 private:
-    void openFile(const QString& path);                             // 打开文件并更新最近记录
+    void openFile(const QString& path, bool autoPlay = true);      // 打开文件并更新最近记录
     void updateRecentFiles(const QString& path);                    // 写入 QSettings，刷新菜单
     void rebuildRecentMenu();                                       // 用 QSettings 重建最近文件菜单条目
     void startStreaming(const QList<StreamDestination>& dests);     // 启动推流管线（需文件已打开）

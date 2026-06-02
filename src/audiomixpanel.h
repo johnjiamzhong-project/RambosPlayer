@@ -48,7 +48,7 @@ signals:
 
 private slots:
     void onOpenSource();
-    void onBrowseAudio();
+    void onReadAudioFolder();
     void onSrcVolChanged(int value);
     void onMixVolChanged(int value);
     void onAddRegion();
@@ -61,12 +61,15 @@ private slots:
     void onProgressed(int percent);
     void onWorkFinished(bool ok);
     void onError(const QString& msg);
+    void onUpdateSelectedRegion();  // 控件变化时实时回写选中行
 
 private:
     void rebuildTable();
+    void updateTableRow(int row);   // 仅刷新单行，不重建整表
     void updateTimeline();
     void updateExportEnabled();
     void addRegionToList(const AudioMixRegion& r);
+    void loadRegionIntoControls(int row);  // 将选中行参数填入编辑控件
     void stopPreview();
     bool writeWav(const QString& path, const QByteArray& pcm,
                   int sampleRate, int channels, int bitsPerSample);
@@ -86,4 +89,6 @@ private:
     float                 previewSavedVolume_ = 1.0f; // 试播放前保存的播放器音量
     int64_t  recordVideoStartUs_ = 0;           // 本次录音在视频中的起始时间
     bool     recording_          = false;       // 录音进行中标志
+    QString  lastAudioDir_;                    // 上次"读取"选择的文件夹，下次打开定位用
+    int      editingRow_         = -1;         // -1=新增模式，>=0=正在编辑第N行
 };

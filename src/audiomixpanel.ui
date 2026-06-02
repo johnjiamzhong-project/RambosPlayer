@@ -47,87 +47,6 @@
     </widget>
    </item>
 
-   <!-- 音频区间列表 -->
-   <item>
-    <widget class="QGroupBox" name="regionsGroup">
-     <property name="title">
-      <string>音频区间列表</string>
-     </property>
-     <layout class="QVBoxLayout" name="regionsLayout">
-      <property name="margin">
-       <number>6</number>
-      </property>
-      <property name="spacing">
-       <number>4</number>
-      </property>
-      <item>
-       <widget class="QTableWidget" name="regionsTable">
-        <property name="minimumHeight">
-         <number>100</number>
-        </property>
-        <property name="selectionBehavior">
-         <enum>QAbstractItemView::SelectRows</enum>
-        </property>
-        <property name="selectionMode">
-         <enum>QAbstractItemView::SingleSelection</enum>
-        </property>
-        <property name="editTriggers">
-         <set>QAbstractItemView::NoEditTriggers</set>
-        </property>
-        <property name="alternatingRowColors">
-         <bool>true</bool>
-        </property>
-        <column>
-         <property name="text"><string>音频文件</string></property>
-        </column>
-        <column>
-         <property name="text"><string>贴入时间</string></property>
-        </column>
-        <column>
-         <property name="text"><string>时长</string></property>
-        </column>
-        <column>
-         <property name="text"><string>源音量</string></property>
-        </column>
-        <column>
-         <property name="text"><string>混音量</string></property>
-        </column>
-       </widget>
-      </item>
-      <item>
-       <layout class="QHBoxLayout">
-        <item>
-         <widget class="QPushButton" name="removeRegionBtn">
-          <property name="text">
-           <string>移除选中</string>
-          </property>
-          <property name="enabled">
-           <bool>false</bool>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="listenBtn">
-          <property name="text">
-           <string>试听</string>
-          </property>
-          <property name="enabled">
-           <bool>false</bool>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer>
-          <property name="orientation"><enum>Qt::Horizontal</enum></property>
-          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-         </spacer>
-        </item>
-       </layout>
-      </item>
-     </layout>
-    </widget>
-   </item>
-
    <!-- 添加音频 -->
    <item>
     <widget class="QGroupBox" name="addGroup">
@@ -197,16 +116,22 @@
           <item>
            <layout class="QHBoxLayout">
             <item>
-             <widget class="QLineEdit" name="audioFileEdit">
-              <property name="placeholderText">
-               <string>音频文件路径…</string>
+             <widget class="QComboBox" name="audioFileCombo">
+              <property name="maxVisibleItems">
+               <number>10</number>
+              </property>
+              <property name="sizeAdjustPolicy">
+               <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+              </property>
+              <property name="toolTip">
+               <string>点击"读取"扫描文件夹，下拉滚轮选择音频文件</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="browseAudioBtn">
+             <widget class="QPushButton" name="readAudioBtn">
               <property name="text">
-               <string>浏览</string>
+               <string>读取</string>
               </property>
               <property name="maximumWidth">
                <number>50</number>
@@ -264,7 +189,7 @@
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel" name="srcVolLabel">
-              <property name="text"><string>源音频 100%</string></property>
+              <property name="text"><string>源音频 50%</string></property>
               <property name="minimumWidth"><number>85</number></property>
              </widget>
             </item>
@@ -273,7 +198,7 @@
               <property name="orientation"><enum>Qt::Horizontal</enum></property>
               <property name="minimum"><number>0</number></property>
               <property name="maximum"><number>100</number></property>
-              <property name="value"><number>100</number></property>
+              <property name="value"><number>50</number></property>
              </widget>
             </item>
            </layout>
@@ -283,7 +208,7 @@
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel" name="mixVolLabel">
-              <property name="text"><string>新增音频 0%</string></property>
+              <property name="text"><string>新增音频 50%</string></property>
               <property name="minimumWidth"><number>85</number></property>
              </widget>
             </item>
@@ -292,7 +217,7 @@
               <property name="orientation"><enum>Qt::Horizontal</enum></property>
               <property name="minimum"><number>0</number></property>
               <property name="maximum"><number>100</number></property>
-              <property name="value"><number>0</number></property>
+              <property name="value"><number>50</number></property>
              </widget>
             </item>
            </layout>
@@ -394,6 +319,87 @@
        </widget>
       </item>
 
+     </layout>
+    </widget>
+   </item>
+
+   <!-- 音频区间列表 -->
+   <item>
+    <widget class="QGroupBox" name="regionsGroup">
+     <property name="title">
+      <string>音频区间列表</string>
+     </property>
+     <layout class="QVBoxLayout" name="regionsLayout">
+      <property name="margin">
+       <number>6</number>
+      </property>
+      <property name="spacing">
+       <number>4</number>
+      </property>
+      <item>
+       <widget class="QTableWidget" name="regionsTable">
+        <property name="minimumHeight">
+         <number>100</number>
+        </property>
+        <property name="selectionBehavior">
+         <enum>QAbstractItemView::SelectRows</enum>
+        </property>
+        <property name="selectionMode">
+         <enum>QAbstractItemView::SingleSelection</enum>
+        </property>
+        <property name="editTriggers">
+         <set>QAbstractItemView::NoEditTriggers</set>
+        </property>
+        <property name="alternatingRowColors">
+         <bool>true</bool>
+        </property>
+        <column>
+         <property name="text"><string>音频文件</string></property>
+        </column>
+        <column>
+         <property name="text"><string>贴入时间</string></property>
+        </column>
+        <column>
+         <property name="text"><string>时长</string></property>
+        </column>
+        <column>
+         <property name="text"><string>源音量</string></property>
+        </column>
+        <column>
+         <property name="text"><string>混音量</string></property>
+        </column>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QPushButton" name="removeRegionBtn">
+          <property name="text">
+           <string>移除选中</string>
+          </property>
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="listenBtn">
+          <property name="text">
+           <string>试听</string>
+          </property>
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer>
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
      </layout>
     </widget>
    </item>

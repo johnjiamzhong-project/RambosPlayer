@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>音频混合架构 — RambosPlayer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    padding: 2rem;
+  }
+  h1 {
+    color: #e6c87c;
+    font-size: 1.8rem;
+    border-bottom: 1px solid #30363d;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 {
+    color: #78c0e0;
+    font-size: 1.3rem;
+    margin: 2rem 0 0.8rem;
+    padding-left: 0.5rem;
+    border-left: 3px solid #4f8fba;
+  }
+  h3 {
+    color: #e6c87c;
+    font-size: 1.1rem;
+    margin: 1.2rem 0 0.5rem;
+  }
+  p { margin: 0.5rem 0; }
+  .svg-container {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+  }
+  .svg-container svg {
+    width: 100%;
+    height: auto;
+    max-width: 820px;
+    display: block;
+    margin: 0 auto;
+  }
+  pre {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0.8rem 0;
+  }
+  code {
+    font-family: Consolas, "Courier New", monospace;
+    color: #c9d1d9;
+  }
+  .kw { color: #ff7b72; }
+  .ty { color: #79c0ff; }
+  .cm { color: #8b9dc3; }
+  .st { color: #a5d6ff; }
+  .nu { color: #79c0ff; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.8rem 0;
+  }
+  th, td {
+    border: 1px solid #30363d;
+    padding: 0.5rem 0.8rem;
+    text-align: left;
+    font-size: 0.9rem;
+  }
+  th {
+    background: #161b22;
+    color: #e6c87c;
+    font-weight: 600;
+  }
+  tr:hover { background: #161b22; }
+  .tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .tag-blue { background: #1c3a5f; color: #79c0ff; }
+  .tag-green { background: #1a3a2a; color: #3fb950; }
+  .tag-orange { background: #3d2800; color: #f0883e; }
+  .tag-purple { background: #2d1b4e; color: #d2a8ff; }
+  .note {
+    background: #161b22;
+    border-left: 3px solid #f0883e;
+    padding: 0.8rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.9rem;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid #30363d;
+    color: #6a737d;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>🎵 音频混合架构 — RambosPlayer</h1>
+<p>工具 → 音频混合：将本地音频或实时录音按可调比例混入源视频音频，支持多段叠加、试播放和 Timeline 可视化。</p>
+
+<h2>1. 组件架构</h2>
+<div class="svg-container">
+<svg viewBox="0 0 820 520" xmlns="http://www.w3.org/2000/svg" font-family="Consolas,monospace">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8b9dc3"/>
+    </marker>
+    <linearGradient id="gDock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3142"/>
+      <stop offset="100%" stop-color="#1f2233"/>
+    </linearGradient>
+  </defs>
+  <rect width="820" height="520" rx="8" fill="#0d1117"/>
+
+  <!-- MainWindow -->
+  <rect x="20" y="15" width="780" height="490" rx="6" fill="none" stroke="#30363d" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="35" y="38" fill="#8b9dc3" font-size="13" font-weight="bold">MainWindow</text>
+
+  <!-- 菜单 -->
+  <rect x="40" y="52" width="200" height="36" rx="4" fill="#161b22" stroke="#30363d"/>
+  <text x="55" y="75" fill="#c9d1d9" font-size="12">工具(T) &gt; 音频混合(A)...</text>
+  <line x1="240" y1="70" x2="290" y2="105" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Dock -->
+  <rect x="290" y="50" width="490" height="440" rx="6" fill="url(#gDock)" stroke="#444c56" stroke-width="1.5"/>
+  <text x="305" y="72" fill="#78c0e0" font-size="13" font-weight="bold">audioMixDock_ (QDockWidget)</text>
+
+  <!-- AudioMixPanel -->
+  <rect x="310" y="85" width="450" height="390" rx="5" fill="#161b22" stroke="#444c56"/>
+  <text x="325" y="107" fill="#e6c87c" font-size="13" font-weight="bold">AudioMixPanel (QWidget)</text>
+
+  <!-- 内部组件 -->
+  <rect x="330" y="120" width="195" height="55" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="345" y="140" fill="#7ec8e3" font-size="11" font-weight="bold">AudioMixWorker</text>
+  <text x="345" y="157" fill="#8b9dc3" font-size="10">QThread — 混音引擎</text>
+
+  <rect x="545" y="120" width="195" height="55" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="560" y="140" fill="#7ec8e3" font-size="11" font-weight="bold">PlayerController</text>
+  <text x="560" y="157" fill="#8b9dc3" font-size="10">播放控制 / 录音静音</text>
+
+  <rect x="330" y="190" width="195" height="55" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="345" y="210" fill="#7ec8e3" font-size="11" font-weight="bold">Timeline</text>
+  <text x="345" y="227" fill="#8b9dc3" font-size="10">紫色音频区间可视化</text>
+
+  <rect x="545" y="190" width="195" height="55" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="560" y="210" fill="#7ec8e3" font-size="11" font-weight="bold">QAudioInput</text>
+  <text x="560" y="227" fill="#8b9dc3" font-size="10">麦克风 PCM 采集</text>
+
+  <rect x="330" y="260" width="195" height="55" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="345" y="280" fill="#7ec8e3" font-size="11" font-weight="bold">QMediaPlayer</text>
+  <text x="345" y="297" fill="#8b9dc3" font-size="10">试播放附加音频</text>
+
+  <!-- 区间列表 -->
+  <rect x="330" y="330" width="410" height="130" rx="4" fill="#0d1117" stroke="#30363d"/>
+  <text x="345" y="350" fill="#e6c87c" font-size="11" font-weight="bold">regions_ (QList&amp;lt;AudioMixRegion&amp;gt;)</text>
+  <text x="345" y="370" fill="#8b9dc3" font-size="10">sourcePath | displayName | videoStartUs</text>
+  <text x="345" y="385" fill="#8b9dc3" font-size="10">audioOffsetUs | audioDurationUs</text>
+  <text x="345" y="400" fill="#8b9dc3" font-size="10">srcVol | mixVol | isRecorded</text>
+  <text x="345" y="420" fill="#6a737d" font-size="10">持续混合策略：每次导出从原始源重混所有区间</text>
+  <text x="345" y="435" fill="#6a737d" font-size="10">避免多代 AAC 编解码质量损失</text>
+
+  <!-- sourceFile_ -->
+  <rect x="40" y="430" width="240" height="45" rx="4" fill="#1c2333" stroke="#4f8fba"/>
+  <text x="55" y="450" fill="#7ec8e3" font-size="11" font-weight="bold">sourceFile_</text>
+  <text x="55" y="465" fill="#8b9dc3" font-size="10">始终指向原始源视频</text>
+</svg>
+</div>
+
+<table>
+<tr><th>组件</th><th>职责</th><th>关键接口</th></tr>
+<tr><td><span class="tag tag-blue">AudioMixPanel</span></td><td>UI 交互 + 录音采集 + 试播放</td><td>setSourceFile(), switchToLocalMode(), switchToRecordMode()</td></tr>
+<tr><td><span class="tag tag-blue">AudioMixWorker</span></td><td>FFmpeg 混音 + 封装（QThread）</td><td>prepare(task), start()</td></tr>
+<tr><td><span class="tag tag-green">Timeline</span></td><td>紫色音频区间可视化</td><td>setAudioRegions({start, end})</td></tr>
+<tr><td><span class="tag tag-orange">PlayerController</span></td><td>播放控制 / 录音静音</td><td>seek(), play(), pause(), setVolume()</td></tr>
+<tr><td><span class="tag tag-purple">QAudioInput</span></td><td>麦克风 PCM 采集</td><td>start(&amp;buffer), stop()</td></tr>
+</table>
+
+<h2>2. 两步算法数据流</h2>
+<div class="svg-container">
+<svg viewBox="0 0 820 620" xmlns="http://www.w3.org/2000/svg" font-family="Consolas,monospace">
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8b9dc3"/>
+    </marker>
+    <marker id="arrGreen" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3fb950"/>
+    </marker>
+  </defs>
+  <rect width="820" height="620" rx="8" fill="#0d1117"/>
+
+  <!-- 步骤1 标题 -->
+  <rect x="20" y="15" width="780" height="30" rx="4" fill="#1c2333"/>
+  <text x="35" y="36" fill="#e6c87c" font-size="14" font-weight="bold">步骤 1：execMixAudio() — 混音 → 临时 AAC（进度 0–50%）</text>
+
+  <!-- N+1 路输入 -->
+  <rect x="40" y="60" width="140" height="40" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="55" y="84" fill="#7ec8e3" font-size="11">[in0] 源视频音频</text>
+
+  <rect x="40" y="115" width="140" height="40" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="55" y="139" fill="#7ec8e3" font-size="11">[in1] 区间音频 1</text>
+
+  <rect x="40" y="170" width="140" height="40" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="55" y="194" fill="#7ec8e3" font-size="11">[in2] 区间音频 2</text>
+
+  <text x="60" y="235" fill="#6a737d" font-size="11">...</text>
+
+  <rect x="40" y="250" width="140" height="40" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="55" y="274" fill="#7ec8e3" font-size="11">[inN] 区间音频 N</text>
+
+  <!-- 滤镜链 -->
+  <line x1="180" y1="80" x2="240" y2="110" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="180" y1="135" x2="240" y2="130" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="180" y1="190" x2="240" y2="150" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="180" y1="270" x2="240" y2="170" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+  <!-- volume enable -->
+  <rect x="240" y="60" width="200" height="40" rx="4" fill="#1c2333" stroke="#d2a8ff"/>
+  <text x="255" y="80" fill="#d2a8ff" font-size="10" font-weight="bold">volume=srcVol</text>
+  <text x="255" y="93" fill="#8b9dc3" font-size="9">enable=&apos;between(t,start,end)&apos;</text>
+
+  <!-- atrim + adelay -->
+  <rect x="240" y="115" width="200" height="55" rx="4" fill="#1c2333" stroke="#d2a8ff"/>
+  <text x="255" y="135" fill="#d2a8ff" font-size="10" font-weight="bold">atrim + adelay + apad</text>
+  <text x="255" y="148" fill="#8b9dc3" font-size="9">截取 → 重置PTS → 延迟到贴入点</text>
+  <text x="255" y="161" fill="#8b9dc3" font-size="9">→ 补静音 → volume=mixVol</text>
+
+  <!-- amix -->
+  <line x1="440" y1="80" x2="510" y2="140" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="440" y1="142" x2="510" y2="145" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+  <rect x="510" y="110" width="200" height="55" rx="4" fill="#1c2333" stroke="#3fb950"/>
+  <text x="525" y="130" fill="#3fb950" font-size="11" font-weight="bold">amix</text>
+  <text x="525" y="145" fill="#8b9dc3" font-size="9">inputs=N+1</text>
+  <text x="525" y="158" fill="#8b9dc3" font-size="9">normalize=0 : duration=first</text>
+
+  <!-- buffersink -->
+  <line x1="710" y1="137" x2="740" y2="137" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrGreen)"/>
+
+  <!-- AAC 编码 -->
+  <rect x="240" y="210" width="200" height="40" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="255" y="234" fill="#f0883e" font-size="11" font-weight="bold">AAC 编码器 (192kbps)</text>
+
+  <line x1="340" y1="170" x2="340" y2="210" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+  <!-- 临时文件 -->
+  <rect x="510" y="210" width="200" height="40" rx="4" fill="#161b22" stroke="#f85149"/>
+  <text x="525" y="234" fill="#f85149" font-size="11" font-weight="bold">临时 AAC 文件</text>
+
+  <line x1="440" y1="230" x2="510" y2="230" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+  <!-- 步骤2 标题 -->
+  <rect x="20" y="290" width="780" height="30" rx="4" fill="#1c2333"/>
+  <text x="35" y="311" fill="#e6c87c" font-size="14" font-weight="bold">步骤 2：execMuxFinal() — 封装 → 输出 MP4（进度 60–100%）</text>
+
+  <!-- 双源交替读取 -->
+  <rect x="40" y="340" width="160" height="50" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="55" y="362" fill="#7ec8e3" font-size="11" font-weight="bold">源视频</text>
+  <text x="55" y="378" fill="#8b9dc3" font-size="9">av_read_frame (视频流)</text>
+
+  <rect x="40" y="405" width="160" height="50" rx="4" fill="#161b22" stroke="#f85149"/>
+  <text x="55" y="427" fill="#f85149" font-size="11" font-weight="bold">临时 AAC</text>
+  <text x="55" y="443" fill="#8b9dc3" font-size="9">av_read_frame (音频流)</text>
+
+  <!-- DTS 交错 -->
+  <line x1="200" y1="365" x2="280" y2="395" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+  <line x1="200" y1="430" x2="280" y2="405" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+  <rect x="280" y="370" width="220" height="50" rx="4" fill="#1c2333" stroke="#3fb950"/>
+  <text x="295" y="392" fill="#3fb950" font-size="11" font-weight="bold">按 DTS 交替写入</text>
+  <text x="295" y="408" fill="#8b9dc3" font-size="9">av_interleaved_write_frame</text>
+
+  <!-- 输出 -->
+  <line x1="500" y1="395" x2="570" y2="395" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrGreen)"/>
+
+  <rect x="570" y="370" width="200" height="50" rx="4" fill="#161b22" stroke="#3fb950"/>
+  <text x="585" y="392" fill="#3fb950" font-size="12" font-weight="bold">输出 MP4</text>
+  <text x="585" y="408" fill="#8b9dc3" font-size="9">movflags=faststart</text>
+
+  <!-- 说明 -->
+  <rect x="40" y="470" width="740" height="130" rx="4" fill="#161b22" stroke="#30363d"/>
+  <text x="55" y="492" fill="#e6c87c" font-size="12" font-weight="bold">关键设计决策</text>
+  <text x="55" y="512" fill="#8b9dc3" font-size="10">• 视频流 -c copy 直通（零质量损失）</text>
+  <text x="55" y="528" fill="#8b9dc3" font-size="10">• 音频流直接拷贝临时 AAC（已编码，无需再编）</text>
+  <text x="55" y="544" fill="#8b9dc3" font-size="10">• normalize=0：直接叠加，不归一化（保持各路原始音量比例）</text>
+  <text x="55" y="560" fill="#8b9dc3" font-size="10">• duration=first：输出时长与源音频等长（附加音频短于源时补静音）</text>
+  <text x="55" y="576" fill="#8b9dc3" font-size="10">• 每次导出从原始源重混（sourceFile_ 不变），避免多代质量损失</text>
+  <text x="55" y="592" fill="#8b9dc3" font-size="10">• 双源按 DTS 交替写入，保证长视频音画交错正确</text>
+</svg>
+</div>
+
+<h3>进度报告</h3>
+<table>
+<tr><th>阶段</th><th>进度范围</th><th>说明</th></tr>
+<tr><td>execMixAudio</td><td>0–50%</td><td>解码 + avfilter 混音 + AAC 编码</td></tr>
+<tr><td>execMuxFinal</td><td>60–100%</td><td>视频直通 + 音频拷贝 → 交错写入 MP4</td></tr>
+</table>
+
+<h2>3. avfilter 滤镜图详解</h2>
+<div class="svg-container">
+<svg viewBox="0 0 820 480" xmlns="http://www.w3.org/2000/svg" font-family="Consolas,monospace">
+  <defs>
+    <marker id="arr3" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8b9dc3"/>
+    </marker>
+  </defs>
+  <rect width="820" height="480" rx="8" fill="#0d1117"/>
+
+  <text x="30" y="30" fill="#e6c87c" font-size="14" font-weight="bold">avfilter 滤镜图结构（N=2 区间示例）</text>
+
+  <!-- 源音频链 -->
+  <rect x="30" y="55" width="110" height="35" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="45" y="77" fill="#7ec8e3" font-size="11">[in0]</text>
+
+  <line x1="140" y1="72" x2="170" y2="72" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="170" y="50" width="310" height="45" rx="4" fill="#1c2333" stroke="#d2a8ff"/>
+  <text x="185" y="70" fill="#d2a8ff" font-size="10" font-weight="bold">volume=0.300:enable=&apos;between(t,5.000,10.000)&apos;</text>
+  <text x="185" y="85" fill="#6a737d" font-size="9">区间1：5s–10s 内源音量降到 30%</text>
+
+  <line x1="480" y1="72" x2="510" y2="72" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="170" y="100" width="310" height="35" rx="4" fill="#1c2333" stroke="#d2a8ff"/>
+  <text x="185" y="122" fill="#d2a8ff" font-size="10" font-weight="bold">volume=0.500:enable=&apos;between(t,20.000,25.000)&apos;</text>
+  <text x="490" y="122" fill="#6a737d" font-size="9">区间2</text>
+
+  <line x1="480" y1="117" x2="510" y2="82" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="510" y="55" width="110" height="35" rx="4" fill="#161b22" stroke="#3fb950"/>
+  <text x="525" y="77" fill="#3fb950" font-size="11">[src_adj]</text>
+
+  <!-- 区间1 链 -->
+  <rect x="30" y="165" width="110" height="35" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="45" y="187" fill="#7ec8e3" font-size="11">[in1]</text>
+
+  <line x1="140" y1="182" x2="170" y2="182" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="170" y="160" width="130" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="185" y="180" fill="#f0883e" font-size="10" font-weight="bold">atrim</text>
+  <text x="185" y="195" fill="#8b9dc3" font-size="9">start=0:end=5.000</text>
+
+  <line x1="300" y1="182" x2="320" y2="182" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="320" y="165" width="80" height="35" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="335" y="187" fill="#f0883e" font-size="10" font-weight="bold">asetpts</text>
+
+  <line x1="400" y1="182" x2="420" y2="182" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="420" y="160" width="130" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="435" y="180" fill="#f0883e" font-size="10" font-weight="bold">adelay</text>
+  <text x="435" y="195" fill="#8b9dc3" font-size="9">5000|5000 (ms)</text>
+
+  <line x1="550" y1="182" x2="570" y2="182" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="570" y="165" width="60" height="35" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="580" y="187" fill="#f0883e" font-size="10" font-weight="bold">apad</text>
+
+  <line x1="630" y1="182" x2="650" y2="182" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="650" y="160" width="120" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="665" y="180" fill="#f0883e" font-size="10" font-weight="bold">volume</text>
+  <text x="665" y="195" fill="#8b9dc3" font-size="9">=0.700</text>
+
+  <line x1="770" y1="182" x2="790" y2="150" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <!-- 区间2 链 -->
+  <rect x="30" y="240" width="110" height="35" rx="4" fill="#161b22" stroke="#4f8fba"/>
+  <text x="45" y="262" fill="#7ec8e3" font-size="11">[in2]</text>
+
+  <line x1="140" y1="257" x2="170" y2="257" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="170" y="235" width="130" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="185" y="255" fill="#f0883e" font-size="10" font-weight="bold">atrim</text>
+  <text x="185" y="270" fill="#8b9dc3" font-size="9">start=0:end=5.000</text>
+
+  <line x1="300" y1="257" x2="320" y2="257" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="320" y="240" width="80" height="35" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="335" y="262" fill="#f0883e" font-size="10" font-weight="bold">asetpts</text>
+
+  <line x1="400" y1="257" x2="420" y2="257" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="420" y="235" width="130" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="435" y="255" fill="#f0883e" font-size="10" font-weight="bold">adelay</text>
+  <text x="435" y="270" fill="#8b9dc3" font-size="9">20000|20000 (ms)</text>
+
+  <line x1="550" y1="257" x2="570" y2="257" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="570" y="240" width="60" height="35" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="580" y="262" fill="#f0883e" font-size="10" font-weight="bold">apad</text>
+
+  <line x1="630" y1="257" x2="650" y2="257" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <rect x="650" y="235" width="120" height="45" rx="4" fill="#1c2333" stroke="#f0883e"/>
+  <text x="665" y="255" fill="#f0883e" font-size="10" font-weight="bold">volume</text>
+  <text x="665" y="270" fill="#8b9dc3" font-size="9">=0.500</text>
+
+  <line x1="770" y1="257" x2="790" y2="160" stroke="#8b9dc3" stroke-width="1.2" marker-end="url(#arr3)"/>
+
+  <!-- amix -->
+  <line x1="620" y1="72" x2="660" y2="120" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+  <rect x="660" y="110" width="140" height="70" rx="4" fill="#1c2333" stroke="#3fb950" stroke-width="2"/>
+  <text x="675" y="132" fill="#3fb950" font-size="12" font-weight="bold">amix</text>
+  <text x="675" y="148" fill="#8b9dc3" font-size="9">inputs=3</text>
+  <text x="675" y="161" fill="#8b9dc3" font-size="9">normalize=0</text>
+  <text x="675" y="174" fill="#8b9dc3" font-size="9">duration=first</text>
+
+  <!-- 输出 -->
+  <line x1="800" y1="145" x2="800" y2="200" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+  <!-- 滤镜说明 -->
+  <rect x="30" y="310" width="760" height="150" rx="4" fill="#161b22" stroke="#30363d"/>
+  <text x="45" y="332" fill="#e6c87c" font-size="12" font-weight="bold">滤镜作用速查</text>
+
+  <text x="45" y="355" fill="#d2a8ff" font-size="10" font-weight="bold">volume=...:enable=&apos;between(t,...)&apos;</text>
+  <text x="350" y="355" fill="#8b9dc3" font-size="10">仅在时间窗内调整音量，窗外保持原样</text>
+
+  <text x="45" y="375" fill="#f0883e" font-size="10" font-weight="bold">atrim=start:end</text>
+  <text x="350" y="375" fill="#8b9dc3" font-size="10">截取音频有效片段（audioOffsetUs + audioDurationUs）</text>
+
+  <text x="45" y="395" fill="#f0883e" font-size="10" font-weight="bold">asetpts=PTS-STARTPTS</text>
+  <text x="350" y="395" fill="#8b9dc3" font-size="10">trim 后重置时间戳从 0 开始</text>
+
+  <text x="45" y="415" fill="#f0883e" font-size="10" font-weight="bold">adelay=N|N</text>
+  <text x="350" y="415" fill="#8b9dc3" font-size="10">延迟到视频贴入点（立体声两声道同步）</text>
+
+  <text x="45" y="435" fill="#f0883e" font-size="10" font-weight="bold">apad</text>
+  <text x="350" y="435" fill="#8b9dc3" font-size="10">附加音频结束后补静音，防止 amix 提前 EOF</text>
+
+  <text x="45" y="455" fill="#3fb950" font-size="10" font-weight="bold">amix=normalize=0:duration=first</text>
+  <text x="350" y="455" fill="#8b9dc3" font-size="10">直接叠加不归一化，输出时长 = 源音频</text>
+</svg>
+</div>
+
+<h3>滤镜字符串模板（N 个区间）</h3>
+<pre><code><span class="cm">// 源音频：各区间时间窗内降低音量</span>
+[in0]volume=srcVol1:enable=&apos;between(t,s1,e1)&apos;,
+     volume=srcVol2:enable=&apos;between(t,s2,e2)&apos;,...[src_adj];
+
+<span class="cm">// 各区间附加音频：截取 → 重置PTS → 延迟 → 补静音 → 音量</span>
+[in1]atrim=start=off1:end=off1+dur1,asetpts=PTS-STARTPTS,
+     adelay=videoStartMs1|videoStartMs1,apad,volume=mixVol1[add1];
+
+[in2]atrim=...,adelay=...,apad,volume=...[add2];
+
+<span class="cm">// amix：直接叠加，输出时长 = 源音频</span>
+[src_adj][add1][add2]...amix=inputs=N+1:normalize=0:duration=first[out]</code></pre>
+
+<h2>4. 核心数据结构</h2>
+<pre><code><span class="kw">struct</span> <span class="ty">AudioMixRegion</span> {
+    QString  sourcePath;       <span class="cm">// 音频文件路径（录音为临时 WAV）</span>
+    QString  displayName;      <span class="cm">// 列表显示名</span>
+    <span class="ty">int64_t</span>  videoStartUs;     <span class="cm">// 贴入视频的时间（微秒）</span>
+    <span class="ty">int64_t</span>  audioOffsetUs;    <span class="cm">// 从音频文件哪里开始（微秒）</span>
+    <span class="ty">int64_t</span>  audioDurationUs;  <span class="cm">// 使用多少时长（微秒）</span>
+    <span class="ty">float</span>    srcVol;           <span class="cm">// 该区间源视频音量（0.0–1.0）</span>
+    <span class="ty">float</span>    mixVol;           <span class="cm">// 新增音频音量，srcVol + mixVol = 1.0</span>
+    <span class="ty">bool</span>     isRecorded;       <span class="cm">// true = 录音临时文件，析构时删除</span>
+};
+
+<span class="kw">struct</span> <span class="ty">AudioMixTask</span> {
+    QString               originalVideoPath;  <span class="cm">// 始终为原始源视频</span>
+    QList&lt;AudioMixRegion&gt; regions;            <span class="cm">// 音频区间列表</span>
+    QString               outputPath;         <span class="cm">// 输出 MP4 路径</span>
+};</code></pre>
+
+<div class="note">
+<strong>持续混合策略：</strong><code>sourceFile_</code> 始终存储原始源视频路径；每次导出都从原始源重新混合所有累积区间，避免多代 AAC 编解码质量损失。
+</div>
+
+<h2>5. 实时录音流程</h2>
+<pre><code><span class="cm">// 开始录入</span>
+recordVideoStartUs_ = recVideoStartSpin * <span class="nu">1000000</span>;
+player_-&gt;seek(recordVideoStartUs_ / <span class="nu">1e6</span>);
+player_-&gt;setVolume(<span class="nu">0.0f</span>);   <span class="cm">// 静音，防止麦克风回声</span>
+player_-&gt;play();
+QAudioInput::start(&amp;recordBuffer_);  <span class="cm">// S16 44100Hz 立体声</span>
+
+<span class="cm">// 停止录入</span>
+audioInput_-&gt;stop();
+player_-&gt;pause();
+player_-&gt;setVolume(prevVolume_);
+writeWav(tempPath, pcmData, <span class="nu">44100</span>, <span class="nu">2</span>, <span class="nu">16</span>);  <span class="cm">// 手写 44 字节 RIFF header</span>
+addRegionToList(AudioMixRegion{
+    sourcePath = tempPath,
+    isRecorded = <span class="kw">true</span>,
+    videoStartUs = recordVideoStartUs_,
+    audioDurationUs = pcmData.size() * <span class="nu">1000000LL</span> / (<span class="nu">44100LL</span> * <span class="nu">2</span> * <span class="nu">2</span>)
+});</code></pre>
+
+<h2>6. 试播放流程</h2>
+<pre><code>选中区间 → 点击"试播放"
+  ├─ player_-&gt;seek(region.videoStartUs / <span class="nu">1e6</span>)
+  ├─ player_-&gt;setVolume(region.srcVol)         <span class="cm">// 源音量按比例</span>
+  ├─ player_-&gt;play()
+  ├─ previewPlayer_ = <span class="kw">new</span> QMediaPlayer
+  │    .setMedia(region.sourcePath)
+  │    .setPosition(region.audioOffsetUs / <span class="nu">1000</span>)
+  │    .setVolume(region.mixVol * <span class="nu">100</span>)
+  │    .play()
+  └─ QTimer::singleShot(durationUs/<span class="nu">1000</span>, stopPreview)
+
+<span class="cm">// 两路播放器并行，近似同步（误差 &lt;100ms）</span></code></pre>
+
+<h2>7. Slider 联动约束</h2>
+<p>srcVol + mixVol = 100%，两个 Slider 互补联动：</p>
+<pre><code><span class="kw">void</span> AudioMixPanel::onSrcVolChanged(<span class="ty">int</span> value) {
+    <span class="ty">int</span> mixVal = <span class="nu">100</span> - value;
+    ui-&gt;mixVolSlider-&gt;blockSignals(<span class="kw">true</span>);
+    ui-&gt;mixVolSlider-&gt;setValue(mixVal);
+    ui-&gt;mixVolSlider-&gt;blockSignals(<span class="kw">false</span>);
+}
+
+<span class="kw">void</span> AudioMixPanel::onMixVolChanged(<span class="ty">int</span> value) {
+    <span class="ty">int</span> srcVal = <span class="nu">100</span> - value;
+    ui-&gt;srcVolSlider-&gt;blockSignals(<span class="kw">true</span>);
+    ui-&gt;srcVolSlider-&gt;setValue(srcVal);
+    ui-&gt;srcVolSlider-&gt;blockSignals(<span class="kw">false</span>);
+}</code></pre>
+
+<h2>8. Timeline 可视化</h2>
+<p>在已有绿色剪切区间行下方新增紫色音频区间行：</p>
+<pre><code><span class="cm">// timeline.h</span>
+<span class="kw">void</span> setAudioRegions(<span class="kw">const</span> QList&lt;QPair&lt;<span class="ty">int64_t</span>, <span class="ty">int64_t</span>&gt;&gt;&amp; regions);
+
+<span class="cm">// timeline.cpp — drawBottomBar() 末尾</span>
+<span class="cm">// 遍历 audioRegions_ 绘制紫色色块 + 起始时间标签</span>
+<span class="cm">// 颜色：QColor(120, 75, 200, 160)  边框：QColor(160, 110, 240)</span></code></pre>
+
+<footer>
+  RambosPlayer v1.1.0 · 音频混合架构文档 · 2026/06/01
+</footer>
+
+</body>
+</html>

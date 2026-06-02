@@ -204,7 +204,8 @@ MainWindow::MainWindow(QWidget* parent)
     audioMixPanel_ = new AudioMixPanel();
     audioMixPanel_->setPlayerController(player_);
     audioMixPanel_->setTimeline(timeline_);
-    connect(audioMixPanel_, &AudioMixPanel::sourceFileSelected, this, &MainWindow::openFile);
+    connect(audioMixPanel_, &AudioMixPanel::sourceFileSelected, this,
+            [this](const QString& path){ openFile(path, false); });
     audioMixDock_  = createDockWithTitleBar("音频混合", audioMixPanel_);
     audioMixDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     audioMixDock_->setVisible(false);
@@ -328,9 +329,10 @@ MainWindow::~MainWindow() {
     delete ui;
 }
 
-// 打开文件并开始播放，同时更新最近文件记录。供对话框和最近文件菜单共用。
+// 打开文件并（可选）开始播放，同时更新最近文件记录。供对话框和最近文件菜单共用。
+// autoPlay=false 时只加载不播放，用于音频混合面板选择文件的场景。
 // 若剪辑模式已开启，自动提取缩略图；若有预配置推流目标，自动启动推流。
-void MainWindow::openFile(const QString& path) {
+void MainWindow::openFile(const QString& path, bool autoPlay) {
     player_->stop();
     if (player_->open(path)) {
         qInfo() << "MainWindow: opened" << path;
@@ -346,11 +348,14 @@ void MainWindow::openFile(const QString& path) {
             pendingDests_.clear();
         }
 
-        player_->play();
-
-        // 播放成功后，根据实际状态更新按钮（避免状态不同步）
-        if (player_->isPlaying()) {
-            ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+        if (autoPlay) {
+            player_->play();
+            // 播放成功后，根据实际状态更新按钮（避免状态不同步）
+            if (player_->isPlaying()) {
+                ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+            } else {
+                ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+            }
         } else {
             ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
         }

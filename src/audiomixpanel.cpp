@@ -34,7 +34,7 @@ AudioMixPanel::AudioMixPanel(QWidget* parent)
     connect(worker_, &AudioMixWorker::errorOccurred, this, &AudioMixPanel::onError);
 
     connect(ui->openSourceBtn,   &QPushButton::clicked, this, &AudioMixPanel::onOpenSource);
-    connect(ui->browseAudioBtn,  &QPushButton::clicked, this, &AudioMixPanel::onBrowseAudio);
+    connect(ui->readAudioBtn,    &QPushButton::clicked, this, &AudioMixPanel::onReadAudioFolder);
     connect(ui->srcVolSlider,    &QSlider::valueChanged, this, &AudioMixPanel::onSrcVolChanged);
     connect(ui->mixVolSlider,    &QSlider::valueChanged, this, &AudioMixPanel::onMixVolChanged);
     connect(ui->addRegionBtn,    &QPushButton::clicked, this, &AudioMixPanel::onAddRegion);
@@ -57,25 +57,39 @@ AudioMixPanel::AudioMixPanel(QWidget* parent)
         ui->addStack->setCurrentIndex(1);
     });
 
-    // 列表选中时启用相关按钮
+    // 数值框变化时实时回写选中行（仅编辑模式下有效）
+    connect(ui->videoStartSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &AudioMixPanel::onUpdateSelectedRegion);
+    connect(ui->audioDurationSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &AudioMixPanel::onUpdateSelectedRegion);
+
+    // 列表选中时启用相关按钮，并将参数填入编辑控件
     connect(ui->regionsTable, &QTableWidget::itemSelectionChanged, this, [this]{
         bool sel = !ui->regionsTable->selectedItems().isEmpty();
         ui->removeRegionBtn->setEnabled(sel);
         ui->listenBtn->setEnabled(sel);
         ui->previewBtn->setEnabled(sel && player_ != nullptr);
+
+        int row = ui->regionsTable->currentRow();
+        if (sel && row >= 0 && row < regions_.size()) {
+            loadRegionIntoControls(row);
+        } else {
+            editingRow_ = -1;
+            ui->addRegionBtn->setText("加入列表");
+        }
     });
 
     // 表格列宽：音频文件列拉伸填充，数值列固定像素宽
     ui->regionsTable->horizontalHeader()->setStretchLastSection(false);
     ui->regionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-    ui->regionsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
-    ui->regionsTable->setColumnWidth(1, 65);   // 贴入时间（HH:mm:ss）
-    ui->regionsTable->setColumnWidth(2, 65);   // 时长
-    ui->regionsTable->setColumnWidth(3, 55);   // 源音量
-    ui->regionsTable->setColumnWidth(4, 55);   // 混音量
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Interactive);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    ui->regionsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Interactive);
+    ui->regionsTable->setColumnWidth(1, 75);   // 贴入时间（HH:mm:ss）
+    ui->regionsTable->setColumnWidth(2, 75);   // 时长
+    ui->regionsTable->setColumnWidth(3, 60);   // 源音量
+    ui->regionsTable->setColumnWidth(4, 60);   // 混音量
     // 鼠标追踪：启用后 hover 样式（整行高亮）才能生效
     ui->regionsTable->setMouseTracking(true);
 }
@@ -139,12 +153,36 @@ void AudioMixPanel::onOpenSource()
     emit sourceFileSelected(path);  // 通知 MainWindow 加载到播放器
 }
 
-void AudioMixPanel::onBrowseAudio()
+// 扫描用户选择的文件夹，将其中的音频文件填充到下拉列表
+void AudioMixPanel::onReadAudioFolder()
 {
-    QString path = QFileDialog::getOpenFileName(this, "选择音频文件", QString(),
-        "音频文件 (*.mp3 *.aac *.wav *.flac *.ogg *.m4a);;所有文件 (*)");
-    if (!path.isEmpty())
-        ui->audioFileEdit->setText(path);
+    QString dir = QFileDialog::getExistingDirectory(this, "选择音频文件夹",
+        lastAudioDir_.isEmpty() ? QString() : lastAudioDir_);
+    if (dir.isEmpty()) return;
+
+    lastAudioDir_ = dir;
+
+    static const QStringList exts = { "mp3", "aac", "wav", "flac", "ogg", "m4a", "wma", "opus" };
+    QStringList nameFilters;
+    for (const auto& e : exts) nameFilters << "*." + e;
+
+    QDir d(dir);
+    QFileInfoList files = d.entryInfoList(nameFilters, QDir::Files, QDir::Name);
+
+    if (files.isEmpty()) {
+        QMessageBox::information(this, "未找到音频",
+            QString("文件夹中未找到音频文件：\n%1").arg(dir));
+        return;
+    }
+
+    ui->audioFileCombo->clear();
+    for (const QFileInfo& fi : files) {
+        // 显示文件名，UserRole 存完整路径
+        ui->audioFileCombo->addItem(fi.fileName(), fi.absoluteFilePath());
+    }
+    ui->audioFileCombo->setCurrentIndex(0);
+
+    qInfo() << "AudioMixPanel: 读取文件夹" << dir << "共" << files.size() << "个音频文件";
 }
 
 // srcVol + mixVol = 100%，两个 Slider 互补联动
@@ -156,6 +194,8 @@ void AudioMixPanel::onSrcVolChanged(int value)
     ui->mixVolSlider->setValue(mixVal);
     ui->mixVolSlider->blockSignals(false);
     ui->mixVolLabel->setText(QString("新增音频 %1%").arg(mixVal));
+    qInfo() << "AudioMixPanel: 滑块调整 srcVol=" << value << "mixVol=" << mixVal;
+    onUpdateSelectedRegion();
 }
 
 void AudioMixPanel::onMixVolChanged(int value)
@@ -166,16 +206,28 @@ void AudioMixPanel::onMixVolChanged(int value)
     ui->srcVolSlider->setValue(srcVal);
     ui->srcVolSlider->blockSignals(false);
     ui->srcVolLabel->setText(QString("源音频 %1%").arg(srcVal));
+    qInfo() << "AudioMixPanel: 滑块调整 srcVol=" << srcVal << "mixVol=" << value;
+    onUpdateSelectedRegion();
 }
 
-// 将本地音频添加到区间列表
+// 将本地音频添加到区间列表，或在编辑模式下确认更新并退出编辑
 void AudioMixPanel::onAddRegion()
 {
-    QString audioPath = ui->audioFileEdit->text().trimmed();
-    if (audioPath.isEmpty()) {
-        QMessageBox::warning(this, "未指定音频", "请先选择音频文件。");
+    // 编辑模式：参数已实时回写，点按钮只需退出编辑状态
+    if (editingRow_ >= 0) {
+        ui->regionsTable->clearSelection();
+        editingRow_ = -1;
+        ui->addRegionBtn->setText("加入列表");
         return;
     }
+
+    if (ui->audioFileCombo->count() == 0) {
+        QMessageBox::warning(this, "未读取音频", "请先点击[读取]按钮扫描文件夹。");
+        return;
+    }
+    QString audioPath = ui->audioFileCombo->currentData().toString();
+    if (audioPath.isEmpty())
+        audioPath = ui->audioFileCombo->currentText();
     if (!QFileInfo::exists(audioPath)) {
         QMessageBox::warning(this, "文件不存在", "指定的音频文件不存在：\n" + audioPath);
         return;
@@ -201,6 +253,12 @@ void AudioMixPanel::onAddRegion()
         }
     }
 
+    qInfo() << "AudioMixPanel: 加入区间 ===";
+    qInfo() << "  UI srcVolSlider:" << ui->srcVolSlider->value() << "mixVolSlider:" << ui->mixVolSlider->value();
+    qInfo() << "  UI videoStartSpin:" << ui->videoStartSpin->value() << "audioDurationSpin:" << ui->audioDurationSpin->value();
+    qInfo() << "  存入 srcVol:" << r.srcVol << "mixVol:" << r.mixVol;
+    qInfo() << "  存入 videoStart:" << r.videoStartUs / 1000000 << "s duration:" << r.audioDurationUs / 1000000 << "s";
+    qInfo() << "AudioMixPanel: 加入区间 ===";
     addRegionToList(r);
 }
 
@@ -232,28 +290,54 @@ void AudioMixPanel::onListen()
 }
 
 // 试播放：视频 seek 到区间起始，同时 QMediaPlayer 播放新增音频
+// 音量使用当前滑块值（非存储值），方便用户实时调整后立即预览
+// 再次按下则停止试播放并恢复状态
 void AudioMixPanel::onPreview()
 {
+    if (previewPlayer_) {
+        stopPreview();
+        return;
+    }
+
     int row = ui->regionsTable->currentRow();
     if (row < 0 || row >= regions_.size() || !player_) return;
     const AudioMixRegion& r = regions_[row];
 
-    stopPreview();
+    // 音量直接读当前滑块值，而非已存储的区间值
+    float curSrcVol = ui->srcVolSlider->value() / 100.0f;
+    float curMixVol = ui->mixVolSlider->value() / 100.0f;
 
     previewSavedVolume_ = player_->volume();  // 保存试播放前的实际音量
+
+    qInfo() << "AudioMixPanel: 试播放开始 ===";
+    qInfo() << "  选中行:" << row << "文件:" << r.sourcePath;
+    qInfo() << "  存储 srcVol:" << r.srcVol << "mixVol:" << r.mixVol;
+    qInfo() << "  当前滑块 srcVol:" << curSrcVol << "mixVol:" << curMixVol;
+    qInfo() << "  videoStartUs:" << r.videoStartUs << "(" << r.videoStartUs / 1000000 << "s)";
+    qInfo() << "  audioDurationUs:" << r.audioDurationUs << "(" << r.audioDurationUs / 1000000 << "s)";
+    qInfo() << "  previewPlayer 音量:" << qRound(curMixVol * 100);
+    qInfo() << "AudioMixPanel: 试播放参数 ===";
+
     player_->seek(r.videoStartUs / 1e6);
-    player_->setVolume(r.srcVol);
+    player_->setVolume(curSrcVol);
     player_->play();
 
     previewPlayer_ = new QMediaPlayer(this);
-    previewPlayer_->setMedia(QUrl::fromLocalFile(r.sourcePath));
-    previewPlayer_->setPosition(r.audioOffsetUs / 1000LL);
-    previewPlayer_->setVolume(qRound(r.mixVol * 100));
     connect(previewPlayer_, &QMediaPlayer::stateChanged, this,
             [this](QMediaPlayer::State state){
+        qInfo() << "AudioMixPanel: previewPlayer state changed to" << state;
         if (state == QMediaPlayer::StoppedState) stopPreview();
     });
+    connect(previewPlayer_, QOverload<QMediaPlayer::Error>::of(&QMediaPlayer::error),
+            this, [this](QMediaPlayer::Error err){
+        qWarning() << "AudioMixPanel: previewPlayer error:" << err << previewPlayer_->errorString();
+    });
+    previewPlayer_->setMedia(QUrl::fromLocalFile(r.sourcePath));
+    previewPlayer_->setVolume(qRound(curMixVol * 100));
+    previewPlayer_->setPosition(r.audioOffsetUs / 1000LL);
     previewPlayer_->play();
+
+    ui->previewBtn->setText("停止试播放");
 
     // 到区间结束时停止
     int playMs = (int)(r.audioDurationUs / 1000LL);
@@ -290,6 +374,21 @@ void AudioMixPanel::onExport()
     task.originalVideoPath = sourceFile_;
     task.regions           = regions_;
     task.outputPath        = output;
+
+    qInfo() << "=== AudioMixPanel::onExport 开始 ===";
+    qInfo() << "  源视频:" << task.originalVideoPath;
+    qInfo() << "  输出路径:" << task.outputPath;
+    qInfo() << "  区间数量:" << task.regions.size();
+    for (int i = 0; i < task.regions.size(); ++i) {
+        const auto& r = task.regions[i];
+        qInfo() << "  区间[" << i << "] src=" << r.sourcePath
+                 << "videoStart=" << r.videoStartUs / 1000000 << "s"
+                 << "audioDur=" << r.audioDurationUs / 1000000 << "s"
+                 << "audioOffset=" << r.audioOffsetUs / 1000000 << "s"
+                 << "srcVol=" << r.srcVol << "mixVol=" << r.mixVol
+                 << "isRecorded=" << r.isRecorded;
+    }
+    qInfo() << "=== AudioMixPanel::onExport 任务参数 ===";
 
     worker_->prepare(task);
     worker_->start();
@@ -467,14 +566,16 @@ void AudioMixPanel::updateExportEnabled()
 void AudioMixPanel::stopPreview()
 {
     if (previewPlayer_) {
-        previewPlayer_->stop();
-        previewPlayer_->deleteLater();
-        previewPlayer_ = nullptr;
+        auto* p = previewPlayer_;
+        previewPlayer_ = nullptr;       // 先置空，防止 stateChanged 信号重入
+        p->stop();
+        p->deleteLater();
     }
     if (player_) {
         player_->pause();
         player_->setVolume(previewSavedVolume_);
     }
+    ui->previewBtn->setText("试播放选中区间");
 }
 
 // 手写 44 字节 WAV 文件头，无需第三方库
@@ -511,6 +612,73 @@ bool AudioMixPanel::writeWav(const QString& path, const QByteArray& pcm,
     f.write(pcm);
 
     return true;
+}
+
+// 将选中行的参数（除文件列表）填入编辑控件，进入编辑模式
+void AudioMixPanel::loadRegionIntoControls(int row)
+{
+    const AudioMixRegion& r = regions_[row];
+    editingRow_ = row;
+
+    // 阻断信号防止填充过程触发 onUpdateSelectedRegion 形成反馈
+    ui->videoStartSpin->blockSignals(true);
+    ui->audioDurationSpin->blockSignals(true);
+    ui->srcVolSlider->blockSignals(true);
+    ui->mixVolSlider->blockSignals(true);
+
+    ui->videoStartSpin->setValue((int)(r.videoStartUs / 1000000LL));
+    ui->audioDurationSpin->setValue((int)(r.audioDurationUs / 1000000LL));
+    int srcPct = qRound(r.srcVol * 100);
+    int mixPct = qRound(r.mixVol * 100);
+    ui->srcVolSlider->setValue(srcPct);
+    ui->mixVolSlider->setValue(mixPct);
+    ui->srcVolLabel->setText(QString("源音频 %1%").arg(srcPct));
+    ui->mixVolLabel->setText(QString("新增音频 %1%").arg(mixPct));
+
+    ui->videoStartSpin->blockSignals(false);
+    ui->audioDurationSpin->blockSignals(false);
+    ui->srcVolSlider->blockSignals(false);
+    ui->mixVolSlider->blockSignals(false);
+
+    // 切换到本地音频页（录音条目参数同样在此页编辑）
+    if (ui->addStack->currentIndex() != 0)
+        switchToLocalMode();
+
+    ui->addRegionBtn->setText("确认更新");
+}
+
+// 控件变化时实时将参数回写到选中行
+void AudioMixPanel::onUpdateSelectedRegion()
+{
+    if (editingRow_ < 0 || editingRow_ >= regions_.size()) return;
+
+    AudioMixRegion& r = regions_[editingRow_];
+    r.videoStartUs = (int64_t)ui->videoStartSpin->value() * 1000000LL;
+
+    int durSec = ui->audioDurationSpin->value();
+    if (durSec > 0)
+        r.audioDurationUs = (int64_t)durSec * 1000000LL;
+
+    r.srcVol = ui->srcVolSlider->value() / 100.0f;
+    r.mixVol = ui->mixVolSlider->value() / 100.0f;
+
+    updateTableRow(editingRow_);
+    updateTimeline();
+}
+
+// 仅刷新指定行的数值列，不重建整张表（保留选中状态）
+void AudioMixPanel::updateTableRow(int row)
+{
+    if (row < 0 || row >= ui->regionsTable->rowCount()) return;
+    const AudioMixRegion& r = regions_[row];
+    ui->regionsTable->item(row, 1)->setText(
+        QTime(0, 0).addSecs(r.videoStartUs / 1000000LL).toString("HH:mm:ss"));
+    ui->regionsTable->item(row, 2)->setText(
+        QTime(0, 0).addSecs(r.audioDurationUs / 1000000LL).toString("HH:mm:ss"));
+    ui->regionsTable->item(row, 3)->setText(
+        QString("%1%").arg(qRound(r.srcVol * 100)));
+    ui->regionsTable->item(row, 4)->setText(
+        QString("%1%").arg(qRound(r.mixVol * 100)));
 }
 
 // 探测音频/视频文件时长（微秒），失败返回 0
