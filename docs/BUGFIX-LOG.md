@@ -421,6 +421,18 @@
 
 ---
 
+## #037 — 试播放期间快进，视频音频全部停止（StoppedState 伪触发 + stopPreview 重入）
+
+- **日期**：2026-06-02
+- **现象**：点击「试播放选中区间」后，拖动进度条或按方向键快进，视频与音频同时停止；日志显示快进后 `previewPlayer state changed to QMediaPlayer::StoppedState` 与 `PlayerController::seek` 几乎同一毫秒出现，且 `PlayerController::pause` 连续打印两次
+- **根因**：两个问题叠加：
+  1. **StoppedState 伪触发**：Windows Media Foundation 后端在 `previewPlayer_->setPosition()` 期间会短暂发出 `StoppedState` 信号，并不代表 mp3 真正播完。原代码 `if (state == QMediaPlayer::StoppedState) stopPreview()` 无条件响应该信号，seek 期间的伪触发立即调用 `stopPreview()` → 主播放器暂停
+  2. **stopPreview 重入导致双 pause**：`stopPreview()` 先将 `previewPlayer_ = nullptr`，再调 `p->stop()`；`p->stop()` 同步触发 `stateChanged(StoppedState)`，handler 再次进入 `stopPreview()`，此时 `previewPlayer_` 已为 null 但 `player_` 仍有效，导致 `player_->pause()` 被执行两次，两条相同的 `PlayerController::pause at X s` 出现在日志中
+- **修复**：在 `stateChanged` 的 `StoppedState` 分支增加双重检查：`previewPlayer_ != nullptr`（防重入）且 `previewPlayer_->mediaStatus() == QMediaPlayer::EndOfMedia`（排除 seek 期间伪触发），两个条件同时满足才调 `stopPreview()`。seek 期间 mediaStatus 为 `BufferedMedia` 或 `BufferingMedia`，条件不满足，伪触发被忽略；重入时 `previewPlayer_` 为 null，条件同样不满足
+- **涉及文件**：`src/audiomixpanel.cpp`
+
+---
+
 ## #036 — QWidgetAction 在 QMenu 中高度为零导致最近文件条目不显示
 
 - **日期**：2026-05-30

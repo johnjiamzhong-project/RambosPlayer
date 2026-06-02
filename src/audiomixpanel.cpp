@@ -2,7 +2,6 @@
 #include "audiomixworker.h"
 #include "audiopreviewwindow.h"
 #include "playercontroller.h"
-#include "timeline.h"
 #include "ui_audiomixpanel.h"
 #include "logger.h"
 
@@ -58,9 +57,13 @@ AudioMixPanel::AudioMixPanel(QWidget* parent)
     });
 
     // 数值框变化时实时回写选中行（仅编辑模式下有效）
-    connect(ui->videoStartSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+    connect(ui->videoStartMinSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &AudioMixPanel::onUpdateSelectedRegion);
-    connect(ui->audioDurationSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+    connect(ui->videoStartSecSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &AudioMixPanel::onUpdateSelectedRegion);
+    connect(ui->audioDurMinSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &AudioMixPanel::onUpdateSelectedRegion);
+    connect(ui->audioDurSecSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &AudioMixPanel::onUpdateSelectedRegion);
 
     // 列表选中时启用相关按钮，并将参数填入编辑控件
@@ -109,11 +112,6 @@ AudioMixPanel::~AudioMixPanel()
 void AudioMixPanel::setPlayerController(PlayerController* pc)
 {
     player_ = pc;
-}
-
-void AudioMixPanel::setTimeline(Timeline* tl)
-{
-    timeline_ = tl;
 }
 
 // 由 MainWindow 在文件打开后自动调用，预填源视频路径并生成默认输出路径
@@ -236,13 +234,13 @@ void AudioMixPanel::onAddRegion()
     AudioMixRegion r;
     r.sourcePath    = audioPath;
     r.displayName   = QFileInfo(audioPath).fileName();
-    r.videoStartUs  = (int64_t)ui->videoStartSpin->value() * 1000000LL;
+    r.videoStartUs  = (int64_t)(ui->videoStartMinSpin->value() * 60 + ui->videoStartSecSpin->value()) * 1000000LL;
     r.audioOffsetUs = 0;
     r.srcVol        = ui->srcVolSlider->value() / 100.0f;
     r.mixVol        = ui->mixVolSlider->value() / 100.0f;
     r.isRecorded    = false;
 
-    int userDurSec = ui->audioDurationSpin->value();
+    int userDurSec = ui->audioDurMinSpin->value() * 60 + ui->audioDurSecSpin->value();
     if (userDurSec > 0) {
         r.audioDurationUs = (int64_t)userDurSec * 1000000LL;
     } else {
@@ -255,7 +253,8 @@ void AudioMixPanel::onAddRegion()
 
     qInfo() << "AudioMixPanel: 加入区间 ===";
     qInfo() << "  UI srcVolSlider:" << ui->srcVolSlider->value() << "mixVolSlider:" << ui->mixVolSlider->value();
-    qInfo() << "  UI videoStartSpin:" << ui->videoStartSpin->value() << "audioDurationSpin:" << ui->audioDurationSpin->value();
+    qInfo() << "  UI videoStart:" << ui->videoStartMinSpin->value() << "分" << ui->videoStartSecSpin->value() << "秒"
+            << "audioDuration:" << ui->audioDurMinSpin->value() << "分" << ui->audioDurSecSpin->value() << "秒";
     qInfo() << "  存入 srcVol:" << r.srcVol << "mixVol:" << r.mixVol;
     qInfo() << "  存入 videoStart:" << r.videoStartUs / 1000000 << "s duration:" << r.audioDurationUs / 1000000 << "s";
     qInfo() << "AudioMixPanel: 加入区间 ===";
@@ -270,7 +269,6 @@ void AudioMixPanel::onRemoveRegion()
     if (r.isRecorded) QFile::remove(r.sourcePath);
     regions_.removeAt(row);
     rebuildTable();
-    updateTimeline();
     updateExportEnabled();
 }
 
@@ -326,7 +324,13 @@ void AudioMixPanel::onPreview()
     connect(previewPlayer_, &QMediaPlayer::stateChanged, this,
             [this](QMediaPlayer::State state){
         qInfo() << "AudioMixPanel: previewPlayer state changed to" << state;
-        if (state == QMediaPlayer::StoppedState) stopPreview();
+        // setPosition() 期间 Windows MF 后端会伪发 StoppedState；
+        // 必须同时确认 EndOfMedia 才代表 mp3 真正播完。
+        // previewPlayer_ 的 null 检查同时防止 p->stop() 触发的重入。
+        if (state == QMediaPlayer::StoppedState && previewPlayer_
+                && previewPlayer_->mediaStatus() == QMediaPlayer::EndOfMedia) {
+            stopPreview();
+        }
     });
     connect(previewPlayer_, QOverload<QMediaPlayer::Error>::of(&QMediaPlayer::error),
             this, [this](QMediaPlayer::Error err){
@@ -336,13 +340,21 @@ void AudioMixPanel::onPreview()
     previewPlayer_->setVolume(qRound(curMixVol * 100));
     previewPlayer_->setPosition(r.audioOffsetUs / 1000LL);
     previewPlayer_->play();
+    previewRegionStartUs_ = r.videoStartUs;
+    previewRegionDurationUs_ = r.audioDurationUs;
 
     ui->previewBtn->setText("停止试播放");
+    ui->previewBtn->setStyleSheet("QPushButton { background-color: #d32f2f; color: white; }");
+    emit previewRegionChanged(r.videoStartUs, r.audioDurationUs);
 
     // 到区间结束时停止
     int playMs = (int)(r.audioDurationUs / 1000LL);
-    if (playMs > 0)
-        QTimer::singleShot(playMs, this, [this]{ stopPreview(); });
+    if (playMs > 0) {
+        previewStopTimer_ = new QTimer(this);
+        previewStopTimer_->setSingleShot(true);
+        connect(previewStopTimer_, &QTimer::timeout, this, [this]{ stopPreview(); });
+        previewStopTimer_->start(playMs);
+    }
 }
 
 void AudioMixPanel::onBrowseOutput()
@@ -407,7 +419,7 @@ void AudioMixPanel::onRecStartStop()
             return;
         }
 
-        recordVideoStartUs_ = (int64_t)ui->recVideoStartSpin->value() * 1000000LL;
+        recordVideoStartUs_ = (int64_t)(ui->recVideoStartMinSpin->value() * 60 + ui->recVideoStartSecSpin->value()) * 1000000LL;
         prevVolume_ = player_->volume();  // 保存录音前的实际音量
 
         player_->seek(recordVideoStartUs_ / 1e6);
@@ -513,7 +525,6 @@ void AudioMixPanel::addRegionToList(const AudioMixRegion& r)
 {
     regions_.append(r);
     rebuildTable();
-    updateTimeline();
     updateExportEnabled();
 }
 
@@ -545,15 +556,6 @@ void AudioMixPanel::rebuildTable()
     }
 }
 
-void AudioMixPanel::updateTimeline()
-{
-    if (!timeline_) return;
-    QList<QPair<int64_t, int64_t>> pairs;
-    for (const auto& r : regions_)
-        pairs.append({r.videoStartUs, r.videoStartUs + r.audioDurationUs});
-    timeline_->setAudioRegions(pairs);
-}
-
 void AudioMixPanel::updateExportEnabled()
 {
     bool canExport = !sourceFile_.isEmpty()
@@ -565,6 +567,11 @@ void AudioMixPanel::updateExportEnabled()
 
 void AudioMixPanel::stopPreview()
 {
+    if (previewStopTimer_) {
+        previewStopTimer_->stop();
+        delete previewStopTimer_;
+        previewStopTimer_ = nullptr;
+    }
     if (previewPlayer_) {
         auto* p = previewPlayer_;
         previewPlayer_ = nullptr;       // 先置空，防止 stateChanged 信号重入
@@ -576,6 +583,36 @@ void AudioMixPanel::stopPreview()
         player_->setVolume(previewSavedVolume_);
     }
     ui->previewBtn->setText("试播放选中区间");
+    ui->previewBtn->setStyleSheet("");
+    previewRegionStartUs_ = 0;
+    previewRegionDurationUs_ = 0;
+    emit previewRegionChanged(0, 0);
+}
+
+// 进度条拖拽时同步新增音频播放位置
+void AudioMixPanel::seekPreviewAudio(double videoSeconds)
+{
+    if (!previewPlayer_ || previewRegionDurationUs_ <= 0) return;
+
+    int64_t videoUs = (int64_t)(videoSeconds * 1000000.0);
+    // 计算音频在区间内的相对位置
+    int64_t audioPosUs = videoUs - previewRegionStartUs_;
+
+    // 如果 seek 到区间之前，音频从头开始
+    if (audioPosUs < 0) audioPosUs = 0;
+    // 如果 seek 到区间之后，停止预览
+    if (audioPosUs >= previewRegionDurationUs_) {
+        stopPreview();
+        return;
+    }
+
+    previewPlayer_->setPosition(audioPosUs / 1000LL);
+
+    // 重置停止定时器：剩余时长 = 区间总时长 - 当前音频位置
+    if (previewStopTimer_) {
+        int64_t remainUs = previewRegionDurationUs_ - audioPosUs;
+        previewStopTimer_->start((int)(remainUs / 1000LL));
+    }
 }
 
 // 手写 44 字节 WAV 文件头，无需第三方库
@@ -621,13 +658,19 @@ void AudioMixPanel::loadRegionIntoControls(int row)
     editingRow_ = row;
 
     // 阻断信号防止填充过程触发 onUpdateSelectedRegion 形成反馈
-    ui->videoStartSpin->blockSignals(true);
-    ui->audioDurationSpin->blockSignals(true);
+    ui->videoStartMinSpin->blockSignals(true);
+    ui->videoStartSecSpin->blockSignals(true);
+    ui->audioDurMinSpin->blockSignals(true);
+    ui->audioDurSecSpin->blockSignals(true);
     ui->srcVolSlider->blockSignals(true);
     ui->mixVolSlider->blockSignals(true);
 
-    ui->videoStartSpin->setValue((int)(r.videoStartUs / 1000000LL));
-    ui->audioDurationSpin->setValue((int)(r.audioDurationUs / 1000000LL));
+    int videoStartSec = (int)(r.videoStartUs / 1000000LL);
+    ui->videoStartMinSpin->setValue(videoStartSec / 60);
+    ui->videoStartSecSpin->setValue(videoStartSec % 60);
+    int audioDurSec = (int)(r.audioDurationUs / 1000000LL);
+    ui->audioDurMinSpin->setValue(audioDurSec / 60);
+    ui->audioDurSecSpin->setValue(audioDurSec % 60);
     int srcPct = qRound(r.srcVol * 100);
     int mixPct = qRound(r.mixVol * 100);
     ui->srcVolSlider->setValue(srcPct);
@@ -635,8 +678,10 @@ void AudioMixPanel::loadRegionIntoControls(int row)
     ui->srcVolLabel->setText(QString("源音频 %1%").arg(srcPct));
     ui->mixVolLabel->setText(QString("新增音频 %1%").arg(mixPct));
 
-    ui->videoStartSpin->blockSignals(false);
-    ui->audioDurationSpin->blockSignals(false);
+    ui->videoStartMinSpin->blockSignals(false);
+    ui->videoStartSecSpin->blockSignals(false);
+    ui->audioDurMinSpin->blockSignals(false);
+    ui->audioDurSecSpin->blockSignals(false);
     ui->srcVolSlider->blockSignals(false);
     ui->mixVolSlider->blockSignals(false);
 
@@ -653,9 +698,9 @@ void AudioMixPanel::onUpdateSelectedRegion()
     if (editingRow_ < 0 || editingRow_ >= regions_.size()) return;
 
     AudioMixRegion& r = regions_[editingRow_];
-    r.videoStartUs = (int64_t)ui->videoStartSpin->value() * 1000000LL;
+    r.videoStartUs = (int64_t)(ui->videoStartMinSpin->value() * 60 + ui->videoStartSecSpin->value()) * 1000000LL;
 
-    int durSec = ui->audioDurationSpin->value();
+    int durSec = ui->audioDurMinSpin->value() * 60 + ui->audioDurSecSpin->value();
     if (durSec > 0)
         r.audioDurationUs = (int64_t)durSec * 1000000LL;
 
@@ -663,7 +708,6 @@ void AudioMixPanel::onUpdateSelectedRegion()
     r.mixVol = ui->mixVolSlider->value() / 100.0f;
 
     updateTableRow(editingRow_);
-    updateTimeline();
 }
 
 // 仅刷新指定行的数值列，不重建整张表（保留选中状态）
