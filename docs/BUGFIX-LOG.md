@@ -440,3 +440,43 @@
 - **根因**：自定义 widget 的 `paintEvent` 调用 `QStyle::CE_MenuItem` 进行绘制，Qt Style 在 `QWidgetAction` 上下文中计算该控件高度时返回 0，导致 `QMenu` 为这些条目分配的区域为空，视觉上完全不可见
 - **修复**：放弃 `QWidgetAction` 方案，恢复使用原生 `QAction`（保证与「清除所有」风格完全一致），另创建一个悬浮 `QToolButton` 作为覆盖层，通过 `eventFilter` 监听菜单鼠标移动事件，动态将 × 按钮定位到 hover 条目右侧
 - **涉及文件**：`src/mainwindow.cpp`、`src/mainwindow.h`
+
+---
+
+## #038 — VideoDecodeThread flush 内存泄漏 + 旧帧污染渲染器
+
+- **日期**：2026-06-03
+- **现象**：seek 后画面偶尔出现旧帧跳动；长时间播放内存持续增长
+- **根因**：`flush()` 只设 `flush_` 标志不清输出队列，解码器残留帧在 flush 完成后仍被推入渲染器；`outputQueue_->clear()` 仅释放 `AVFrame*` 指针但不调 `av_frame_free()`，FFmpeg 内部分配的帧数据（YUV buffer 等）持续泄漏
+- **修复**：`flush()` 同步排空输出队列并逐帧 `av_frame_free`；`run()` flush 期间检测到 `flush_` 标志时直接丢弃解码帧不入队；flush 路径的 `clear()` 改为 `tryPop` + `av_frame_free` 循环
+- **涉及文件**：`src/videodecodethread.cpp`
+
+---
+
+## #039 — VideoRenderer pause 后 seek 旧帧冻住画面
+
+- **日期**：2026-06-03
+- **现象**：暂停播放后拖动进度条 seek，画面冻结数秒不更新，音频正常跳到新位置
+- **根因**：pause 后 `VideoDecodeThread` 继续运行（仅 `AudioDecodeThread` 挂起），旧位置的解码帧持续填满 `videoFrameQ_`（容量 15）。seek 后 `flushPendingFrame()` 只清了 `pendingFrame_`，未排空队列中的残留旧帧；这些帧 PTS 远大于新 audioClock，renderer 计算 `diff > 0` 进入"超前暂存"分支，`pendingFrame_` 永远不为空 → 画面冻死
+- **修复**：`flushPendingFrame()` 增加 `frameQueue_` 排空逻辑（`tryPop` + `av_frame_free`），确保 seek 后队列中无残留旧帧
+- **涉及文件**：`src/videorenderer.cpp`
+
+---
+
+## #040 — QTableWidget 交替行选中样式被背景遮盖
+
+- **日期**：2026-06-03
+- **现象**：音频混合面板区间列表中，单数行（alternate）被选中时蓝色高亮不显示，只有双数行选中正常
+- **根因**：`alternatingRowColors` 的 `::item:alternate` 样式设置了 `background-color: #252526`，CSS 选择器权重高于 `::item:selected`，深灰色背景覆盖了选中蓝色 `#094771`
+- **修复**：`style.qss` 新增 `QTableWidget[alternatingRowColors="true"]::item:alternate:selected` 选择器，显式设置 `background-color: #094771; color: #ffffff`，权重高于 `::item:alternate`
+- **涉及文件**：`src/style.qss`
+
+---
+
+## #041 — 录音格式硬编码导致 WAV 时长错误或无声
+
+- **日期**：2026-06-03
+- **现象**：部分麦克风录音后，导出的 WAV 文件时长计算错误（偏短/偏长）或播放无声
+- **根因**：录音写 WAV 时硬编码 `44100Hz / 2ch / 16bit`，但实际录音设备可能返回不同格式（如 48000Hz、单声道）。PCM 数据按设备实际格式采样，WAV 头却写死 44100/2/16，时长计算 `bytes / (44100*2*2)` 与实际不符；若设备返回非 16-bit 格式，PCM 解析也会错误
+- **修复**：录音开始时保存设备实际格式参数（`recordSampleRate_`、`recordChannels_`、`recordSampleBits_`），WAV 头写入和时长计算均使用实际值；不支持的格式给出 fallback 警告
+- **涉及文件**：`src/audiomixpanel.cpp`、`src/audiomixpanel.h`

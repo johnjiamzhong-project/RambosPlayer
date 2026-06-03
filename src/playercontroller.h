@@ -76,6 +76,7 @@ signals:
     void durationChanged(int64_t ms);
     void positionChanged(int64_t ms);   // 100ms 间隔
     void playbackFinished();
+    void playingChanged(bool playing);   // 播放/暂停状态变化
 
 private slots:
     void onDemuxFinished();

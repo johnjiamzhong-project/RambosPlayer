@@ -189,12 +189,6 @@
     </widget>
     <addaction name="actionOpen"/>
     <addaction name="menuRecentFiles"/>
-    <addaction name="separator"/>
-    <addaction name="actionFilterPanel"/>
-    <addaction name="actionHwAccel"/>
-    <addaction name="actionStream"/>
-    <addaction name="separator"/>
-    <addaction name="menuClip"/>
    </widget>
    <widget class="QMenu" name="menuClip">
     <property name="title">
@@ -210,6 +204,12 @@
     <property name="title">
      <string>工具(&amp;T)</string>
     </property>
+    <addaction name="actionFilterPanel"/>
+    <addaction name="actionHwAccel"/>
+    <addaction name="actionStream"/>
+    <addaction name="separator"/>
+    <addaction name="menuClip"/>
+    <addaction name="separator"/>
     <addaction name="actionMerge"/>
     <addaction name="actionAudioMix"/>
    </widget>
@@ -326,6 +326,9 @@
   <action name="actionAudioMix">
    <property name="text">
     <string>音频混合(&amp;A)...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+A</string>
    </property>
   </action>
  </widget>

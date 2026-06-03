@@ -303,6 +303,12 @@ QTableWidget[alternatingRowColors="true"]::item:alternate {
     background-color: #252526;
 }
 
+/* 交替行被选中时，属性选择器权重高于 ::item:selected，必须显式覆盖，否则蓝色被 #252526 遮住 */
+QTableWidget[alternatingRowColors="true"]::item:alternate:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
 /* === 表头 === */
 QHeaderView::section {
     background-color: #2d2d30;

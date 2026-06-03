@@ -53,10 +53,15 @@ void VideoRenderer::startRendering() {
     timer_->start();
 }
 
-// seek 时由 PlayerController 调用，释放暂存的旧帧，避免旧 PTS 卡住帧队列消费。
-// 同时重置无帧计时器，使 seek 后能立即开始计量新的空窗期。
+// seek 时由 PlayerController 调用，释放暂存的旧帧，并排空帧队列中残留的旧帧。
+// pause() 后 VideoDecodeThread 继续运行会把旧位置的帧填满 videoFrameQ_；
+// 若不在此处排空，这些帧 seek 后进入 pendingFrame_ 会冻住画面 N 秒（N = 旧帧 PTS）。
 void VideoRenderer::flushPendingFrame() {
     if (pendingFrame_) av_frame_free(&pendingFrame_);
+    if (frameQueue_) {
+        AVFrame* tmp;
+        while (frameQueue_->tryPop(tmp, 0)) av_frame_free(&tmp);
+    }
     noFrameTimer_.restart();
     noFrameTimerStarted_ = true;
     noFrameLogged_ = false;

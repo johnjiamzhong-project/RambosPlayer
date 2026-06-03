@@ -70,6 +70,7 @@ private:
     void reconnectStreaming();                                       // 恢复播放时重新接入推流
     void prepareMpegTsSeek(double seconds);                          // 通知低延迟推流丢弃 seek 预滚输出
     QDockWidget* createDockWithTitleBar(const QString& title, QWidget* content); // 创建带自定义标题栏的 Dock
+    void updateProgressOverlay();  // 更新进度条上的音频区间叠加层
 
     Ui::MainWindow* ui;
     VideoRenderer*    renderer_;    // 指向 ui->videoWidget（promoted），不拥有所有权
@@ -86,6 +87,9 @@ private:
     MergePanel*         mergePanel_    = nullptr; // 合并/混音面板
     QDockWidget*        audioMixDock_  = nullptr; // 音频混合 Dock 容器
     AudioMixPanel*      audioMixPanel_ = nullptr; // 音频混合面板
+    QWidget*            progressOverlay_ = nullptr; // 进度条上的音频区间叠加层
+    int64_t             previewRegionStartUs_ = 0;  // 当前试播放区间起始（微秒）
+    int64_t             previewRegionDurationUs_ = 0; // 当前试播放区间时长（微秒）
     QToolButton*        recentRemoveBtn_ = nullptr; // 最近文件悬浮 × 按钮（覆盖层，共用一个）
     QTimer*             hideTitleTimer_  = nullptr; // 最大化时标题栏自动隐藏定时器
     QWidget*            titleOverlay_    = nullptr; // 最大化时浮动标题栏覆盖层

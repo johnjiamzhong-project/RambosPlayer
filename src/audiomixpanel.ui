@@ -145,13 +145,26 @@
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel">
-              <property name="text"><string>贴入视频时间（秒）：</string></property>
+              <property name="text"><string>贴入视频时间：</string></property>
              </widget>
             </item>
             <item>
-             <widget class="QSpinBox" name="videoStartSpin">
+             <widget class="QSpinBox" name="videoStartMinSpin">
               <property name="minimum"><number>0</number></property>
-              <property name="maximum"><number>99999</number></property>
+              <property name="maximum"><number>9999</number></property>
+              <property name="suffix"><string> 分</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>:</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="videoStartSecSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>59</number></property>
+              <property name="suffix"><string> 秒</string></property>
              </widget>
             </item>
             <item>
@@ -167,13 +180,26 @@
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel">
-              <property name="text"><string>使用时长（秒，0=全部）：</string></property>
+              <property name="text"><string>使用时长（0:00=全部）：</string></property>
              </widget>
             </item>
             <item>
-             <widget class="QSpinBox" name="audioDurationSpin">
+             <widget class="QSpinBox" name="audioDurMinSpin">
               <property name="minimum"><number>0</number></property>
-              <property name="maximum"><number>99999</number></property>
+              <property name="maximum"><number>9999</number></property>
+              <property name="suffix"><string> 分</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>:</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="audioDurSecSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>59</number></property>
+              <property name="suffix"><string> 秒</string></property>
              </widget>
             </item>
             <item>
@@ -181,44 +207,6 @@
               <property name="orientation"><enum>Qt::Horizontal</enum></property>
               <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
              </spacer>
-            </item>
-           </layout>
-          </item>
-
-          <item>
-           <layout class="QHBoxLayout">
-            <item>
-             <widget class="QLabel" name="srcVolLabel">
-              <property name="text"><string>源音频 50%</string></property>
-              <property name="minimumWidth"><number>85</number></property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QSlider" name="srcVolSlider">
-              <property name="orientation"><enum>Qt::Horizontal</enum></property>
-              <property name="minimum"><number>0</number></property>
-              <property name="maximum"><number>100</number></property>
-              <property name="value"><number>50</number></property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-
-          <item>
-           <layout class="QHBoxLayout">
-            <item>
-             <widget class="QLabel" name="mixVolLabel">
-              <property name="text"><string>新增音频 50%</string></property>
-              <property name="minimumWidth"><number>85</number></property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QSlider" name="mixVolSlider">
-              <property name="orientation"><enum>Qt::Horizontal</enum></property>
-              <property name="minimum"><number>0</number></property>
-              <property name="maximum"><number>100</number></property>
-              <property name="value"><number>50</number></property>
-             </widget>
             </item>
            </layout>
           </item>
@@ -254,9 +242,33 @@
            <number>6</number>
           </property>
 
+          <!-- 输入设备选择 -->
+          <item>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>输入设备：</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="recDeviceCombo">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="toolTip">
+               <string>选择麦克风输入设备</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+
           <item>
            <widget class="QLabel" name="recStatusLabel">
-            <property name="text"><string>就绪：选择录入起始时间后点击开始录入</string></property>
+            <property name="text"><string>就绪：选择录入起始时间后点击"开始录入"</string></property>
             <property name="wordWrap"><bool>true</bool></property>
            </widget>
           </item>
@@ -265,13 +277,26 @@
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel">
-              <property name="text"><string>录入起始时间（秒）：</string></property>
+              <property name="text"><string>录入起始时间：</string></property>
              </widget>
             </item>
             <item>
-             <widget class="QSpinBox" name="recVideoStartSpin">
+             <widget class="QSpinBox" name="recVideoStartMinSpin">
               <property name="minimum"><number>0</number></property>
-              <property name="maximum"><number>99999</number></property>
+              <property name="maximum"><number>9999</number></property>
+              <property name="suffix"><string> 分</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>:</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="recVideoStartSecSpin">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>59</number></property>
+              <property name="suffix"><string> 秒</string></property>
              </widget>
             </item>
             <item>
@@ -283,16 +308,26 @@
            </layout>
           </item>
 
+          <!-- 输入电平 -->
           <item>
-           <widget class="QLabel">
-            <property name="text">
-             <string>混合比例在本地音频页调整（录音共用同一比例）</string>
-            </property>
-            <property name="wordWrap"><bool>true</bool></property>
-            <property name="styleSheet">
-             <string>color: #888;</string>
-            </property>
-           </widget>
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel">
+              <property name="text"><string>输入电平：</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QProgressBar" name="recLevelBar">
+              <property name="maximum"><number>100</number></property>
+              <property name="value"><number>0</number></property>
+              <property name="textVisible"><bool>false</bool></property>
+              <property name="styleSheet">
+               <string>QProgressBar { border: 1px solid #aaa; border-radius: 3px; background: #eee; }
+QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4CAF50,stop:0.7 #8BC34A,stop:1 #F44336); border-radius: 2px; }</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
 
           <item>
@@ -317,6 +352,45 @@
         </widget>
 
        </widget>
+      </item>
+
+      <!-- 音量比例：两个页面共用 -->
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QLabel" name="srcVolLabel">
+          <property name="text"><string>源音频 50%</string></property>
+          <property name="minimumWidth"><number>85</number></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSlider" name="srcVolSlider">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="minimum"><number>0</number></property>
+          <property name="maximum"><number>100</number></property>
+          <property name="value"><number>50</number></property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+
+      <item>
+       <layout class="QHBoxLayout">
+        <item>
+         <widget class="QLabel" name="mixVolLabel">
+          <property name="text"><string>新增音频 50%</string></property>
+          <property name="minimumWidth"><number>85</number></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSlider" name="mixVolSlider">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="minimum"><number>0</number></property>
+          <property name="maximum"><number>100</number></property>
+          <property name="value"><number>50</number></property>
+         </widget>
+        </item>
+       </layout>
       </item>
 
      </layout>
@@ -354,6 +428,9 @@
          <bool>true</bool>
         </property>
         <column>
+         <property name="text"><string/></property>
+        </column>
+        <column>
          <property name="text"><string>音频文件</string></property>
         </column>
         <column>
@@ -372,6 +449,16 @@
       </item>
       <item>
        <layout class="QHBoxLayout">
+        <item>
+         <widget class="QPushButton" name="selectRegionAllBtn">
+          <property name="text">
+           <string>全选</string>
+          </property>
+          <property name="maximumWidth">
+           <number>50</number>
+          </property>
+         </widget>
+        </item>
         <item>
          <widget class="QPushButton" name="removeRegionBtn">
           <property name="text">

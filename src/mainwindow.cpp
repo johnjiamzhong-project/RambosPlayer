@@ -203,7 +203,6 @@ MainWindow::MainWindow(QWidget* parent)
     // 音频混合面板 Dock（右侧，默认隐藏）
     audioMixPanel_ = new AudioMixPanel();
     audioMixPanel_->setPlayerController(player_);
-    audioMixPanel_->setTimeline(timeline_);
     connect(audioMixPanel_, &AudioMixPanel::sourceFileSelected, this,
             [this](const QString& path){ openFile(path, false); });
     audioMixDock_  = createDockWithTitleBar("音频混合", audioMixPanel_);
@@ -211,6 +210,25 @@ MainWindow::MainWindow(QWidget* parent)
     audioMixDock_->setVisible(false);
     audioMixDock_->setMinimumWidth(420);
     addDockWidget(Qt::RightDockWidgetArea, audioMixDock_);
+    // 音频混合面板打开时隐藏剪辑把手，关闭时恢复
+    connect(audioMixDock_, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible) {
+            timeline_->setHandlesVisible(false);
+        } else {
+            // 恢复把手：仅在剪辑模式下显示
+            timeline_->setHandlesVisible(ui->actionTrimMode->isChecked());
+        }
+    });
+    // 进度条上的音频区间叠加层
+    progressOverlay_ = new QWidget(ui->progressSlider);
+    progressOverlay_->setStyleSheet("background-color: rgba(120, 75, 200, 120);");
+    progressOverlay_->hide();
+    connect(audioMixPanel_, &AudioMixPanel::previewRegionChanged, this,
+            [this](int64_t startUs, int64_t durationUs) {
+        previewRegionStartUs_ = startUs;
+        previewRegionDurationUs_ = durationUs;
+        updateProgressOverlay();
+    });
 
     // 浏览剪切控制器
     browseClipper_ = new BrowseClipper(player_, timeline_, this);
@@ -557,6 +575,9 @@ void MainWindow::onSeekSliderMoved(int value) {
     double seconds = (double)value / 1000.0 * duration_ / 1000.0;
     prepareMpegTsSeek(seconds);
     player_->seek(seconds);
+    // 试播放时同步新增音频位置
+    if (audioMixPanel_)
+        audioMixPanel_->seekPreviewAudio(seconds);
 }
 
 // HTTP-MPEG-TS 需要从关键帧开始解码预滚，但不能把 seek 目标前的解码帧送去编码。
@@ -578,6 +599,7 @@ void MainWindow::onDurationChanged(int64_t ms) {
     ui->timeLabel->setText("00:00 / " + formatTime(ms));
     if (trimDock_->isVisible())
         timeline_->setDuration(ms * 1000);
+    updateProgressOverlay();
 }
 
 // 每 100ms 更新进度条和时间标签；用户正在拖拽时跳过进度条更新，避免跳动。
@@ -586,6 +608,7 @@ void MainWindow::onPositionChanged(int64_t ms) {
     if (!ui->progressSlider->isSliderDown() && duration_ > 0)
         ui->progressSlider->setValue((int)((double)ms / duration_ * 1000));
     ui->timeLabel->setText(formatTime(ms) + " / " + formatTime(duration_));
+    updateProgressOverlay();
 }
 
 // 播放结束：复位按钮，若正在推流则自动停止。
@@ -603,6 +626,34 @@ void MainWindow::onPlaybackFinished() {
         activeDests_.clear();
         ui->actionStream->setText("推流(&S)...");
         statusBar()->showMessage("播放结束，推流已自动停止", 4000);
+    }
+}
+
+// 更新进度条上的音频区间叠加层位置
+void MainWindow::updateProgressOverlay()
+{
+    if (previewRegionDurationUs_ <= 0 || duration_ <= 0) {
+        progressOverlay_->hide();
+        return;
+    }
+
+    int64_t totalUs = duration_ * 1000LL;
+    double startRatio = (double)previewRegionStartUs_ / totalUs;
+    double endRatio = (double)(previewRegionStartUs_ + previewRegionDurationUs_) / totalUs;
+    startRatio = qBound(0.0, startRatio, 1.0);
+    endRatio = qBound(0.0, endRatio, 1.0);
+
+    int sliderW = ui->progressSlider->width();
+    int sliderH = ui->progressSlider->height();
+    int x1 = (int)(startRatio * sliderW);
+    int x2 = (int)(endRatio * sliderW);
+
+    if (x2 > x1) {
+        progressOverlay_->setGeometry(x1, 0, x2 - x1, sliderH);
+        progressOverlay_->show();
+        progressOverlay_->raise();
+    } else {
+        progressOverlay_->hide();
     }
 }
 
@@ -679,6 +730,9 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
                     << "(offset =" << offset << "s)";
             prepareMpegTsSeek(newSec);
             player_->seek(newSec);
+            // 试播放时同步新增音频位置
+            if (audioMixPanel_)
+                audioMixPanel_->seekPreviewAudio(newSec);
             return true;
         }
     }
@@ -729,6 +783,9 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
                 << "seek to" << newSec;
         prepareMpegTsSeek(newSec);
         player_->seek(newSec);
+        // 试播放时同步新增音频位置
+        if (audioMixPanel_)
+            audioMixPanel_->seekPreviewAudio(newSec);
     } else {
         QMainWindow::keyPressEvent(event);
     }
@@ -1322,26 +1379,23 @@ QString MainWindow::formatTime(int64_t ms) {
         .arg(s % 60, 2, 10, QChar('0'));
 }
 
-// 打开合并/混音面板（Dock 切换显隐）
+// 打开合并/混音面板（Dock 切换显隐，与音频混合面板互斥）
 void MainWindow::onMergeTriggered()
 {
-    mergeDock_->setVisible(!mergeDock_->isVisible());
-    if (mergeDock_->isVisible())
+    bool show = !mergeDock_->isVisible();
+    audioMixDock_->setVisible(false);   // 关闭音频混合面板
+    mergeDock_->setVisible(show);
+    if (show)
         mergeDock_->raise();
 }
 
-// 打开音频混合面板（默认本地音频模式）
+// 打开音频混合面板（与合并面板互斥，只显示一个业务面板）
 void MainWindow::onAudioMixTriggered()
 {
+    mergeDock_->setVisible(false);      // 关闭合并面板
     audioMixDock_->setVisible(true);
     audioMixDock_->raise();
     audioMixPanel_->switchToLocalMode();
-    // 确保时间轴 Dock 可见以显示音频区间
-    if (!trimDock_->isVisible()) {
-        trimDock_->setVisible(true);
-        if (!currentFile_.isEmpty())
-            thumbExtractor_->extract(currentFile_);
-    }
 }
 
 // 显示"关于"对话框：版本信息、快捷键列表、GitHub 主页链接。
@@ -1358,7 +1412,7 @@ void MainWindow::onAbout() {
         "<table cellspacing='4'>"
         "<tr><td><b>Ctrl+O</b></td><td>打开文件</td></tr>"
         "<tr><td><b>空格</b></td><td>播放 / 暂停</td></tr>"
-        "<tr><td><b>← / →</b></td><td>快退 / 快进 5 秒</td></tr>"
+        "<tr><td><b>← / →</b></td><td>快退 / 快进 10 秒</td></tr>"
         "<tr><td><b>双击视频</b></td><td>切换全屏</td></tr>"
         "<tr><td><b>Esc</b></td><td>退出全屏</td></tr>"
         "<tr><td><b>Ctrl+T</b></td><td>剪辑模式（自由剪辑）</td></tr>"
@@ -1368,9 +1422,9 @@ void MainWindow::onAbout() {
         "</table><br>"
         "<b>工具</b><br>"
         "<table cellspacing='4'>"
-        "<tr><td><b>合并</b></td><td>多视频拼接合并</td></tr>"
-        "<tr><td><b>音频混合</b></td><td>为视频叠加背景音乐 / 录音</td></tr>"
-        "<tr><td><b>推流设置</b></td><td>HTTP-MPEG-TS 低延迟推流</td></tr>"
+        "<tr><td><b>Ctrl+Shift+S</b></td><td>推流设置（HTTP-MPEG-TS 低延迟）</td></tr>"
+        "<tr><td><b>Ctrl+G</b></td><td>合并（多视频拼接）</td></tr>"
+        "<tr><td><b>Ctrl+Shift+A</b></td><td>音频混合（叠加背景音乐 / 录音）</td></tr>"
         "</table><br>"
         "<a href='https://github.com/johnjiamzhong-project/RambosPlayer'>"
         "https://github.com/johnjiamzhong-project/RambosPlayer</a>"

@@ -65,16 +65,19 @@ void PlayerController::play() {
     audioDec_.start();
     renderer_->startRendering();
     posTimer_->start();
+    emit playingChanged(true);
 }
 
 // 暂停：停止渲染定时器和位置定时器，同时挂起音频输出。
 // 解码线程继续持有资源，恢复时无需重新初始化。
 void PlayerController::pause() {
+    if (!playing_) return;
     playing_ = false;
     qInfo() << "PlayerController::pause at" << sync_.audioClock() << "s";
     posTimer_->stop();
     renderer_->stopRendering();
     audioDec_.setPaused(true);
+    emit playingChanged(false);
 }
 
 // 停止：停止渲染，等待所有线程退出，清空三条队列。

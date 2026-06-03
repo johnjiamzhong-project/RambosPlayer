@@ -63,8 +63,15 @@ void VideoDecodeThread::stop() {
     if (outputQueue_) outputQueue_->abort();
 }
 
-// 标记需要 flush，run() 检测后调用 avcodec_flush_buffers 并清空输出队列
-void VideoDecodeThread::flush() { flush_ = true; }
+// 标记需要 flush，同时排空输出队列，唤醒可能阻塞在 push() 上的解码线程，
+// 使其尽快返回到外层循环顶部处理 flush 标志，避免旧帧在 seek 后进入渲染器。
+void VideoDecodeThread::flush() {
+    flush_ = true;
+    if (outputQueue_) {
+        AVFrame* tmp;
+        while (outputQueue_->tryPop(tmp, 0)) av_frame_free(&tmp);
+    }
+}
 
 int VideoDecodeThread::width()  const { return codecCtx_ ? codecCtx_->width  : 0; }
 int VideoDecodeThread::height() const { return codecCtx_ ? codecCtx_->height : 0; }
@@ -139,10 +146,12 @@ void VideoDecodeThread::run() {
     AVFrame* filtered = av_frame_alloc();
 
     while (!abort_) {
-        // flush 处理
+        // flush 处理：先用 avcodec_flush_buffers 清空解码器内部缓冲，
+        // 再排空输出队列并释放帧（clear() 不释放 AVFrame* 会泄漏内存）。
         if (flush_.exchange(false)) {
             avcodec_flush_buffers(codecCtx_);
-            outputQueue_->clear();
+            AVFrame* tmp;
+            while (outputQueue_->tryPop(tmp, 0)) av_frame_free(&tmp);
             qInfo() << "VideoDecodeThread: flush done";
         }
 
@@ -162,6 +171,12 @@ void VideoDecodeThread::run() {
         }
         av_packet_free(&pkt);
         while (avcodec_receive_frame(codecCtx_, frame) == 0) {
+            // flush 期间不向输出队列推帧，直接丢弃并退出内层循环，
+            // 使外层循环尽快处理 flush 标志，防止旧帧进入渲染器。
+            if (flush_.load(std::memory_order_relaxed)) {
+                av_frame_unref(frame);
+                break;
+            }
             AVFrame* src = frame;
             AVFrame* swTmp = nullptr;
             if (hwAccel_ && frame->format == AV_PIX_FMT_D3D11) {

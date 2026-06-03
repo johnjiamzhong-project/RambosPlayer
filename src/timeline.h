@@ -41,9 +41,6 @@ public:
     void setHandlesVisible(bool visible);
     bool areHandlesVisible() const { return handlesVisible_; }
 
-    // 音频混合区间（由 AudioMixPanel 设置，紫色显示在底部导轨下方）
-    void setAudioRegions(const QList<QPair<int64_t, int64_t>>& regions);
-
 signals:
     void trimPointChanged(int64_t inPts, int64_t outPts);
     void segmentsChanged(int count);  // 底部导轨区间数变化时发出
@@ -84,10 +81,6 @@ private:
     bool   bottomBarVisible_ = false;             // 底部导轨是否可见
     bool   handlesVisible_   = true;              // 把手可见（自由剪辑显示，其他模式隐藏）
     static constexpr int kBottomBarHeight = 24;   // 底部导轨高度
-
-    // 音频混合区间（由 AudioMixPanel 驱动，独立绘制行）
-    QList<QPair<int64_t, int64_t>> audioRegions_;
-    static constexpr int kAudioBarHeight = 20;    // 音频混合区间行高度
 
     static constexpr int kHandleWidth  = 8;
     static constexpr int kHandleHeight = 20;
