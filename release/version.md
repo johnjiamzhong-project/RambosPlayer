@@ -28,8 +28,67 @@
 
 | 版本 | 日期 | Release Title | 概要 |
 |------|------|---------------|------|
+| 1.2.1 | 2026-06-04 | RambosPlayer v1.2.1 | 修复浏览剪辑切换多段剪辑时区间残留导致误导出 |
+| 1.2.0 | 2026-05-29 | RambosPlayer v1.2.0 | 新增多段剪切、视频合并、音频混合模块，最大化浮动标题栏，多项交互修复 |
 | 1.1.0 | 2026-05-27 | RambosPlayer v1.1.0 | 新增 HTTP-MPEG-TS 低延迟推流，修复多设备卡顿、seek 重连风暴等问题 |
 | 1.0.0 | 2026-05-23 | RambosPlayer v1.0.0 | 基于 FFmpeg + Qt 的 Windows 多媒体播放器首个正式版本 |
+
+---
+
+## v1.2.1 — RambosPlayer v1.2.1 (2026-06-04)
+
+**Tag**: `v1.2.1`
+
+### Release Notes
+
+**Bug 修复**
+
+- 修复浏览剪辑切换多段剪辑时，浏览区间残留导致误导出的问题；切换时弹出确认框（默认清空），用户可选择保留或重新输入
+
+**交互 / 术语优化**
+
+- 全局将"剪切"统一改为"剪辑"（UI 菜单"剪辑(&C)"、"浏览剪辑(&B)"、"多段剪辑(&M)"、状态栏提示、注释）
+- 导出文件名时间戳始终显示小时位（`00h01m23s`），与长视频区间对齐
+- 导出日志耗时改为 `00h00m00s` 格式
+
+**构建**
+
+- `RambosPlayer.pro` 补录 v1.2.0 漏加的源文件：MergePanel、MergeWorker、ConcatDemuxer、ConcatFilter、AudioMixPanel、AudioMixWorker、AudioPreviewWindow
+
+### 下载
+
+解压 `RambosPlayer-v1.2.1.zip`，双击 `RambosPlayer.exe` 运行。
+
+---
+
+## v1.2.0 — RambosPlayer v1.2.0 (2026-05-29)
+
+**Tag**: `v1.2.0`
+
+### Release Notes
+
+在 v1.1.0 基础上新增多段剪切、视频合并、音频混合三大剪辑模块，并优化最大化窗口交互体验。
+
+**新功能**
+
+- 多段剪切（SegmentClipper）：Ctrl+M 进入多段模式，支持在时间轴上标记多个区间，三种剪切模式（自由/浏览/多段）互斥切换
+- 视频合并（MergePanel）：选择多个视频文件合并为一个，支持编码器 fallback + 合成诊断日志
+- 音频混合面板：支持 BGM 混合、音量调节、音频试听弹窗，abuffersrc time_base 自动匹配
+- 最大化浮动标题栏：窗口最大化时标题栏自动隐藏，鼠标悬停顶部滑入显示，带 SVG 图标动画
+
+**Bug 修复**
+
+- 修复试播放快进时 StoppedState 伪触发导致播放中断（#037）
+- 修复音频混合 BGM 无声 bug（abuffersrc time_base 与流不匹配）
+- 修复未打开文件时三种剪切模式统一弹窗提示
+- 修复多段剪切确认时不清空已有区间
+- 修复多段剪切取消时恢复浏览/自由模式
+- 修复浏览→自由切换时保留底部导轨区间
+- 修复 UTF-8 乱码问题
+
+### 下载
+
+解压 `RambosPlayer-v1.2.0.zip`，双击 `RambosPlayer.exe` 运行。
 
 ---
 

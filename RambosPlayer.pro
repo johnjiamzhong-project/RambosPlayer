@@ -29,7 +29,7 @@ CONFIG(debug, debug|release) {
 }
 
 # Windows 系统库
-win32: LIBS += -ldbghelp
+win32: LIBS += -ldbghelp -luser32
 
 # ---- 输出目录（统一放在项目目录下，不用 Qt Creator 的 shadow build 目录）----
 CONFIG(debug, debug|release) {
@@ -69,7 +69,14 @@ SOURCES += \
     src/httpflvserver.cpp \
     src/streamdecoder.cpp \
     src/streampipeline.cpp \
-    src/mpegtsserver.cpp
+    src/mpegtsserver.cpp \
+    src/concatdemuxer.cpp \
+    src/concatfilter.cpp \
+    src/mergeworker.cpp \
+    src/mergepanel.cpp \
+    src/audiomixworker.cpp \
+    src/audiomixpanel.cpp \
+    src/audiopreviewwindow.cpp
 
 HEADERS += \
     src/framequeue.h \
@@ -99,11 +106,20 @@ HEADERS += \
     src/httpflvserver.h \
     src/streamdecoder.h \
     src/streampipeline.h \
-    src/mpegtsserver.h
+    src/mpegtsserver.h \
+    src/concatdemuxer.h \
+    src/concatfilter.h \
+    src/mergeworker.h \
+    src/mergepanel.h \
+    src/audiomixworker.h \
+    src/audiomixpanel.h \
+    src/audiopreviewwindow.h
 
 FORMS += \
     src/mainwindow.ui \
-    src/filterpanel.ui
+    src/filterpanel.ui \
+    src/audiomixpanel.ui \
+    src/mergepanel.ui
 
 RESOURCES += \
     src/resources.qrc

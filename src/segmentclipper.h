@@ -9,7 +9,7 @@ class QLabel;
 class QPushButton;
 class Timeline;
 
-// SegmentClipper：多段剪切输入对话框。
+// SegmentClipper：多段剪辑输入对话框。
 // 用户逐行输入时间区间（MM:SS - MM:SS 或 HH:MM:SS - HH:MM:SS），
 // 验证通过后填充 Timeline 底部导轨。
 class SegmentClipper : public QDialog {

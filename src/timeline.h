@@ -23,7 +23,7 @@ public:
     int64_t duration() const { return duration_; }
     void    setTrimRange(int64_t inUs, int64_t outUs);
 
-    // 底部导轨 — 多段剪切区间管理
+    // 底部导轨 — 多段剪辑区间管理
     bool addSegment(int64_t startUs, int64_t endUs);  // 返回 false 表示重叠被拒绝
     bool removeSegment(int64_t startUs, int64_t endUs); // 按起始+结束时间精确匹配移除
     bool removeSegmentAt(int index);                    // 按索引移除，不受边界漂移影响
@@ -33,11 +33,11 @@ public:
     void setBottomBarVisible(bool visible);
     bool isBottomBarVisible() const;
 
-    // 待定入点标记（浏览剪切：首次空格立刻显示，二次空格确认区间后清除）
+    // 待定入点标记（浏览剪辑：首次空格立刻显示，二次空格确认区间后清除）
     void setPendingInPoint(int64_t pts);
     void clearPendingInPoint();
 
-    // 把手显隐控制（自由剪辑显示，浏览剪切/多段剪切隐藏）
+    // 把手显隐控制（自由剪辑显示，浏览剪辑/多段剪辑隐藏）
     void setHandlesVisible(bool visible);
     bool areHandlesVisible() const { return handlesVisible_; }
 
@@ -77,7 +77,7 @@ private:
 
     // 底部导轨（多段区间显示）
     QList<QPair<int64_t, int64_t>> segments_;    // 已标记区间列表（按 startUs 排序）
-    int64_t pendingInPts_    = -1;                // 待定入点（-1=无），浏览剪切首次空格设置
+    int64_t pendingInPts_    = -1;                // 待定入点（-1=无），浏览剪辑首次空格设置
     bool   bottomBarVisible_ = false;             // 底部导轨是否可见
     bool   handlesVisible_   = true;              // 把手可见（自由剪辑显示，其他模式隐藏）
     static constexpr int kBottomBarHeight = 24;   // 底部导轨高度

@@ -192,7 +192,7 @@
    </widget>
    <widget class="QMenu" name="menuClip">
     <property name="title">
-     <string>剪切(&amp;C)</string>
+     <string>剪辑(&amp;C)</string>
     </property>
     <addaction name="actionTrimMode"/>
     <addaction name="actionBrowseClip"/>
@@ -298,7 +298,7 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>浏览剪切(&amp;B)</string>
+    <string>浏览剪辑(&amp;B)</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+B</string>
@@ -309,7 +309,7 @@
     <bool>false</bool>
    </property>
    <property name="text">
-    <string>多段剪切(&amp;M)...</string>
+    <string>多段剪辑(&amp;M)...</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+M</string>

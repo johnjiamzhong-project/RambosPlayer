@@ -197,7 +197,7 @@ void Timeline::drawHandles(QPainter& p)
 }
 
 // 绘制整个时间轴控件：背景、轨道底色、选中高亮、刻度尺、缩略图、
-// 把手（自由剪辑模式）和底部导轨（多段区间/浏览剪切模式）。
+// 把手（自由剪辑模式）和底部导轨（多段区间/浏览剪辑模式）。
 void Timeline::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
@@ -427,14 +427,14 @@ bool Timeline::isBottomBarVisible() const
 }
 
 // 控制剪辑把手（入口/出口竖线与三角）的可见性。
-// 自由剪辑模式显示，浏览剪切/多段剪切模式隐藏，隐藏时把手坐标保留不变。
+// 自由剪辑模式显示，浏览剪辑/多段剪辑模式隐藏，隐藏时把手坐标保留不变。
 void Timeline::setHandlesVisible(bool visible)
 {
     handlesVisible_ = visible;
     update();
 }
 
-// 设置待定入点（浏览剪切首次空格时调用），底部导轨立即绘制绿色竖线标记。
+// 设置待定入点（浏览剪辑首次空格时调用），底部导轨立即绘制绿色竖线标记。
 void Timeline::setPendingInPoint(int64_t pts)
 {
     pendingInPts_ = pts;

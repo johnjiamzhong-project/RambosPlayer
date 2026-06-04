@@ -81,8 +81,8 @@ private:
     QDockWidget*        trimDock_      = nullptr; // 剪辑时间轴 Dock 容器
     Timeline*           timeline_      = nullptr; // 剪辑时间轴控件
     ThumbnailExtractor* thumbExtractor_ = nullptr; // 缩略图异步提取
-    ExportWorker*       exportWorker_  = nullptr; // 无损剪切导出线程
-    BrowseClipper*      browseClipper_ = nullptr; // 浏览剪切控制器
+    ExportWorker*       exportWorker_  = nullptr; // 无损剪辑导出线程
+    BrowseClipper*      browseClipper_ = nullptr; // 浏览剪辑控制器
     QDockWidget*        mergeDock_     = nullptr; // 合并/混音 Dock 容器
     MergePanel*         mergePanel_    = nullptr; // 合并/混音面板
     QDockWidget*        audioMixDock_  = nullptr; // 音频混合 Dock 容器

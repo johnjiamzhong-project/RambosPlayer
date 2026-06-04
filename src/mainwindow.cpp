@@ -43,15 +43,13 @@
 #endif
 
 // 毫秒转文件名安全的时间字符串（冒号在 Windows 文件名中非法）。
-// 格式：MMmSSs（如 01m23s），超过 1 小时则为 HHhMMmSSs。
+// 格式：HHhMMmSSs（如 00h01m23s），始终显示小时位。
 static QString formatTimeForFilename(int64_t ms) {
     int s = static_cast<int>(ms / 1000);
     int h = s / 3600;
     int m = (s % 3600) / 60;
     int sec = s % 60;
-    if (h > 0)
-        return QString("%1h%2m%3s").arg(h).arg(m, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0'));
-    return QString("%1m%2s").arg(m, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0'));
+    return QString("%1h%2m%3s").arg(h, 2, 10, QChar('0')).arg(m, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0'));
 }
 
 
@@ -230,7 +228,7 @@ MainWindow::MainWindow(QWidget* parent)
         updateProgressOverlay();
     });
 
-    // 浏览剪切控制器
+    // 浏览剪辑控制器
     browseClipper_ = new BrowseClipper(player_, timeline_, this);
     connect(browseClipper_, &BrowseClipper::finished, this, [this]() {
         ui->actionBrowseClip->setChecked(false);
@@ -867,7 +865,7 @@ void MainWindow::onStreamStart() {
 }
 
 // 剪辑模式切换：显示/隐藏时间轴 Dock，启动缩略图提取。
-// 与浏览剪切互斥，进入时自动退出浏览剪切（含保存提示）。
+// 与浏览剪辑互斥，进入时自动退出浏览剪辑（含保存提示）。
 void MainWindow::onTrimModeToggled(bool checked) {
     // 切换中的 guard：dock visibilityChanged 可能误触发 actionTrimMode→setChecked，
     // 此时浏览模式活跃则立即回退，不阻塞后续逻辑
@@ -889,7 +887,7 @@ void MainWindow::onTrimModeToggled(bool checked) {
         timeline_->setHandlesVisible(true);
         trimDock_->setVisible(true);
 
-        // 进入自由剪辑前，静默退出浏览剪切（保留所有区间）
+        // 进入自由剪辑前，静默退出浏览剪辑（保留所有区间）
         bool hadBrowseSegments = false;
         if (ui->actionBrowseClip->isChecked()) {
             if (!timeline_->segments().isEmpty())
@@ -914,7 +912,7 @@ void MainWindow::onTrimModeToggled(bool checked) {
     switchingClipMode_ = false;
 }
 
-// 浏览剪切模式切换（Ctrl+B）
+// 浏览剪辑模式切换（Ctrl+B）
 // 与自由剪辑互斥，进入时询问是否保存自由剪辑的入/出点区间。
 void MainWindow::onBrowseClipToggled(bool checked) {
     if (switchingClipMode_) return;
@@ -937,8 +935,8 @@ void MainWindow::onBrowseClipToggled(bool checked) {
             // inPts_ 默认 0, outPts_ 默认 duration_，当用户拖动过任意把手时此条件为真
             bool hasTrim = (inUs > 0 || outUs < dur);
             if (hasTrim) {
-                auto btn = QMessageBox::question(this, "保存剪切区间",
-                    QString("当前剪切区间 %1 → %2，是否保存到底部导轨？")
+                auto btn = QMessageBox::question(this, "保存剪辑区间",
+                    QString("当前剪辑区间 %1 → %2，是否保存到底部导轨？")
                         .arg(MainWindow::formatTime(inUs / 1000))
                         .arg(MainWindow::formatTime(outUs / 1000)),
                     QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
@@ -960,22 +958,22 @@ void MainWindow::onBrowseClipToggled(bool checked) {
     } else {
         if (browseClipper_->isActive())
             browseClipper_->stop();
-        // 退出浏览剪切：仅在自由剪辑模式激活时才恢复把手
+        // 退出浏览剪辑：仅在自由剪辑模式激活时才恢复把手
         timeline_->setHandlesVisible(ui->actionTrimMode->isChecked());
         // 底部导轨的显隐由 BrowseClipper::stop() 根据用户选择管理：
         // - 保留区间 → 保持可见
         // - 全部丢弃 → stop() 内已调用 setBottomBarVisible(false)
         // 此处不再无条件隐藏，避免覆盖用户的选择。
         // 如果底部导轨还有区间（用户保留的），保持 dock 可见；
-        // 否则 dock 随浏览剪切一起关闭。
+        // 否则 dock 随浏览剪辑一起关闭。
         if (!ui->actionTrimMode->isChecked() && timeline_->segments().isEmpty())
             trimDock_->setVisible(false);
     }
     switchingClipMode_ = false;
 }
 
-// 多段剪切（Ctrl+M）：弹出输入对话框，验证通过后填充底部导轨。
-// 与自由剪辑和浏览剪切互斥：进入时退出其他模式，取消时恢复。
+// 多段剪辑（Ctrl+M）：弹出输入对话框，验证通过后填充底部导轨。
+// 与自由剪辑和浏览剪辑互斥：进入时退出其他模式，取消时恢复。
 void MainWindow::onSegmentClipTriggered()
 {
     if (currentFile_.isEmpty()) {
@@ -987,7 +985,7 @@ void MainWindow::onSegmentClipTriggered()
     bool prevBrowse = ui->actionBrowseClip->isChecked();
     bool prevFree   = ui->actionTrimMode->isChecked();
 
-    // 退出浏览剪切（静默，保留所有区间）
+    // 退出浏览剪辑（静默，保留所有区间）
     if (prevBrowse) {
         browseClipper_->stop(false);
         ui->actionBrowseClip->blockSignals(true);
@@ -1002,8 +1000,8 @@ void MainWindow::onSegmentClipTriggered()
         int64_t dur = timeline_->duration();
         bool hasTrim = (inUs > 0 || outUs < dur);
         if (hasTrim) {
-            auto btn = QMessageBox::question(this, "保存剪切区间",
-                QString("当前剪切区间 %1 → %2，是否保存到底部导轨？")
+            auto btn = QMessageBox::question(this, "保存剪辑区间",
+                QString("当前剪辑区间 %1 → %2，是否保存到底部导轨？")
                     .arg(formatTime(inUs / 1000)).arg(formatTime(outUs / 1000)),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
             if (btn == QMessageBox::Yes) {
@@ -1024,20 +1022,30 @@ void MainWindow::onSegmentClipTriggered()
             thumbExtractor_->extract(currentFile_);
     }
     timeline_->setHandlesVisible(false);
+
+    // 若底部导轨存有浏览剪辑残留区间，询问用户是否保留
+    if (!timeline_->segments().isEmpty()) {
+        auto btn = QMessageBox::question(this, "多段剪辑",
+            QString("底部导轨已有 %1 个区间（来自浏览剪辑），是否保留并继续追加？\n"
+                    "选「否」将清空后重新输入。").arg(timeline_->segments().size()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (btn == QMessageBox::No)
+            timeline_->clearSegments();
+    }
     timeline_->setBottomBarVisible(true);
 
     SegmentClipper dlg(timeline_, duration_ * 1000, this);
     if (dlg.exec() == QDialog::Accepted) {
         int count = timeline_->segments().size();
         statusBar()->showMessage(
-            QString("多段剪切：已添加 %1 个区间，可按 Ctrl+E 导出").arg(count), 5000);
+            QString("多段剪辑：已添加 %1 个区间，可按 Ctrl+E 导出").arg(count), 5000);
         // 保留底部导轨，无模式激活
     } else {
         // 取消 → 恢复进入前的模式（无论区间是否为空）
         if (timeline_->segments().isEmpty())
             timeline_->setBottomBarVisible(false);
         if (prevBrowse) {
-            // 恢复浏览剪切模式
+            // 恢复浏览剪辑模式
             ui->actionBrowseClip->blockSignals(true);
             ui->actionBrowseClip->setChecked(true);
             ui->actionBrowseClip->blockSignals(false);
@@ -1177,10 +1185,16 @@ void MainWindow::writeExportLog() {
     newEntry += QString::fromUtf8("------------------------------------------------------------\n");
     for (const auto& line : batchExportLog_)
         newEntry += line + QLatin1Char('\n');
-    // 导出耗时
-    double elapsedSec = exportTimer_.elapsed() / 1000.0;
-    newEntry += QString::fromUtf8("导出耗时: %1 秒\n")
-                    .arg(QString::number(elapsedSec, 'f', 1));
+    // 导出耗时（格式：00h00m00s）
+    int elapsedMs = exportTimer_.elapsed();
+    int totalSec = elapsedMs / 1000;
+    int h = totalSec / 3600;
+    int m = (totalSec % 3600) / 60;
+    int s = totalSec % 60;
+    newEntry += QString::fromUtf8("导出耗时: %1h%2m%3s\n")
+                    .arg(h, 2, 10, QChar('0'))
+                    .arg(m, 2, 10, QChar('0'))
+                    .arg(s, 2, 10, QChar('0'));
     newEntry += QString::fromUtf8("========================================\n");
 
     static const QByteArray kBom("\xEF\xBB\xBF", 3);
@@ -1416,8 +1430,8 @@ void MainWindow::onAbout() {
         "<tr><td><b>双击视频</b></td><td>切换全屏</td></tr>"
         "<tr><td><b>Esc</b></td><td>退出全屏</td></tr>"
         "<tr><td><b>Ctrl+T</b></td><td>剪辑模式（自由剪辑）</td></tr>"
-        "<tr><td><b>Ctrl+B</b></td><td>浏览剪切</td></tr>"
-        "<tr><td><b>Ctrl+M</b></td><td>多段剪切（批量输入区间）</td></tr>"
+        "<tr><td><b>Ctrl+B</b></td><td>浏览剪辑</td></tr>"
+        "<tr><td><b>Ctrl+M</b></td><td>多段剪辑（批量输入区间）</td></tr>"
         "<tr><td><b>Ctrl+E</b></td><td>导出片段</td></tr>"
         "</table><br>"
         "<b>工具</b><br>"

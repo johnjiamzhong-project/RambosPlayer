@@ -62,7 +62,7 @@ SegmentClipper::SegmentClipper(Timeline* timeline, int64_t durationUs,
                                QWidget* parent)
     : QDialog(parent), timeline_(timeline), durationUs_(durationUs)
 {
-    setWindowTitle("多段剪切");
+    setWindowTitle("多段剪辑");
     resize(520, 440);
 
     auto* mainLayout = new QVBoxLayout(this);
@@ -273,7 +273,7 @@ void SegmentClipper::onAccept()
             return;
     }
 
-    // 只追加新区间，不清除已有区间（之前可能由浏览剪切添加）
+    // 只追加新区间，不清除已有区间（之前可能由浏览剪辑添加）
     timeline_->setBottomBarVisible(true);
 
     int added = 0;

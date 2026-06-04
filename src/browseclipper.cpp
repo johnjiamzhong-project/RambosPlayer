@@ -20,7 +20,7 @@ BrowseClipper::BrowseClipper(PlayerController* player, Timeline* timeline, QObje
 {
 }
 
-// 进入浏览剪切模式：清空本次会话的区间列表，显示底部导轨，自动播放视频，
+// 进入浏览剪辑模式：清空本次会话的区间列表，显示底部导轨，自动播放视频，
 // 并在状态栏提示用户按空格标记入点。
 void BrowseClipper::start()
 {
@@ -33,11 +33,11 @@ void BrowseClipper::start()
         player_->play();
         QMainWindow* mw = qobject_cast<QMainWindow*>(parent());
         if (mw && mw->statusBar())
-            mw->statusBar()->showMessage("浏览剪切模式 — 按空格标记入点 (视频持续播放)");
+            mw->statusBar()->showMessage("浏览剪辑模式 — 按空格标记入点 (视频持续播放)");
     }
 }
 
-// 退出浏览剪切模式：
+// 退出浏览剪辑模式：
 // - showDialog=true (默认): 弹出确认对话框，列出底部导轨所有区间，用户勾选保留
 // - showDialog=false: 静默退出，保留所有区间不变（模式切换时使用）
 // 最终发射 finished() 信号通知主窗口更新菜单状态。
@@ -52,7 +52,7 @@ void BrowseClipper::stop(bool showDialog)
     if (!showDialog) {
         // 静默退出：保留所有区间，不弹对话框
         if (mw && mw->statusBar())
-            mw->statusBar()->showMessage("已退出浏览剪切模式", 3000);
+            mw->statusBar()->showMessage("已退出浏览剪辑模式", 3000);
         emit finished();
         return;
     }
@@ -71,7 +71,7 @@ void BrowseClipper::stop(bool showDialog)
 
     // 弹出确认对话框：列出所有区间，可勾选保留
     QDialog dlg(qobject_cast<QWidget*>(parent()));
-    dlg.setWindowTitle("浏览剪切 — 确认区间");
+    dlg.setWindowTitle("浏览剪辑 — 确认区间");
     dlg.resize(400, 250);
 
     auto* layout = new QVBoxLayout(&dlg);
@@ -115,12 +115,12 @@ void BrowseClipper::stop(bool showDialog)
     }
 
     if (mw && mw->statusBar())
-        mw->statusBar()->showMessage("已退出浏览剪切模式", 3000);
+        mw->statusBar()->showMessage("已退出浏览剪辑模式", 3000);
 
     emit finished();
 }
 
-// 返回当前是否处于浏览剪切激活状态。
+// 返回当前是否处于浏览剪辑激活状态。
 bool BrowseClipper::isActive() const
 {
     return active_;
