@@ -480,3 +480,33 @@
 - **根因**：录音写 WAV 时硬编码 `44100Hz / 2ch / 16bit`，但实际录音设备可能返回不同格式（如 48000Hz、单声道）。PCM 数据按设备实际格式采样，WAV 头却写死 44100/2/16，时长计算 `bytes / (44100*2*2)` 与实际不符；若设备返回非 16-bit 格式，PCM 解析也会错误
 - **修复**：录音开始时保存设备实际格式参数（`recordSampleRate_`、`recordChannels_`、`recordSampleBits_`），WAV 头写入和时长计算均使用实际值；不支持的格式给出 fallback 警告
 - **涉及文件**：`src/audiomixpanel.cpp`、`src/audiomixpanel.h`
+
+---
+
+## #042 — AVPixelFormat 前向声明在 GCC 下编译失败
+
+- **日期**：2026-06-11
+- **现象**：ARM (aarch64-linux-gnu / GCC 11) 交叉编译时报错 `use of enum 'AVPixelFormat' without previous declaration`、`underlying type mismatch in enum 'enum AVPixelFormat'`
+- **根因**：`filtergraph.h` 用 `enum AVPixelFormat;` 前向声明该类型，MSVC 不检查也能通过；但 `libavutil/pixfmt.h` 中 `enum AVPixelFormat { ... }` 未指定底层类型，C++ 标准下无固定底层类型的无作用域枚举不能被前向声明（加 `: int` 也会与原定义"底层类型不匹配"）
+- **修复**：删除前向声明，直接 `#include <libavutil/pixfmt.h>`（仅含枚举与宏，无函数声明，不需要 `extern "C"`）
+- **涉及文件**：`src/filtergraph.h`
+
+---
+
+## #043 — main.cpp 中 Windows 专用代码缺少平台宏导致 Linux/GCC 编译失败
+
+- **日期**：2026-06-11
+- **现象**：ARM 交叉编译时报错 `'HWND' was not declared`、`'setDarkTitleBar' was not declared`
+- **根因**：`setDarkTitleBar(HWND hwnd)` 函数签名本身（含 `HWND` 类型）未包在 `#ifdef Q_OS_WIN` 内，仅函数体内逻辑有宏保护；调用处同样未加宏
+- **修复**：将整个函数定义及其调用均移入 `#ifdef Q_OS_WIN` / `#endif`
+- **涉及文件**：`src/main.cpp`
+
+---
+
+## #044 — goto 跨越带初始化器的局部变量声明导致 GCC 编译失败
+
+- **日期**：2026-06-11
+- **现象**：ARM 交叉编译时报错 `jump to label 'xxx_cleanup'/'done' crosses initialization of 'XXX'`
+- **根因**：MSVC 对"goto 跳转到带初始化器的局部变量声明之后"检查较松，但 C++ 标准（[stmt.dcl]）禁止跳转进入仍在作用域内、且声明时带初始化器的非平凡跳过变量；`exportworker.cpp`（`session_cleanup`/`seg_cleanup`）、`mergeworker.cpp`（`done`）、`audiomixworker.cpp`（`done`）中均有 `goto` 跳过此类声明
+- **修复**：将被跨越的变量声明上移到所有 `goto` 之前（无初始化器或在函数顶部声明后再赋值）；`mergeworker.cpp` 中编码器选择相关的局部变量与 lambda 整体用 `{ }` 包裹，使其在 `done:` 标签处已脱离作用域
+- **涉及文件**：`src/exportworker.cpp`、`src/mergeworker.cpp`、`src/audiomixworker.cpp`

@@ -475,6 +475,25 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 
 ---
 
+## Phase 13 — ARM64 (RK3588) 交叉编译与板卡部署 ✅
+
+**目标：** 在 WSL 中将本项目交叉编译为 aarch64 Linux 可执行文件，运行在 Firefly ROC-RK3588S-PC（RK3588S，RKMPP 硬解）板卡上。
+
+- [x] `cmake/toolchain-aarch64-linux-gnu.cmake`：指定 `aarch64-linux-gnu-gcc/g++`，`CMAKE_FIND_ROOT_PATH_MODE_*` 限定到目标 sysroot
+- [x] `cmake/FindFFMPEG.cmake`：板卡 FFmpeg(rkmpp) 的 pkgconfig prefix 在本机不存在，改为 `FFMPEG_ROOT` 直接 `find_path`/`find_library`
+- [x] `CMakePresets.json` 新增 `arm64` 预设（Unix Makefiles，输出 `build-arm64/`）；`CMakeLists.txt` 在 `CMAKE_CROSSCOMPILING` 下追加 module path 与链接选项（`--allow-shlib-undefined` 等，应对 VAAPI 库本机缺失）
+- [x] 修复 4 处 GCC（MSVC 不报错）编译错误（详见 BUGFIX-LOG #042–#044）：
+  - `filtergraph.h`：`enum AVPixelFormat` 前向声明改为 `#include <libavutil/pixfmt.h>`
+  - `main.cpp`：Windows 专属代码（`HWND`/`setDarkTitleBar`）补全 `#ifdef Q_OS_WIN`
+  - `exportworker.cpp` / `mergeworker.cpp` / `audiomixworker.cpp`：修复 `goto` 跨越带初始化器的变量声明
+- [x] `.vscode/tasks.json` 按 OS 拆分编译命令：Windows 仍为 `cmake --build build --config Debug`，Linux/WSL 改为 `cmake --build build-arm64`；配合全局 `keybindings.json` 绑定 **F7** 触发编译
+- [x] `deploy-arm64.sh`：一键 `scp` 二进制到板卡 `~/app/RambosPlayer/`，并生成 `run.sh`（设置 `LD_LIBRARY_PATH` 指向板卡 `~/ffmpeg_rkmpp/lib`，解决交叉编译 RUNPATH 写死本机路径的问题）
+- [x] 板卡补装 `libqt5multimedia5` / `libqt5multimedia5-plugins`（apt，版本 5.15.3-1，与板卡 Qt5.15.3 ABI 一致）
+
+**验收：** `build-arm64/RambosPlayer` 为合法 aarch64 ELF；`ldd` 在 `LD_LIBRARY_PATH=~/ffmpeg_rkmpp/lib` 下所有依赖均已解析；Windows MSVC 编译不受影响（所有改动均向后兼容或受 `CMAKE_CROSSCOMPILING`/`Q_OS_WIN` 宏隔离）。
+
+---
+
 ## 当前进度
 
 - [x] Phase 1 — 项目骨架
@@ -489,3 +508,4 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] Phase 10 — 视频剪辑器
 - [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
 - [x] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅ Task 3✅ Task 4✅ Task 5✅）
+- [x] Phase 13 — ARM64 (RK3588) 交叉编译与板卡部署

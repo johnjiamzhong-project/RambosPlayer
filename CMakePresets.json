@@ -14,6 +14,16 @@
         "CMAKE_TOOLCHAIN_FILE": "E:/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "CMAKE_PREFIX_PATH": "E:/Qt/Qt5.14.2/5.14.2/msvc2017_64"
       }
+    },
+    {
+      "name": "arm64",
+      "displayName": "ARM64 cross (aarch64-linux-gnu + ffmpeg_rkmpp)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-arm64",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain-aarch64-linux-gnu.cmake",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -28,6 +38,11 @@
       "displayName": "Release",
       "configurePreset": "default",
       "configuration": "Release"
+    },
+    {
+      "name": "arm64",
+      "displayName": "ARM64 Release",
+      "configurePreset": "arm64"
     }
   ]
 }

@@ -80,6 +80,7 @@ static bool execAudioConcat(const QStringList& inputs, const QString& output,
             << "default_audio_codec=" << avcodec_get_name(outCtx->oformat->audio_codec);
 
     // ── 编码器选择：根据输出格式匹配，fallback 链 ──
+    {
     const AVCodec* encCodec = nullptr;
     bool needExperimental = false;
     AVCodecID targetCid = outCtx->oformat->audio_codec;  // 输出格式默认音频编码
@@ -145,6 +146,7 @@ static bool execAudioConcat(const QStringList& inputs, const QString& output,
         goto done;
     }
     qInfo() << "[execAudioConcat]" << encCodec->name << "frame_size=" << aEncCtx->frame_size;
+    }
 
     // ── FIFO：桥接解码帧（MP3=1152）与编码帧（AAC=1024）──
     fifo = av_audio_fifo_alloc(aEncCtx->sample_fmt, outCh, aEncCtx->frame_size * 4);

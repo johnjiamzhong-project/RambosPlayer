@@ -72,6 +72,10 @@ void ExportWorker::run()
     int videoStreamIdx = -1, audioStreamIdx = -1;
     AVRational videoTimeBase = {1, 1}, audioTimeBase = {1, 1};
     AVRational frameRate = {30, 1};
+    AVBufferRef* hwDeviceCtx = nullptr;
+    int totalSegs = isBatch_ ? batchSegments_.size() : 1;
+    int64_t totalVideoFrames = 0;
+    bool allOk = true;
 
     // --- 打开输入文件 ---
     if (avformat_open_input(&inCtx, inputPath_.toUtf8().constData(), nullptr, nullptr) < 0) {
@@ -137,7 +141,6 @@ void ExportWorker::run()
     }
 
     // --- 硬件解码（CUDA/NVDEC）---
-    AVBufferRef* hwDeviceCtx = nullptr;
     if (av_hwdevice_ctx_create(&hwDeviceCtx, AV_HWDEVICE_TYPE_CUDA,
                                 nullptr, nullptr, 0) >= 0) {
         vDecCtx->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
@@ -159,10 +162,6 @@ void ExportWorker::run()
     // ====================================================================
     // 片段循环：每个片段独立创建输出 + 编码器 → seek → 编码 → 关闭
     // ====================================================================
-    int totalSegs = isBatch_ ? batchSegments_.size() : 1;
-    int64_t totalVideoFrames = 0;
-    bool allOk = true;
-
     for (int segIdx = 0; segIdx < totalSegs; segIdx++) {
         QString outPath;
         int64_t inPts, outPts;
@@ -238,6 +237,8 @@ bool ExportWorker::processSegment(
     AVPacket*        inPkt      = nullptr;
     AVPacket*        encPkt     = nullptr;
     bool ok = false;
+    int64_t audioFrameCount = 0;
+    int64_t lastProgressUs  = 0;
 
     AVFrame* hwTransferFrame = nullptr;  // P3 GPU→CPU 传输缓冲
 
@@ -354,9 +355,6 @@ bool ExportWorker::processSegment(
     // ================================================================
     // 主编码循环
     // ================================================================
-    int64_t audioFrameCount = 0;
-    int64_t lastProgressUs  = 0;
-
     while (!isInterruptionRequested()) {
         int ret = av_read_frame(inCtx, inPkt);
         if (ret < 0) {

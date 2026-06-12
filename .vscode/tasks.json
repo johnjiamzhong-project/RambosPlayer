@@ -13,7 +13,15 @@
                 "reveal": "always",
                 "panel": "shared"
             },
-            "problemMatcher": "$msCompile"
+            "problemMatcher": "$msCompile",
+            "windows": {
+                "command": "cmake --build build --config Debug",
+                "problemMatcher": "$msCompile"
+            },
+            "linux": {
+                "command": "cmake --build build-arm64",
+                "problemMatcher": "$gcc"
+            }
         }
     ]
 }

@@ -1,11 +1,11 @@
 #pragma once
 #include <QString>
 #include <libavutil/rational.h>
+#include <libavutil/pixfmt.h>
 
 struct AVFilterGraph;
 struct AVFilterContext;
 struct AVFrame;
-enum AVPixelFormat;
 
 // FilterGraph 封装 libavfilter 滤镜链，在 VideoDecodeThread 解码线程中使用。
 // 每帧解码后调用 process 过滤镜；滤镜参数变化时通过 rebuild 在线重建整条链。

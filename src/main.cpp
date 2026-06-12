@@ -10,16 +10,16 @@
 #pragma comment(lib, "dwmapi.lib")
 #endif
 
+#ifdef Q_OS_WIN
 // 设置 Windows 标题栏为暗色（Windows 10 1809+）
 static void setDarkTitleBar(HWND hwnd) {
-#ifdef Q_OS_WIN
     // Windows 10 20H1+ = 20, 1809-1909 = 19
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
     // 兼容旧版 Win10 (1809-1909)
     DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
-#endif
 }
+#endif
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -37,7 +37,9 @@ int main(int argc, char* argv[]) {
     Logger::install();          // 日志与崩溃处理器，在所有 UI 创建前启动
     MainWindow w;
     w.resize(960, 600);
+#ifdef Q_OS_WIN
     setDarkTitleBar(reinterpret_cast<HWND>(w.winId()));
+#endif
     w.show();
     int ret = app.exec();
     Logger::flush();            // 正常退出时刷新日志

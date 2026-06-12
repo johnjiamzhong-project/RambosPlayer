@@ -6,7 +6,7 @@
 
 ## 文档
 
-- 开发计划总览：[docs/DEVPLAN.md](docs/DEVPLAN.md)（Phase 1–12）
+- 开发计划总览：[docs/DEVPLAN.md](docs/DEVPLAN.md)（Phase 1–13）
 - 详细 TDD 计划（Phase 1–6）：[docs/superpowers/plans/2026-04-26-rambos-player-core.md](docs/superpowers/plans/2026-04-26-rambos-player-core.md)
 - 视频剪辑器增强计划（Phase 12）：[docs/superpowers/plans/2026-05-27-phase12-video-editor.md](docs/superpowers/plans/2026-05-27-phase12-video-editor.md)
 - 架构流程图：[docs/架构流程图.html](docs/架构流程图.html)
@@ -85,6 +85,25 @@
 | UI 框架 | Qt 5.14.2（`E:\Qt\Qt5.14.2\5.14.2\msvc2017_64`） |
 | FFmpeg | vcpkg，toolchain `E:\vcpkg\scripts\buildsystems\vcpkg.cmake` |
 | 编译器 | MSVC 2017 x64 |
+
+### ARM64 (RK3588) 交叉编译
+
+| 项目 | 版本 / 路径 |
+|------|-------------|
+| 构建系统 | CMake 3.16+，preset: `arm64`（Unix Makefiles，输出 `build-arm64/`） |
+| 工具链 | `cmake/toolchain-aarch64-linux-gnu.cmake`（`aarch64-linux-gnu-gcc/g++`） |
+| FFmpeg | 板卡 rootfs 拷贝 `~/sysroot/ffmpeg_rkmpp`（rkmpp 硬解），通过 `cmake/FindFFMPEG.cmake` 定位 |
+| 目标板卡 | Firefly ROC-RK3588S-PC（Ubuntu jammy aarch64，Qt 5.15.3） |
+
+```bash
+# 编译（WSL 内，或 VSCode 按 F7）
+cmake --build build-arm64
+
+# 部署到板卡（scp 二进制 + 生成 run.sh，设置 LD_LIBRARY_PATH）
+./deploy-arm64.sh
+```
+
+板卡需预装 `libqt5multimedia5` `libqt5multimedia5-plugins`（apt 安装，版本需与板卡 Qt 主版本一致）。
 
 ---
 
@@ -174,17 +193,20 @@ RambosPlayer/
 │   ├── tst_demuxthread.cpp
 │   └── data/sample.mp4         # 测试用 2 秒视频（ffmpeg 生成）
 ├── docs/
-│   ├── DEVPLAN.md              # 开发计划总览（Phase 1–12，含 Task 编号）
+│   ├── DEVPLAN.md              # 开发计划总览（Phase 1–13，含 Task 编号）
 │   ├── BUGFIX-LOG.md           # 计划外 Bug 修复记录
 │   ├── interview-claude-code-workflow.md  # Claude Code 工作流记录（需求→计划→执行全流程、架构决策与收益总结）
 │   ├── *.html                  # 架构流程图（可视化）
 │   └── superpowers/
 │       ├── plans/              # 逐步骤 TDD 执行计划（含完整代码）
 │       └── specs/              # 设计规格文档
-├── build/                      # CMake 构建输出（不纳入版本控制）
-├── logs/                       # 运行时日志（不纳入版本控制）
-├── CMakeLists.txt              # 主构建配置
-└── CMakePresets.json           # 构建预设（preset: default，VS2017 x64）
+├── cmake/                      # ARM64 交叉编译工具链 + FindFFMPEG 模块
+├── build/                       # CMake 构建输出（preset: default，不纳入版本控制）
+├── build-arm64/                 # CMake 构建输出（preset: arm64，不纳入版本控制）
+├── logs/                        # 运行时日志（不纳入版本控制）
+├── deploy-arm64.sh              # 一键部署到 RK3588 板卡
+├── CMakeLists.txt               # 主构建配置
+└── CMakePresets.json            # 构建预设（default: VS2017 x64；arm64: 交叉编译）
 ```
 
 ---

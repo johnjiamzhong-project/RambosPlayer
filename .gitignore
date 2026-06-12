@@ -1,4 +1,5 @@
 build/
+build-arm64/
 bin/
 build_qmake/
 logs/

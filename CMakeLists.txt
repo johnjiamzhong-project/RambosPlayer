@@ -8,6 +8,12 @@ if(MSVC)
     add_compile_options(/utf-8 /FS)
 endif()
 
+# 交叉编译（ARM64）时使用项目自带的 FindFFMPEG.cmake，
+# 因为目标 sysroot 下 FFmpeg 的 pkgconfig prefix 路径在本机不存在
+if(CMAKE_CROSSCOMPILING)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+endif()
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
@@ -71,6 +77,16 @@ target_link_libraries(RambosPlayer PRIVATE
 
 if(WIN32)
     target_link_libraries(RambosPlayer PRIVATE dbghelp)
+endif()
+
+if(CMAKE_CROSSCOMPILING)
+    # FFmpeg(rkmpp) 依赖 librockchip_mpp（来自板卡 sysroot）；
+    # libva* 等 VAAPI 库本机没有，运行时由板卡 rootfs 提供，链接期忽略其未解析符号
+    target_link_directories(RambosPlayer PRIVATE "${SYSROOT_DIR}/usr/lib/aarch64-linux-gnu")
+    target_link_options(RambosPlayer PRIVATE
+        "-Wl,--allow-shlib-undefined"
+        "-Wl,--unresolved-symbols=ignore-in-shared-libs"
+    )
 endif()
 
 enable_testing()

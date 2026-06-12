@@ -494,6 +494,8 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
     AVFormatContext* outCtx    = nullptr;
     AVPacket*        pkt       = nullptr;
     bool ok = false;
+    int videoStreamIdx = -1;
+    int audioStreamIdx = -1;
 
     // 打开源视频（取视频流）
     if (avformat_open_input(&videoCtx, task_.originalVideoPath.toUtf8().constData(),
@@ -501,7 +503,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
         emit errorOccurred("封装：无法打开源视频"); goto done;
     }
     avformat_find_stream_info(videoCtx, nullptr);
-    int videoStreamIdx = av_find_best_stream(videoCtx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    videoStreamIdx = av_find_best_stream(videoCtx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (videoStreamIdx < 0) { emit errorOccurred("封装：源视频无视频流"); goto done; }
     qInfo() << "AudioMixWorker: 源视频流 idx=" << videoStreamIdx;
 
@@ -511,7 +513,7 @@ bool AudioMixWorker::execMuxFinal(const QString& tempAacPath)
         emit errorOccurred("封装：无法打开临时音频"); goto done;
     }
     avformat_find_stream_info(audioCtx, nullptr);
-    int audioStreamIdx = av_find_best_stream(audioCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    audioStreamIdx = av_find_best_stream(audioCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     if (audioStreamIdx < 0) {
         qWarning() << "AudioMixWorker::execMuxFinal 错误: 临时音频文件中找不到音频流!";
         emit errorOccurred("封装：临时音频无音频流"); goto done;

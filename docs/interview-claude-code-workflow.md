@@ -645,3 +645,51 @@ ThumbnailExtractor (QThread)         Timeline (QWidget)
 4. **缩略图 PTS 比较不可靠**：seek 后 frame->pts 可能为 AV_NOPTS_VALUE，PTS 比较永远失败 → 零张缩略图。移除 PTS 比较，seek 后解码到的第一帧直接用。
 
 **端对端验证**：拖拽剪辑点 → 导出，画面流畅无卡顿，时长与选区一致。
+
+---
+
+#### 12. ARM64 (RK3588) 交叉编译适配（Phase 13）
+
+**问题**：同一份 MSVC（Windows）下编译通过的代码，如何在不破坏 Windows 构建的前提下，让 WSL 内 `aarch64-linux-gnu-g++` 交叉编译也通过？
+
+**核心设计**：
+
+```
+CMakePresets.json
+  ├─ default（VS2017 x64 + vcpkg）  ── Windows 原生
+  └─ arm64（Unix Makefiles）         ── WSL 交叉编译
+        │
+        ▼
+  cmake/toolchain-aarch64-linux-gnu.cmake
+        │ CMAKE_FIND_ROOT_PATH_MODE_* = ONLY
+        ▼
+  cmake/FindFFMPEG.cmake（FFMPEG_ROOT 直接 find_path/find_library，绕开 pkg-config prefix 不匹配）
+        │
+        ▼
+  build-arm64/RambosPlayer（aarch64 ELF）
+        │ deploy-arm64.sh（scp + run.sh）
+        ▼
+  Firefly ROC-RK3588S-PC（LD_LIBRARY_PATH=~/ffmpeg_rkmpp/lib）
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **共享同一套源码** | 用 `CMAKE_CROSSCOMPILING` / `Q_OS_WIN` 宏隔离平台差异，不拆分代码分支 | 两个平台始终编译同一套源码，避免维护两份逻辑产生分叉 |
+| **FFmpeg 查找方式** | 自定义 `FindFFMPEG.cmake` 直接 `find_path`/`find_library`，不用 pkg-config | 板卡 rootfs 拷贝下 `.pc` 文件里的 prefix 指向板卡路径（`/home/firefly/...`），本机不存在，pkg-config 必然失败 |
+| **VSCode 任务跨平台** | `tasks.json` 用 `windows`/`linux` 字段覆盖 `command`，而非拆两份 tasks.json | 同一个 `.vscode/tasks.json` 被 git 共享给 Windows 原生窗口和 WSL 窗口，OS 覆盖是 VSCode 原生支持的写法 |
+| **F7 编译快捷键** | 全局 `keybindings.json` 绑定 `F7 → workbench.action.tasks.build`，而非改 tasks 默认触发方式 | VSCode 默认无 F7 绑定（Ctrl+Shift+B 才是），照搬 Visual Studio 习惯需要显式键绑定 |
+| **板卡部署方式** | `deploy-arm64.sh` 生成 `run.sh` wrapper 设置 `LD_LIBRARY_PATH`，而非用 `patchelf` 改 RPATH | 本机未装 `patchelf`；wrapper 方案零依赖、可读性更好，且换板卡路径只需改一行 |
+
+**踩坑记录**（均为 MSVC 宽松、GCC 严格导致）：
+
+1. **`enum AVPixelFormat;` 前向声明**：C++ 标准下无固定底层类型的无作用域枚举不可前向声明，MSVC 不检查但 GCC 11 报 `underlying type mismatch`。改为 `#include <libavutil/pixfmt.h>`（纯枚举+宏，无需 `extern "C"`）。
+
+2. **`goto` 跨越带初始化器的局部变量**：`exportworker.cpp`/`mergeworker.cpp`/`audiomixworker.cpp` 中 `goto done` 跳过了 `int videoStreamIdx = ...` 这类带初始化器的声明，MSVC 放行、GCC 报 `crosses initialization of`。修复：将声明提到函数顶部仅声明不初始化，或用 `{ }` 给局部变量整体限定作用域使其在 `goto` 目标处已脱离作用域。
+
+3. **Windows 专属代码未加宏保护**：`main.cpp` 中 `setDarkTitleBar(HWND hwnd)` 函数签名本身含 `HWND` 类型，仅函数体内逻辑包了 `#ifdef Q_OS_WIN`，GCC 下 `HWND` 未声明直接报错。修复：把整个函数定义和调用都移入 `#ifdef Q_OS_WIN`。
+
+4. **运行时找不到 `libQt5Multimedia.so.5` / `libavformat.so.62`**：前者是板卡未装 Qt Multimedia 模块（`apt install libqt5multimedia5`）；后者是交叉编译产物 RUNPATH 写死本机 sysroot 路径，板卡上不存在且 `.so.62` 未注册到 `ldconfig`，靠 `run.sh` 的 `LD_LIBRARY_PATH` 兜底。
+
+**端对端验证**：`build-arm64/RambosPlayer` 为合法 aarch64 PIE ELF；`ldd`（带 `LD_LIBRARY_PATH`）所有依赖均解析成功；Windows 端 `git diff` 逐项确认改动均被 `CMAKE_CROSSCOMPILING`/`Q_OS_WIN` 隔离或为语义等价的合法 C++，不影响 MSVC 构建。

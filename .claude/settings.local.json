@@ -110,7 +110,25 @@
       "Bash(xargs wc -l)",
       "Bash(claude *)",
       "PowerShell(Select-String -Path \"G:\\\\source\\\\vscode\\\\ffmpeg_pro\\\\stage5\\\\RambosPlayer\\\\src\\\\exportworker.cpp\" -Pattern \"videoFrameCount\" | ForEach-Object { \"$\\($_.LineNumber\\): $\\($_.Line.Trim\\(\\)\\)\" })",
-      "Bash(dir *)"
+      "Bash(dir *)",
+      "Read(//home/rambos/sysroot/**)",
+      "Bash(aarch64-linux-gnu-gcc --version)",
+      "Bash(find / -maxdepth 8 -ipath \"*Qt5Core/Qt5CoreConfig.cmake\")",
+      "Bash(find / -maxdepth 8 -iname \"qmake\" -type f)",
+      "Read(//home/rambos/**)",
+      "Bash(dpkg --print-foreign-architectures)",
+      "Read(//usr/lib/aarch64-linux-gnu/cmake/**)",
+      "Bash(dpkg -l)",
+      "Read(//usr/share/cmake-3.22/Modules/**)",
+      "Bash(mkdir -p /home/rambos/arm_test/RambosPlayer/cmake)",
+      "Bash(aarch64-linux-gnu-readelf -d build-arm64/RambosPlayer)",
+      "Bash(find / -maxdepth 4 -iname \"qemu-aarch64*\")",
+      "Bash(apt-cache policy *)",
+      "Bash(ssh -o ConnectTimeout=3 -o BatchMode=yes firefly@192.168.1.200 \"echo ok; uname -m; ls ~/app/ 2>/dev/null\")",
+      "Bash(ssh *)",
+      "Bash(chmod +x deploy-arm64.sh)",
+      "Bash(./deploy-arm64.sh)",
+      "Bash(xargs stat -c '%Y %y %n')"
     ]
   }
 }
