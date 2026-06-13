@@ -15,12 +15,29 @@ VideoDecodeThread::~VideoDecodeThread() {
 }
 
 // 根据 codec_id 查找并打开解码器，同时以直通模式初始化 FilterGraph。
-// 若 hwEnabled 为 true，先尝试创建 D3D11VA 硬解设备并绑定到解码上下文；
-// 创建失败或绑定失败时静默回退到软解（qWarning 记日志）。
+// 若 hwEnabled 为 true：Windows 下尝试创建 D3D11VA 硬解设备并绑定到解码上下文；
+// Linux/ARM 下按 codec_id 直接选用 h264_rkmpp/hevc_rkmpp（codec-level 硬解，无需 hw_device_ctx）。
+// 硬解不可用或创建/绑定失败时静默回退到软解（qWarning 记日志）。
 bool VideoDecodeThread::init(AVCodecParameters* params, bool hwEnabled) {
     abort_.store(false, std::memory_order_relaxed);
 
-    const AVCodec* codec = avcodec_find_decoder(params->codec_id);
+    const AVCodec* codec = nullptr;
+
+#ifndef _WIN32
+    // Linux/ARM：RKMPP 是 codec-level 硬解，直接按 codec_id 换用 *_rkmpp 解码器即可，
+    // 不需要也不能设置 hw_device_ctx。
+    if (hwEnabled) {
+        const char* rkmppName = nullptr;
+        if (params->codec_id == AV_CODEC_ID_H264)      rkmppName = "h264_rkmpp";
+        else if (params->codec_id == AV_CODEC_ID_HEVC) rkmppName = "hevc_rkmpp";
+        if (rkmppName) {
+            codec = avcodec_find_decoder_by_name(rkmppName);
+            if (codec) hwAccel_ = true;
+            else qWarning() << "VideoDecodeThread:" << rkmppName << "不可用，回退软解";
+        }
+    }
+#endif
+    if (!codec) codec = avcodec_find_decoder(params->codec_id);
     if (!codec) return false;
     codecCtx_ = avcodec_alloc_context3(codec);
     if (!codecCtx_) return false;
@@ -30,6 +47,7 @@ bool VideoDecodeThread::init(AVCodecParameters* params, bool hwEnabled) {
     if (params->width > 0 && params->height > 0)
         timeBase_ = {1, 25};  // 默认值，后续由 PlayerController 覆盖
 
+#ifdef _WIN32
     // 尝试 D3D11VA 硬件加速
     if (hwEnabled) {
         HWAccel hw;
@@ -40,10 +58,12 @@ bool VideoDecodeThread::init(AVCodecParameters* params, bool hwEnabled) {
             qWarning() << "VideoDecodeThread: D3D11VA 设备创建失败，回退软解";
         }
     }
+#endif
 
     // 初始化滤镜图为直通模式，后续由 rebuild 按需激活。
-    // 硬解时 codecCtx_->pix_fmt = AV_PIX_FMT_D3D11，但帧经 av_hwframe_transfer_data
-    // 后为 NV12（D3D11VA 通用软解输出），必须用软解格式初始化 buffersrc，否则送帧时崩溃。
+    // 硬解时解码输出为硬件帧（D3D11VA 为 AV_PIX_FMT_D3D11，RKMPP 为 AV_PIX_FMT_DRM_PRIME），
+    // 经 av_hwframe_transfer_data 后落地为 NV12（两者通用软解输出），
+    // 必须用软解格式初始化 buffersrc，否则送帧时崩溃。
     AVPixelFormat filterFmt = hwAccel_ ? AV_PIX_FMT_NV12 : codecCtx_->pix_fmt;
     swFmt_ = AV_PIX_FMT_NONE;  // 重置，等首帧后由 run() 更新
     filterGraph_.init(codecCtx_->width, codecCtx_->height,
@@ -179,14 +199,16 @@ void VideoDecodeThread::run() {
             }
             AVFrame* src = frame;
             AVFrame* swTmp = nullptr;
-            if (hwAccel_ && frame->format == AV_PIX_FMT_D3D11) {
+            // D3D11VA 输出 AV_PIX_FMT_D3D11，RKMPP 输出 AV_PIX_FMT_DRM_PRIME，
+            // 二者均为硬件帧，需经 av_hwframe_transfer_data 落地为软解帧才能送入滤镜/渲染。
+            if (hwAccel_ && (frame->format == AV_PIX_FMT_D3D11 || frame->format == AV_PIX_FMT_DRM_PRIME)) {
                 swTmp = av_frame_alloc();
                 if (av_hwframe_transfer_data(swTmp, frame, 0) >= 0) {
                     swTmp->pts     = frame->pts;
                     swTmp->pkt_dts = frame->pkt_dts;
                     src = swTmp;
 
-                    // 首帧转换后确认实际软解格式（D3D11VA 通常为 NV12，10-bit 内容为 P010）。
+                    // 首帧转换后确认实际软解格式（D3D11VA/RKMPP 通常为 NV12，10-bit 内容为 P010）。
                     // 若与滤镜初始化时假定的格式不符，更新格式并触发重建，避免送帧崩溃。
                     if (swFmt_ == AV_PIX_FMT_NONE) {
                         swFmt_ = (AVPixelFormat)swTmp->format;

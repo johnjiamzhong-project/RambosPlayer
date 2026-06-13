@@ -55,7 +55,7 @@ private:
     // FLV muxer
     bool initMuxer();
     void cleanupMuxer();
-    static int writeCallback(void* opaque, const uint8_t* buf, int size);
+    static int writeCallback(void* opaque, uint8_t* buf, int size);
     void broadcastData(const QByteArray& data);
     void processPackets();
 

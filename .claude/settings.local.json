@@ -128,7 +128,17 @@
       "Bash(ssh *)",
       "Bash(chmod +x deploy-arm64.sh)",
       "Bash(./deploy-arm64.sh)",
-      "Bash(xargs stat -c '%Y %y %n')"
+      "Bash(xargs stat -c '%Y %y %n')",
+      "Bash(ldd build-arm64/RambosPlayer)",
+      "Bash(readelf -d build-arm64/RambosPlayer)",
+      "Read(//etc/**)",
+      "Read(//mnt/wsl/**)",
+      "Bash(env)",
+      "Bash(curl -sS -m 5 -o /dev/null -w \"HTTP %{http_code}, time %{time_total}s\\\\n\" https://api.anthropic.com)",
+      "Bash(curl -sS -m 5 -o /dev/null -w \"HTTP %{http_code}, time %{time_total}s\\\\n\" --noproxy '*' https://api.anthropic.com)",
+      "Bash(env -i bash -lc 'env | grep -i proxy')",
+      "Bash(bash -lic 'env | grep -i proxy')",
+      "Bash(bash *)"
     ]
   }
 }
