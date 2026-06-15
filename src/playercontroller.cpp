@@ -3,6 +3,7 @@
 #include "logger.h"
 #include <QDebug>
 #include <QTimer>
+#include <QThread>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -15,19 +16,48 @@ PlayerController::PlayerController(VideoRenderer* renderer, QObject* parent)
     posTimer_->setInterval(100);
     connect(posTimer_, &QTimer::timeout, this, &PlayerController::updatePosition);
     connect(&demux_, &DemuxThread::finished, this, &PlayerController::onDemuxFinished);
+    connect(&demux_, &DemuxThread::networkStateChanged, this, &PlayerController::networkStateChanged);
+    connect(&demux_, &DemuxThread::statsUpdated, this, &PlayerController::statsUpdated);
 }
 
 // 析构函数：停止所有线程后销毁。
 PlayerController::~PlayerController() { stop(); }
 
-// 打开媒体文件：重置所有状态，依次初始化解复用、解码线程和渲染器。
-// 从 formatContext() 读取实际流参数（宽高、时间基、codec），传给各组件。
-bool PlayerController::open(const QString& path) {
+// 异步打开媒体文件/网络流：重置所有状态，在独立 worker 线程探测
+// （avformat_open_input + avformat_find_stream_info），避免网络流 DNS/握手
+// 耗时阻塞 UI 线程。探测完成后回到主线程通过 onProbeFinished 接管结果。
+void PlayerController::open(const QString& path) {
     stop();
     videoPacketQ_.reset(); audioPacketQ_.reset(); videoFrameQ_.reset();
 
-    if (!demux_.open(path, &videoPacketQ_, &audioPacketQ_))
-        return false;
+    ++probeGeneration_;
+    int gen = probeGeneration_;
+    auto result = std::make_shared<DemuxThread::ProbeResult>();
+
+    QThread* worker = QThread::create([path, result]{
+        *result = DemuxThread::probeOpen(path);
+    });
+    connect(worker, &QThread::finished, this, [this, worker, result, gen]{
+        worker->deleteLater();
+        onProbeFinished(result, gen);
+    });
+    worker->start();
+}
+
+// probeOpen() 完成回调（已在主线程，QThread::finished 跨线程信号自动排队）。
+// gen 与 probeGeneration_ 不一致说明本次结果已被后续 open() 取代，仅释放资源后返回。
+// 探测成功后 adopt() 接管 fmtCtx_，再初始化解码器/渲染器，最终发出 openResult。
+void PlayerController::onProbeFinished(std::shared_ptr<DemuxThread::ProbeResult> r, int gen) {
+    if (gen != probeGeneration_) {
+        if (r->ok) avformat_close_input(&r->fmtCtx);
+        return;
+    }
+    if (!r->ok) {
+        emit openResult(false);
+        return;
+    }
+
+    demux_.adopt(*r, &videoPacketQ_, &audioPacketQ_);
 
     AVFormatContext* fmt = demux_.formatContext();  // 拿到已打开的 AVFormatContext，后续从中取流参数
     int vi = demux_.videoStreamIdx();               // 视频流索引，-1 表示文件无视频流
@@ -36,7 +66,7 @@ bool PlayerController::open(const QString& path) {
     if (vi >= 0) {
         AVCodecParameters* vp = fmt->streams[vi]->codecpar;    // 视频流的编解码参数（分辨率、codec id 等）
         AVRational vtb = fmt->streams[vi]->time_base;          // 视频流时间基，pts 单位换算用
-        if (!videoDec_.init(vp, hwAccelEnabled_)) return false;                  // 打开视频解码器，失败则整体 open 失败
+        if (!videoDec_.init(vp, hwAccelEnabled_)) { stop(); emit openResult(false); return; } // 打开视频解码器，失败则整体 open 失败
         videoDec_.setInputQueue(&videoPacketQ_);                // 解码线程从这条队列取包
         videoDec_.setOutputQueue(&videoFrameQ_);                // 解码线程把解码帧推入这条队列
         renderer_->init(vp->width, vp->height, vtb, &sync_, &videoFrameQ_); // 渲染器绑定分辨率、时钟和帧队列
@@ -44,13 +74,13 @@ bool PlayerController::open(const QString& path) {
     if (ai >= 0) {
         AVCodecParameters* ap = fmt->streams[ai]->codecpar;    // 音频流的编解码参数（采样率、声道数等）
         AVRational atb = fmt->streams[ai]->time_base;          // 音频流时间基，用于 pts → 秒换算
-        if (!audioDec_.init(ap, atb, &sync_)) return false;    // 打开音频解码器并初始化 swr + QAudioOutput
+        if (!audioDec_.init(ap, atb, &sync_)) { stop(); emit openResult(false); return; } // 打开音频解码器并初始化 swr + QAudioOutput
         audioDec_.setInputQueue(&audioPacketQ_);                // 音频解码线程从这条队列取包
     }
 
     emit durationChanged(duration());  // 通知 UI 文件时长已确定（毫秒）
     qInfo() << "PlayerController::open ok duration=" << duration() << "ms";
-    return true;
+    emit openResult(true);
 }
 
 // 启动播放：若线程已在运行（暂停状态），只需解除 paused_ 标志；

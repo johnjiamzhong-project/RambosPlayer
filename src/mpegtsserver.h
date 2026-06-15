@@ -17,6 +17,15 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
+// FFmpeg 7.0（avformat 61）起 avio_alloc_context 的 write_packet 回调缓冲区
+// 参数改为 const uint8_t*；ARM64 板卡使用的旧版 FFmpeg 仍为非 const。
+// 用此别名让 writeCallback 签名随编译时链接的 FFmpeg 版本自适应。
+#if LIBAVFORMAT_VERSION_MAJOR >= 61
+using AvioBuf = const uint8_t;
+#else
+using AvioBuf = uint8_t;
+#endif
+
 class MpegTsServer : public QThread {
     Q_OBJECT
 public:
@@ -56,7 +65,7 @@ private:
     // MPEG-TS muxer
     bool initMuxer();
     void cleanupMuxer();
-    static int writeCallback(void* opaque, uint8_t* buf, int size);
+    static int writeCallback(void* opaque, AvioBuf* buf, int size);
     void broadcastData(const QByteArray& data);
     void processPackets();
 

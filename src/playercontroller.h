@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <atomic>
+#include <memory>
 #include "framequeue.h"
 #include "avsync.h"
 #include "demuxthread.h"
@@ -27,7 +28,8 @@ public:
     explicit PlayerController(VideoRenderer* renderer, QObject* parent = nullptr);
     ~PlayerController() override;
 
-    bool open(const QString& path);
+    // 异步打开媒体文件/网络流：探测在 worker 线程进行，完成后发出 openResult(bool) 信号。
+    void open(const QString& path);
     void play();
     void pause();
     void stop();
@@ -77,10 +79,18 @@ signals:
     void positionChanged(int64_t ms);   // 100ms 间隔
     void playbackFinished();
     void playingChanged(bool playing);   // 播放/暂停状态变化
+    // 拉流网络连接状态变化（DemuxThread::NetworkState 的 int 表示），转发给 UI 状态栏
+    void networkStateChanged(int state);
+    // 拉流码率（kbps）/ 视频帧率（fps）统计，转发给 UI 状态栏
+    void statsUpdated(int kbps, double fps);
+    // open() 异步探测完成：ok=true 表示流参数已就绪（duration/解码器均已初始化）
+    void openResult(bool ok);
 
 private slots:
     void onDemuxFinished();
     void updatePosition();
+    // probeOpen() worker 线程完成回调：gen 用于丢弃被新 open() 取代的过期结果
+    void onProbeFinished(std::shared_ptr<DemuxThread::ProbeResult> r, int gen);
 
 private:
     VideoRenderer* renderer_;                       // 视频渲染组件，由外部传入，不拥有所有权
@@ -99,6 +109,7 @@ private:
     bool hwAccelEnabled_ = true;                    // 硬件加速开关，默认启用
     float volume_ = 1.0f;                          // 当前音量（0.0–1.0）
     double lastPositionSec_ = -1.0;                 // 上次位置（秒），用于检测跳变
+    int probeGeneration_ = 0;                       // open() 调用计数，丢弃过期的异步探测结果
 
     void stopAllThreads();
 };

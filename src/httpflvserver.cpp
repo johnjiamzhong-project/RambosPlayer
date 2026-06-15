@@ -113,7 +113,7 @@ void HttpFlvServer::cleanupMuxer() {
 
 // FFmpeg 写数据回调：追加 FLV 头缓冲 + 广播给所有客户端
 // headerFrozen_ 后同步维护 currentGopBytes_；newGopStarting_ 为 true 时先清空再追加
-int HttpFlvServer::writeCallback(void* opaque, uint8_t* buf, int size) {
+int HttpFlvServer::writeCallback(void* opaque, AvioBuf* buf, int size) {
     auto* self = static_cast<HttpFlvServer*>(opaque);
     QByteArray data(reinterpret_cast<const char*>(buf), size);
     if (!self->headerFrozen_) {

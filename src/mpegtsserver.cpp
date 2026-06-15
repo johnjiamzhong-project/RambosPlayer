@@ -115,7 +115,7 @@ void MpegTsServer::cleanupMuxer() {
 }
 
 // FFmpeg 写数据回调：写入前收集到 headerBytes_/segmentBytes_，并广播给所有客户端
-int MpegTsServer::writeCallback(void* opaque, uint8_t* buf, int size) {
+int MpegTsServer::writeCallback(void* opaque, AvioBuf* buf, int size) {
     auto* self = static_cast<MpegTsServer*>(opaque);
     QByteArray data(reinterpret_cast<const char*>(buf), size);
 

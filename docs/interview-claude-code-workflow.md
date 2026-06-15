@@ -693,3 +693,58 @@ CMakePresets.json
 4. **运行时找不到 `libQt5Multimedia.so.5` / `libavformat.so.62`**：前者是板卡未装 Qt Multimedia 模块（`apt install libqt5multimedia5`）；后者是交叉编译产物 RUNPATH 写死本机 sysroot 路径，板卡上不存在且 `.so.62` 未注册到 `ldconfig`，靠 `run.sh` 的 `LD_LIBRARY_PATH` 兜底。
 
 **端对端验证**：`build-arm64/RambosPlayer` 为合法 aarch64 PIE ELF；`ldd`（带 `LD_LIBRARY_PATH`）所有依赖均解析成功；Windows 端 `git diff` 逐项确认改动均被 `CMAKE_CROSSCOMPILING`/`Q_OS_WIN` 隔离或为语义等价的合法 C++，不影响 MSVC 构建。
+
+---
+
+#### 13. 拉流播放：异步探测 + 自动重连 + 实时统计（Phase 14）
+
+**问题**：如何让播放器支持 RTMP/RTSP/HTTP-FLV/SRT 网络流拉取播放，同时避免 `avformat_open_input` 网络握手阻塞 UI 线程？
+
+**核心设计**：
+
+```
+MainWindow (streamBar: URL 输入 + 连接按钮)
+    │ url + connectStreamBtn::clicked
+    ▼
+PlayerController::open(url)
+    │ QThread::create → DemuxThread::probeOpen(url)  ← 静态方法，worker 线程
+    │ QThread::finished → onProbeFinished(result, gen)
+    ▼
+DemuxThread::adopt(fmtCtx, videoQ, audioQ)  ← 主线程接管
+    │ start() → run()
+    ▼
+av_read_frame 循环
+    ├─ 正常分发 → videoQueue / audioQueue
+    ├─ EOF/error + isNetwork_ → reconnect() (2s 间隔重试)
+    └─ 1s 窗口统计 → emit statsUpdated(kbps, fps)
+```
+
+**设计决策解释**：
+
+| 决策项 | 选择 | 理由 |
+|--------|------|------|
+| **探测方式** | `probeOpen()` 为纯静态方法，不访问 this | 可在任意 worker 线程调用，避免 `avformat_open_input` + `avformat_find_stream_info` 网络握手阻塞 UI（DNS 解析 + TCP 握手可能耗时数秒） |
+| **异步回调** | `QThread::create` + `finished` 信号 + `probeGeneration_` 计数器 | `open()` 返回 void，结果通过 `openResult(bool)` 信号异步通知；连续快速调用 open() 时，gen 不匹配的过期结果被丢弃（释放 fmtCtx），避免竞态 |
+| **重连策略** | 2 秒间隔循环重试，分段 sleep（100ms 步进）检查 abort | 用户点"断开"可立即退出重连循环；emit `Reconnecting` 状态让 UI 显示"重连中..." |
+| **超时配置** | RTSP: `stimeout=5s`，HTTP: `rw_timeout=5s`，RTMP/SRT: 默认 | `buildNetworkOptions()` 按 URL scheme 自动构造 AVDictionary，避免 `avformat_open_input` 永久阻塞 |
+| **状态机** | `NetworkState` 枚举 (Disconnected/Connecting/Connected/Reconnecting) + Qt 信号链 | DemuxThread → PlayerController → MainWindow 三层转发，UI 状态栏实时更新 |
+| **统计方式** | 1 秒窗口累加 `pkt->size` 和视频包计数 | 码率 = bytes*8/elapsed，帧率 = videoFrames*1000/elapsed，emit `statsUpdated(kbps, fps)` |
+| **直播适配** | `duration=0` 时进度条禁用 + 显示 "LIVE" | 网络直播流无总时长，seek 无意义 |
+| **地址记忆** | QSettings 存储上次成功 URL，打开拉流面板自动回填 | 重复测试同一流地址时无需反复输入 |
+
+**关键接口变化**：
+
+| 接口 | 变化前 | 变化后 |
+|------|--------|--------|
+| `PlayerController::open()` | `bool open(path)` 同步返回 | `void open(path)` 异步，结果通过 `openResult(bool)` 信号 |
+| `DemuxThread::open()` | 直接打开 fmtCtx | 改为 `probeOpen()` 静态 + `adopt()` 主线程接管（保留同步便捷封装供测试用） |
+| `DemuxThread` 新增信号 | 无 | `networkStateChanged(int)` + `statsUpdated(int kbps, double fps)` |
+| `MainWindow` 新增 UI | 无 | `streamBar`（URL 输入 + 连接按钮 + 状态/码率/帧率标签）+ 工具菜单"拉流播放"开关 |
+
+**踩坑记录**：
+
+1. **`avformat_network_init()` 必须在 main() 中调用**：不调用则 RTMP/RTSP 协议的 `avformat_open_input` 返回 "Protocol not found"。与 `avformat_network_deinit()` 配对放在 `QApplication` 生命周期内。
+
+2. **FFmpeg 7.0 `writeCallback` 签名变化**：`avio_alloc_context` 的 `write_packet` 回调缓冲区参数从 `uint8_t*` 改为 `const uint8_t*`。用 `#if LIBAVFORMAT_VERSION_MAJOR >= 61` 条件编译 `AvioBuf` 类型别名，HttpFlvServer 和 MpegTsServer 共用。
+
+3. **异步 open 后 UI 状态竞态**：`openFile()` 和 `onConnectStreamClicked()` 都调用 `player_->open()`，但后续逻辑（播放/推流/缩略图提取）依赖探测结果。引入 `pendingOpenIsStream_` / `pendingOpenPath_` / `pendingAutoPlay_` 三个状态变量，在 `onPlayerOpenResult` 回调中区分来源执行不同收尾逻辑。

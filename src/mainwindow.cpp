@@ -251,6 +251,9 @@ MainWindow::MainWindow(QWidget* parent)
         int vol = s.value("volume", 80).toInt();
         ui->volumeSlider->setValue(vol);
         player_->setVolume(vol / 100.0f);
+
+        // 拉流地址回填：记住上次成功连接的地址，方便重复测试同一个流
+        ui->streamUrlEdit->setText(s.value("streamUrl").toString());
     }
 
     connect(ui->actionOpen,     &QAction::triggered,    this, &MainWindow::onOpenFile);
@@ -315,6 +318,13 @@ MainWindow::MainWindow(QWidget* parent)
     connect(ui->actionAudioMix,       &QAction::triggered, this, &MainWindow::onAudioMixTriggered);
     connect(ui->actionAbout,          &QAction::triggered, this, &MainWindow::onAbout);
 
+    // 拉流播放：URL 输入框 + 连接按钮 + 状态/码率/帧率标签
+    connect(ui->connectStreamBtn, &QPushButton::clicked, this, &MainWindow::onConnectStreamClicked);
+    connect(player_, &PlayerController::networkStateChanged, this, &MainWindow::onNetworkStateChanged);
+    connect(player_, &PlayerController::statsUpdated, this, &MainWindow::onStreamStatsUpdated);
+    connect(ui->actionPullStream, &QAction::toggled, this, &MainWindow::onPullStreamPanelToggled);
+    connect(player_, &PlayerController::openResult, this, &MainWindow::onPlayerOpenResult);
+
     rebuildRecentMenu();
 }
 
@@ -350,39 +360,19 @@ MainWindow::~MainWindow() {
 // 若剪辑模式已开启，自动提取缩略图；若有预配置推流目标，自动启动推流。
 void MainWindow::openFile(const QString& path, bool autoPlay) {
     player_->stop();
-    if (player_->open(path)) {
-        qInfo() << "MainWindow: opened" << path;
-        currentFile_ = path;
-        QString title = "RambosPlayer - " + QFileInfo(path).fileName();
-        setWindowTitle(title);
-        overlayTitleLabel_->setText(title);
-        updateRecentFiles(path);
-        // 有预配置推流目标时，在 play() 前先注册推流队列，
-        // 确保 DemuxThread 启动后首个关键帧即进入推流通道，避免漏等整个 GOP
-        if (!pendingDests_.isEmpty()) {
-            startStreaming(pendingDests_);
-            pendingDests_.clear();
-        }
-
-        if (autoPlay) {
-            player_->play();
-            // 播放成功后，根据实际状态更新按钮（避免状态不同步）
-            if (player_->isPlaying()) {
-                ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
-            } else {
-                ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
-            }
-        } else {
-            ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
-        }
-
-        // 剪辑模式下自动提取缩略图
-        if (trimDock_->isVisible())
-            thumbExtractor_->extract(path);
-
-        // 同步源视频路径到音频混合面板
-        audioMixPanel_->setSourceFile(path);
+    if (streamConnected_) {
+        streamConnected_ = false;
+        ui->connectStreamBtn->setText("连接");
+        ui->streamUrlEdit->setEnabled(true);
+        ui->netStatusLabel->setText("未连接");
+        ui->bitrateLabel->setText("-- kbps");
+        ui->fpsLabel->setText("-- fps");
     }
+    // open() 异步探测，结果通过 onPlayerOpenResult 回调处理（见下方 pendingOpen* 状态）
+    pendingOpenIsStream_ = false;
+    pendingOpenPath_ = path;
+    pendingAutoPlay_ = autoPlay;
+    player_->open(path);
 }
 
 // 打开文件对话框，起始目录从 QSettings 读取上次路径。
@@ -592,10 +582,17 @@ void MainWindow::onVolumeChanged(int value) {
 }
 
 // 收到文件时长后设置标签右半部分，进度条最大值固定 1000 无需更改。
+// 拉流播放（直播）时 duration 为 0，进度条禁用并显示 LIVE。
 void MainWindow::onDurationChanged(int64_t ms) {
     duration_ = ms;
-    ui->timeLabel->setText("00:00 / " + formatTime(ms));
-    if (trimDock_->isVisible())
+    if (ms <= 0) {
+        ui->progressSlider->setEnabled(false);
+        ui->timeLabel->setText("LIVE");
+    } else {
+        ui->progressSlider->setEnabled(true);
+        ui->timeLabel->setText("00:00 / " + formatTime(ms));
+    }
+    if (trimDock_->isVisible() && ms > 0)
         timeline_->setDuration(ms * 1000);
     updateProgressOverlay();
 }
@@ -1445,4 +1442,116 @@ void MainWindow::onAbout() {
     );
     dlg->setStandardButtons(QMessageBox::Ok);
     dlg->open();
+}
+
+// 拉流"连接/断开"按钮：未连接时按 URL 打开网络流并播放；已连接时停止播放并复位状态标签。
+void MainWindow::onConnectStreamClicked() {
+    if (streamConnected_) {
+        player_->stop();
+        streamConnected_ = false;
+        ui->connectStreamBtn->setText("连接");
+        ui->streamUrlEdit->setEnabled(true);
+        ui->netStatusLabel->setText("未连接");
+        ui->bitrateLabel->setText("-- kbps");
+        ui->fpsLabel->setText("-- fps");
+        ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+        return;
+    }
+
+    QString url = ui->streamUrlEdit->text().trimmed();
+    if (url.isEmpty()) {
+        QMessageBox::warning(this, "拉流播放", "请输入拉流地址（rtmp:// / rtsp:// / http://...flv）");
+        return;
+    }
+
+    // 记住本次拉流地址，下次打开拉流面板时自动回填
+    QSettings("RambosPlayer", "RambosPlayer").setValue("streamUrl", url);
+
+    player_->stop();
+    ui->netStatusLabel->setText("连接中...");
+    // open() 异步探测，避免网络握手阻塞 UI；结果通过 onPlayerOpenResult 回调处理
+    pendingOpenIsStream_ = true;
+    pendingOpenPath_ = url;
+    player_->open(url);
+}
+
+// DemuxThread::NetworkState 转发：更新拉流状态标签。
+void MainWindow::onNetworkStateChanged(int state) {
+    switch (static_cast<DemuxThread::NetworkState>(state)) {
+    case DemuxThread::NetworkState::Connected:    ui->netStatusLabel->setText("已连接"); break;
+    case DemuxThread::NetworkState::Reconnecting: ui->netStatusLabel->setText("重连中..."); break;
+    case DemuxThread::NetworkState::Disconnected: ui->netStatusLabel->setText("已断开"); break;
+    case DemuxThread::NetworkState::Connecting:   ui->netStatusLabel->setText("连接中..."); break;
+    }
+}
+
+// 拉流码率（kbps）/ 视频帧率（fps）刷新，约每秒一次。
+void MainWindow::onStreamStatsUpdated(int kbps, double fps) {
+    ui->bitrateLabel->setText(QString("%1 kbps").arg(kbps));
+    ui->fpsLabel->setText(QString("%1 fps").arg(fps, 0, 'f', 1));
+}
+
+// 工具菜单"拉流播放"勾选：显示/隐藏拉流控制栏（默认隐藏，节省主界面空间）。
+void MainWindow::onPullStreamPanelToggled(bool checked) {
+    ui->streamBar->setVisible(checked);
+}
+
+// PlayerController::open() 异步探测完成回调：根据 pendingOpenIsStream_ 区分
+// 本地文件（openFile）与拉流播放（onConnectStreamClicked）两条收尾逻辑。
+void MainWindow::onPlayerOpenResult(bool ok) {
+    if (pendingOpenIsStream_) {
+        if (!ok) {
+            ui->netStatusLabel->setText("连接失败");
+            QMessageBox::warning(this, "拉流播放", "打开网络流失败，请检查地址或网络连接");
+            return;
+        }
+
+        currentFile_.clear();
+        setWindowTitle("RambosPlayer - 拉流播放");
+        overlayTitleLabel_->setText("拉流播放");
+        player_->play();
+        ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+        streamConnected_ = true;
+        ui->connectStreamBtn->setText("断开");
+        ui->streamUrlEdit->setEnabled(false);
+        return;
+    }
+
+    const QString& path = pendingOpenPath_;
+    if (!ok) {
+        qWarning() << "MainWindow: open failed" << path;
+        return;
+    }
+
+    qInfo() << "MainWindow: opened" << path;
+    currentFile_ = path;
+    QString title = "RambosPlayer - " + QFileInfo(path).fileName();
+    setWindowTitle(title);
+    overlayTitleLabel_->setText(title);
+    updateRecentFiles(path);
+    // 有预配置推流目标时，在 play() 前先注册推流队列，
+    // 确保 DemuxThread 启动后首个关键帧即进入推流通道，避免漏等整个 GOP
+    if (!pendingDests_.isEmpty()) {
+        startStreaming(pendingDests_);
+        pendingDests_.clear();
+    }
+
+    if (pendingAutoPlay_) {
+        player_->play();
+        // 播放成功后，根据实际状态更新按钮（避免状态不同步）
+        if (player_->isPlaying()) {
+            ui->playPauseBtn->setIcon(QIcon(":/icons/pause.svg"));
+        } else {
+            ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+        }
+    } else {
+        ui->playPauseBtn->setIcon(QIcon(":/icons/play.svg"));
+    }
+
+    // 剪辑模式下自动提取缩略图
+    if (trimDock_->isVisible())
+        thumbExtractor_->extract(path);
+
+    // 同步源视频路径到音频混合面板
+    audioMixPanel_->setSourceFile(path);
 }

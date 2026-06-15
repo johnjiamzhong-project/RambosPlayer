@@ -4,6 +4,10 @@
 #include "logger.h"
 #include "mainwindow.h"
 
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
 #ifdef Q_OS_WIN
 #include <Windows.h>
 #include <dwmapi.h>
@@ -35,6 +39,7 @@ int main(int argc, char* argv[]) {
     }
 
     Logger::install();          // 日志与崩溃处理器，在所有 UI 创建前启动
+    avformat_network_init();    // 初始化网络协议（RTMP/RTSP/HTTP 拉流需要）
     MainWindow w;
     w.resize(960, 600);
 #ifdef Q_OS_WIN
@@ -42,6 +47,7 @@ int main(int argc, char* argv[]) {
 #endif
     w.show();
     int ret = app.exec();
+    avformat_network_deinit();  // 释放网络协议资源
     Logger::flush();            // 正常退出时刷新日志
     return ret;
 }

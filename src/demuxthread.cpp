@@ -11,6 +11,28 @@ extern "C" {
 
 #include <QtDebug>
 
+// 根据 URL scheme 判断是否为网络流，并构造对应协议的连接超时选项；
+// 调用方在 avformat_open_input 后需 av_dict_free(&opts) 释放未被消费的选项。
+static AVDictionary* buildNetworkOptions(const QString& url, bool& isNetwork) {
+    AVDictionary* opts = nullptr;
+    if (url.startsWith("rtsp://", Qt::CaseInsensitive)) {
+        isNetwork = true;
+        av_dict_set(&opts, "rtsp_transport", "tcp", 0);
+        av_dict_set(&opts, "stimeout", "5000000", 0);   // 5s，微秒（RTSP TCP 连接超时）
+    } else if (url.startsWith("http://", Qt::CaseInsensitive) ||
+               url.startsWith("https://", Qt::CaseInsensitive)) {
+        isNetwork = true;
+        av_dict_set(&opts, "rw_timeout", "5000000", 0); // 5s，微秒（HTTP/HTTP-FLV 读写超时）
+    } else if (url.startsWith("rtmp://", Qt::CaseInsensitive) ||
+               url.startsWith("rtmps://", Qt::CaseInsensitive) ||
+               url.startsWith("srt://", Qt::CaseInsensitive)) {
+        isNetwork = true;
+    } else {
+        isNetwork = false;
+    }
+    return opts;
+}
+
 // 先 stop() 通知线程退出，再 wait() 等线程结束，最后释放 AVFormatContext。
 // 顺序不能颠倒：必须确保 run() 不再访问 fmtCtx_ 后才能释放它。
 DemuxThread::~DemuxThread() {
@@ -19,49 +41,87 @@ DemuxThread::~DemuxThread() {
     if (fmtCtx_) avformat_close_input(&fmtCtx_);
 }
 
-// 打开媒体文件，探测流信息，记录第一条视频流和音频流的索引。
-// 任一步骤失败均返回 false，并确保 fmtCtx_ 已释放（调用方可直接析构）。
-bool DemuxThread::open(const QString& path,
-                        FrameQueue<AVPacket*>* videoQueue,
-                        FrameQueue<AVPacket*>* audioQueue) {
-    // 重置 abort_ 标志，允许 run() 在下次 start() 后正常循环
-    abort_.store(false, std::memory_order_relaxed);
-
-    // 关闭上一个文件，避免 avformat_open_input 在旧 AVFormatContext 上复用导致崩溃
-    //（例如播放中通过最近文件菜单切换视频时，fmtCtx_ 仍指向旧文件上下文）
-    if (fmtCtx_) { avformat_close_input(&fmtCtx_); }
-    videoIdx_ = -1;
-    audioIdx_ = -1;
+// 探测媒体文件/网络流：打开容器、读取流信息、记录第一条视频/音频流索引。
+// 静态方法，不访问 this 的任何成员，可在独立 worker 线程调用，避免
+// avformat_open_input/avformat_find_stream_info 阻塞 UI 线程（网络流 DNS/握手可能耗时数秒）。
+// 任一步骤失败均返回 ok=false，并确保探测过程中分配的 fmtCtx 已释放。
+DemuxThread::ProbeResult DemuxThread::probeOpen(const QString& path) {
+    ProbeResult r;
+    r.url = path;
 
     // 步骤1：打开容器文件，分配并填充 AVFormatContext（包含封装格式、I/O 缓冲等）
-    // path 转 UTF-8 是为了兼容中文路径；nullptr 表示自动探测格式和使用默认选项
-    if (avformat_open_input(&fmtCtx_,
-                            path.toUtf8().constData(),
-                            nullptr, nullptr) < 0)
-        return false;
+    // path 转 UTF-8 是为了兼容中文路径；网络流（rtmp/rtsp/http/srt）额外传超时选项，
+    // 避免连接失败时 avformat_open_input 永久阻塞
+    AVDictionary* opts = buildNetworkOptions(path, r.isNetwork);
+    int openRet = avformat_open_input(&r.fmtCtx, path.toUtf8().constData(), nullptr, &opts);
+    av_dict_free(&opts);
+    if (openRet < 0) {
+        char errbuf[64];
+        av_strerror(openRet, errbuf, sizeof(errbuf));
+        qWarning() << "DemuxThread::probeOpen: avformat_open_input failed for" << path
+                   << "error:" << errbuf;
+        return r;
+    }
 
     // 步骤2：读取若干帧数据，推断每条流的编解码参数（帧率、采样率等）
     // 部分格式（如 MPEG-TS）无法从文件头直接得到完整参数，必须靠此步骤补全
-    if (avformat_find_stream_info(fmtCtx_, nullptr) < 0) {
-        avformat_close_input(&fmtCtx_);  // 防止 fmtCtx_ 泄漏
-        return false;
+    int probeRet = avformat_find_stream_info(r.fmtCtx, nullptr);
+    if (probeRet < 0) {
+        char errbuf[64];
+        av_strerror(probeRet, errbuf, sizeof(errbuf));
+        qWarning() << "DemuxThread::probeOpen: avformat_find_stream_info failed for" << path
+                   << "error:" << errbuf;
+        avformat_close_input(&r.fmtCtx);  // 防止 fmtCtx 泄漏
+        return r;
     }
 
     // 步骤3：遍历所有流，记录第一条视频流和第一条音频流的索引
-    // 只取第一条是因为播放器不支持多视角/多音轨切换；videoIdx_/audioIdx_ 初值为 -1
-    for (unsigned i = 0; i < fmtCtx_->nb_streams; ++i) {
-        auto type = fmtCtx_->streams[i]->codecpar->codec_type;
-        if (type == AVMEDIA_TYPE_VIDEO && videoIdx_ < 0) videoIdx_ = (int)i;
-        if (type == AVMEDIA_TYPE_AUDIO && audioIdx_ < 0) audioIdx_ = (int)i;
+    // 只取第一条是因为播放器不支持多视角/多音轨切换；videoIdx/audioIdx 初值为 -1
+    for (unsigned i = 0; i < r.fmtCtx->nb_streams; ++i) {
+        auto type = r.fmtCtx->streams[i]->codecpar->codec_type;
+        if (type == AVMEDIA_TYPE_VIDEO && r.videoIdx < 0) r.videoIdx = (int)i;
+        if (type == AVMEDIA_TYPE_AUDIO && r.audioIdx < 0) r.audioIdx = (int)i;
     }
 
-    // 步骤4：保存总时长（单位 AV_TIME_BASE=1e6 微秒）和队列指针，供 run() 和外部查询使用
-    duration_   = fmtCtx_->duration;
+    r.duration = r.fmtCtx->duration;  // 总时长，单位 AV_TIME_BASE=1e6 微秒
+    r.ok = true;
+    return r;
+}
+
+// 在主线程接管 probeOpen() 的探测结果：关闭旧 fmtCtx_，写入流参数和队列指针。
+// 必须在主线程调用（操作 fmtCtx_ 等成员并发出 Qt 信号）。
+void DemuxThread::adopt(const ProbeResult& r,
+                         FrameQueue<AVPacket*>* videoQueue,
+                         FrameQueue<AVPacket*>* audioQueue) {
+    // 重置 abort_ 标志，允许 run() 在下次 start() 后正常循环
+    abort_.store(false, std::memory_order_relaxed);
+
+    // 关闭上一个文件，避免新 fmtCtx_ 覆盖时旧上下文泄漏
+    //（例如播放中通过最近文件菜单切换视频时，fmtCtx_ 仍指向旧文件上下文）
+    if (fmtCtx_) { avformat_close_input(&fmtCtx_); }
+
+    fmtCtx_     = r.fmtCtx;
+    videoIdx_   = r.videoIdx;
+    audioIdx_   = r.audioIdx;
+    duration_   = r.duration;
+    url_        = r.url;
+    isNetwork_  = r.isNetwork;
     videoQueue_ = videoQueue;
     audioQueue_ = audioQueue;
-    qInfo() << "DemuxThread::open ok" << path
+    qInfo() << "DemuxThread::open ok" << r.url
             << "duration=" << duration_ / AV_TIME_BASE << "s"
-            << "videoIdx=" << videoIdx_ << "audioIdx=" << audioIdx_;
+            << "videoIdx=" << videoIdx_ << "audioIdx=" << audioIdx_
+            << "isNetwork=" << isNetwork_;
+    if (isNetwork_) emit networkStateChanged(static_cast<int>(NetworkState::Connected));
+}
+
+// 同步便捷封装：probeOpen() 失败直接返回 false，成功则 adopt()。供单元测试使用。
+bool DemuxThread::open(const QString& path,
+                        FrameQueue<AVPacket*>* videoQueue,
+                        FrameQueue<AVPacket*>* audioQueue) {
+    ProbeResult r = probeOpen(path);
+    if (!r.ok) return false;
+    adopt(r, videoQueue, audioQueue);
     return true;
 }
 
@@ -207,23 +267,55 @@ void DemuxThread::run() {
     int64_t preTargetVideoCount = 0;     // 当前 seek 中已转发到网络推流队列的预目标视频帧数
     int64_t preTargetAudioDiscarded = 0; // 当前 seek 中丢弃的预目标音频帧数
 
+    statsBytes_ = 0;
+    statsVideoFrames_ = 0;
+    statsTimer_.start();
+
     while (!abort_.load(std::memory_order_relaxed)) {
         handleSeek();
 
         int ret = av_read_frame(fmtCtx_, pkt);
-        if (ret == AVERROR_EOF) {
-            qInfo() << "DemuxThread: EOF reached";
-            break;
-        }
-        if (ret < 0) {
-            char errbuf[64];
-            av_strerror(ret, errbuf, sizeof(errbuf));
-            qWarning() << "DemuxThread: av_read_frame error:" << errbuf;
+        if (ret == AVERROR_EOF || ret < 0) {
+            if (ret == AVERROR_EOF) {
+                qInfo() << "DemuxThread: EOF reached";
+            } else {
+                char errbuf[64];
+                av_strerror(ret, errbuf, sizeof(errbuf));
+                qWarning() << "DemuxThread: av_read_frame error:" << errbuf;
+            }
+
+            // 网络流（直播）读取中断不视为播放结束，尝试重连后继续读取；
+            // 本地文件 EOF/错误仍按原逻辑结束线程
+            if (isNetwork_ && !abort_.load(std::memory_order_relaxed)) {
+                if (reconnect()) {
+                    preTargetVideoCount = 0;
+                    preTargetAudioDiscarded = 0;
+                    statsBytes_ = 0;
+                    statsVideoFrames_ = 0;
+                    statsTimer_.restart();
+                    continue;
+                }
+            }
             break;
         }
 
         // 在 clone 前再次检查 abort_，减少 abort 时的 push-drop 泄漏窗口
         if (abort_.load(std::memory_order_relaxed)) break;
+
+        // 码率/帧率统计：累加字节数和视频包数，每满 1 秒发出一次 statsUpdated
+        statsBytes_ += pkt->size;
+        if (pkt->stream_index == videoIdx_) ++statsVideoFrames_;
+        {
+            qint64 elapsed = statsTimer_.elapsed();
+            if (elapsed >= 1000) {
+                int kbps = (int)(statsBytes_ * 8 / elapsed);
+                double fps = statsVideoFrames_ * 1000.0 / elapsed;
+                emit statsUpdated(kbps, fps);
+                statsBytes_ = 0;
+                statsVideoFrames_ = 0;
+                statsTimer_.restart();
+            }
+        }
 
         // 精确 seek 过滤（GOP 重叠方案 — 本地录制从关键帧起全量写入）：
         // - 音频包：独立 exactAudioTarget 过滤，网络推流丢弃目标前音频；
@@ -349,4 +441,45 @@ void DemuxThread::run() {
     }
 
     av_packet_free(&pkt);
+}
+
+// 网络流读取出错或断开时调用：关闭旧连接，按固定间隔反复尝试重新打开同一 URL，
+// 直到成功或 abort() 被调用（用户点击"断开"/stop()）。成功后重新探测流信息和流索引。
+// 返回 false 表示因 abort 放弃重连，run() 据此退出循环结束线程。
+bool DemuxThread::reconnect() {
+    emit networkStateChanged(static_cast<int>(NetworkState::Reconnecting));
+    if (fmtCtx_) avformat_close_input(&fmtCtx_);
+    videoIdx_ = -1;
+    audioIdx_ = -1;
+
+    constexpr int kRetryIntervalMs = 2000;
+    while (!abort_.load(std::memory_order_relaxed)) {
+        AVDictionary* opts = buildNetworkOptions(url_, isNetwork_);
+        int ret = avformat_open_input(&fmtCtx_, url_.toUtf8().constData(), nullptr, &opts);
+        av_dict_free(&opts);
+
+        if (ret == 0 && avformat_find_stream_info(fmtCtx_, nullptr) >= 0) {
+            for (unsigned i = 0; i < fmtCtx_->nb_streams; ++i) {
+                auto type = fmtCtx_->streams[i]->codecpar->codec_type;
+                if (type == AVMEDIA_TYPE_VIDEO && videoIdx_ < 0) videoIdx_ = (int)i;
+                if (type == AVMEDIA_TYPE_AUDIO && audioIdx_ < 0) audioIdx_ = (int)i;
+            }
+            duration_ = fmtCtx_->duration;
+            qInfo() << "DemuxThread: reconnect succeeded" << url_
+                    << "videoIdx=" << videoIdx_ << "audioIdx=" << audioIdx_;
+            emit networkStateChanged(static_cast<int>(NetworkState::Connected));
+            return true;
+        }
+
+        if (fmtCtx_) avformat_close_input(&fmtCtx_);
+        qWarning() << "DemuxThread: reconnect attempt failed, retry in" << kRetryIntervalMs << "ms";
+
+        // 等待重试间隔，期间分段检查 abort，便于用户点击"断开"后立即退出
+        for (int waited = 0; waited < kRetryIntervalMs && !abort_.load(std::memory_order_relaxed); waited += 100)
+            QThread::msleep(100);
+    }
+
+    qInfo() << "DemuxThread: reconnect aborted by stop()";
+    emit networkStateChanged(static_cast<int>(NetworkState::Disconnected));
+    return false;
 }

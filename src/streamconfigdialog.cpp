@@ -132,6 +132,11 @@ void StreamConfigDialog::buildUi() {
         "<span style='color:#888;font-size:11px;'>"
         "需将 flv.min.js 放到 exe 同目录（可从 SRS 安装目录 www/players/ 复制）"
         "</span>"));
+    httpLayout->addRow(new QLabel(
+        "<span style='color:#888;font-size:11px;'>"
+        "播放器间共享：将 http://IP:PORT/stream.flv 填入另一台 RambosPlayer 的"
+        "“拉流播放”地址栏，即可直接拉取本机推流，无需中转服务器"
+        "</span>"));
 
     connect(httpFlvPortSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, lanIp](int p){
         httpFlvHintLabel_->setText(QString("http://%1:%2/player.html").arg(lanIp).arg(p));

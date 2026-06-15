@@ -32,6 +32,7 @@
 | 功能7 — 低延迟推流（GPU 重编码 + mpegts.js） | ✅ 完成 |
 | 功能8 — 三模式剪切（浏览/多段）+ 视频合并 | ✅ 完成 |
 | 功能9 — 音频混合（本地音频 / 实时录入，可调比例叠加） | ✅ 完成 |
+| 功能10 — 拉流播放（RTMP/RTSP/HTTP-FLV/SRT 网络流拉取播放，断线自动重连） | ✅ 完成 |
 
 ---
 
@@ -73,6 +74,7 @@
 | 视频拼接 / 混流 | 菜单 → 合并（Ctrl+G），拖入多个文件，自动判断合并模式 |
 | 音频混合（本地音频） | 菜单 → 工具 → 音频混合 → 本地音频；选择音频文件，设定贴入时间（秒精度）和混合比例（源音量 + 新增音量 = 100%），支持多段叠加后统一导出 |
 | 音频混合（实时录入） | 菜单 → 工具 → 音频混合 → 实时录入；视频静音播放同时录制麦克风，录入结果与本地音频统一管理，可设比例和试播放 |
+| 拉流播放（拉取网络流） | 菜单 → 工具 → 拉流播放，显示拉流控制栏；输入 RTMP/RTSP/HTTP-FLV/SRT 地址点击"连接"，直播流进度条禁用并显示 LIVE，码率/帧率每秒刷新；网络中断自动重连（2 秒间隔），地址自动记忆回填。两台 RambosPlayer 之间可通过 HTTP-FLV 直接拉/推共享播放，无需中转服务器（见下方推流协议表） |
 
 ---
 
@@ -153,7 +155,7 @@ DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP
 |----------|----------|----------|
 | RTMP | `rtmp://127.0.0.1:1935/live/test` | 在线平台（Twitch/B站）或本地 SRS 服务器 |
 | SRT | `srt://:9000` | 局域网直连（平板/手机用 VLC 拉流），无需服务器 |
-| HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端；**仅支持 H.264 编码的视频**（MPEG-4 等格式不支持 FLV 容器） |
+| HTTP-FLV | 端口 8080（内置） | 局域网浏览器直接打开 `http://IP:8080/player.html`，无需安装任何客户端；**仅支持 H.264 编码的视频**（MPEG-4 等格式不支持 FLV 容器）。媒体流地址 `http://IP:8080/stream.flv` 也可直接填入另一台 RambosPlayer 的"拉流播放"地址栏，实现播放器间推流/拉流直连共享，无需 SRS/MediaMTX 中转 |
 | HTTP-MPEG-TS | 端口 8090（内置） | **低延迟模式**：GPU 重编码（h264_nvenc + AAC），GOP=0.5s，浏览器延迟 ≤ 600ms；需将 `mpegts.min.js` 放到 exe 同目录 |
 | 本地录制 | `C:/record.flv` | 录制当前播放内容到文件 |
 
@@ -165,11 +167,11 @@ DemuxThread ──→ StreamVideoDecoder ──→ EncodeThread (h264_nvenc, GOP
 |------|------|------|
 | `FrameQueue<T>` | `src/framequeue.h` | 线程安全有界阻塞队列，生产者满时阻塞，消费者空时按超时等待，`abort()` 解锁所有等待线程 |
 | `AVSync` | `src/avsync.h/.cpp` | 原子量存储音频时钟 PTS，`videoDelay(pts)` 返回视频帧应等待的毫秒数；落后超过 400 ms 返回 0（丢帧） |
-| `DemuxThread` | `src/demuxthread.h/.cpp` | `av_read_frame` 循环，按流索引将 `AVPacket*` 分发到视频/音频包队列 |
+| `DemuxThread` | `src/demuxthread.h/.cpp` | `av_read_frame` 循环，按流索引将 `AVPacket*` 分发到视频/音频包队列；`probeOpen()` 静态方法可在 worker 线程探测媒体文件/网络流（RTMP/RTSP/HTTP/SRT），网络流读取中断时 `reconnect()` 按 2 秒间隔自动重连并发出 `networkStateChanged`/`statsUpdated` |
 | `VideoDecodeThread` | `src/videodecodethread.h/.cpp` | 消费视频包队列，解码为 `AVFrame*` 推入帧队列 |
 | `AudioDecodeThread` | `src/audiodecodethread.h/.cpp` | 解码 + `swr_convert` 重采样为 S16 立体声 → `QAudioOutput`，同步更新音频时钟 |
 | `VideoRenderer` | `src/videorenderer.h/.cpp` | `QTimer` 1 ms 检查渲染时机，`sws_scale` YUV420P→RGB32，`QPainter` 绘帧 |
-| `PlayerController` | `src/playercontroller.h/.cpp` | 持有并管理所有组件生命周期，对外暴露 open/play/pause/stop/seek/setVolume |
+| `PlayerController` | `src/playercontroller.h/.cpp` | 持有并管理所有组件生命周期，对外暴露 open/play/pause/stop/seek/setVolume；`open()` 异步探测（worker 线程 + `onProbeFinished` 回调），完成后发出 `openResult(bool)`，避免网络流握手阻塞 UI |
 | `MainWindow` | `src/mainwindow.h/.cpp` | Qt 主窗口，`QSlider` 进度条 + 音量，播放/暂停按钮，双击全屏，滤镜面板 Dock |
 | `FilterGraph` | `src/filtergraph.h/.cpp` | FFmpeg libavfilter 封装，buffersrc → 滤镜链 → buffersink，支持在线重建 |
 | `FilterPanel` | `src/filterpanel.h/.cpp/.ui` | 滤镜调参面板（QDockWidget），亮度/对比度/饱和度/水印，参数实时生效 |

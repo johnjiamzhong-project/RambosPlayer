@@ -494,6 +494,27 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 
 ---
 
+## Phase 14 — 拉流播放（网络流拉取 + 异步探测 + 自动重连）✅
+
+**目标：** 支持 RTMP/RTSP/HTTP-FLV/SRT 网络流拉取播放，异步探测避免 UI 阻塞，断线自动重连，实时码率/帧率统计。
+
+- [x] `DemuxThread::probeOpen()` 静态方法：不访问 this，可在任意 worker 线程调用 `avformat_open_input` + `avformat_find_stream_info`，避免网络流 DNS/握手阻塞 UI
+- [x] `DemuxThread::adopt()`：主线程接管 probeOpen 结果，关闭旧 fmtCtx_，写入流参数和队列指针
+- [x] `DemuxThread::reconnect()`：网络流读取出错时 2 秒间隔循环重试，分段检查 abort（100ms 步进），用户点"断开"可立即退出
+- [x] `buildNetworkOptions()`：根据 URL scheme 自动构造超时选项（RTSP stimeout=5s，HTTP rw_timeout=5s）
+- [x] `NetworkState` 枚举 + `networkStateChanged` 信号：Disconnected → Connecting → Connected → Reconnecting 状态机，转发到 UI 状态栏
+- [x] 码率/帧率统计：`DemuxThread::run()` 内 1 秒窗口累计字节数和视频包数，emit `statsUpdated(kbps, fps)`
+- [x] `PlayerController::open()` 异步化：QThread::create 启动 worker 线程探测，`onProbeFinished` 回调回到主线程，`probeGeneration_` 丢弃过期结果
+- [x] `PlayerController` 信号转发：`networkStateChanged` / `statsUpdated` / `openResult(bool)` 链式传递到 MainWindow
+- [x] `MainWindow` 拉流控制栏：`streamBar`（URL 输入 + 连接/断开按钮 + 状态/码率/帧率标签），工具菜单"拉流播放"勾选显示/隐藏
+- [x] 直播模式适配：`duration=0` 时进度条禁用并显示 "LIVE"
+- [x] 拉流地址记忆：QSettings 存储上次成功连接的 URL，下次打开自动回填
+- [x] `main.cpp` 新增 `avformat_network_init()` / `avformat_network_deinit()`
+- [x] FFmpeg 版本兼容：`AvioBuf` 类型别名适配 FFmpeg 7.0 `const uint8_t*` 签名变化（HttpFlvServer / MpegTsServer）
+- [x] 架构图：`docs/pull-streaming-arch.html`
+
+---
+
 ## 当前进度
 
 - [x] Phase 1 — 项目骨架
@@ -509,3 +530,4 @@ AudioDecodeThread → QAudioOutput（不变）                          │
 - [x] Phase 11 — 低延迟推流（GPU 重编码 + MPEG-TS）
 - [x] Phase 12 — 剪辑器增强：三模式剪切 + 合并（Task 1✅ Task 2✅ Task 3✅ Task 4✅ Task 5✅）
 - [x] Phase 13 — ARM64 (RK3588) 交叉编译与板卡部署
+- [x] Phase 14 — 拉流播放（网络流拉取 + 异步探测 + 自动重连）

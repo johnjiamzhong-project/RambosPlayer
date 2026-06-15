@@ -61,6 +61,11 @@ private slots:
     void onMergeTriggered();
     void onAudioMixTriggered();
     void onAbout();
+    void onConnectStreamClicked();                   // 拉流"连接/断开"按钮
+    void onNetworkStateChanged(int state);           // DemuxThread::NetworkState 转发，更新状态标签
+    void onStreamStatsUpdated(int kbps, double fps); // 码率/帧率标签刷新
+    void onPullStreamPanelToggled(bool checked);     // 工具菜单"拉流播放"勾选：显示/隐藏拉流控制栏
+    void onPlayerOpenResult(bool ok);                // PlayerController::open() 异步探测完成回调
 
 private:
     void openFile(const QString& path, bool autoPlay = true);      // 打开文件并更新最近记录
@@ -115,6 +120,12 @@ private:
     QList<StreamDestination> pendingDests_;        // 文件打开前预配置的推流目标，openFile 后自动启动
     QList<StreamDestination> activeDests_;         // 当前正在推流的目标列表（暂停恢复时需要阻塞标志）
     double streamAlignSec_ = 0.0;                 // 推流 seek 对齐的起始秒数，用于计算截止时长
+    bool streamConnected_ = false;  // 拉流是否处于"已连接"状态（控制按钮文案与状态标签）
+
+    // PlayerController::open() 异步化后，onPlayerOpenResult 需要知道本次 open 的来源和参数
+    bool    pendingOpenIsStream_ = false;  // true=拉流播放（onConnectStreamClicked），false=本地文件（openFile）
+    QString pendingOpenPath_;              // 本次 open() 的路径/URL
+    bool    pendingAutoPlay_ = true;       // openFile() 的 autoPlay 参数，结果回调时使用
 
     static constexpr int MaxRecentFiles = 10;   // 最近文件列表最大条数
     static QString formatTime(int64_t ms);      // 毫秒 → "MM:SS" 字符串
