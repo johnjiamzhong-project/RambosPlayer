@@ -28,10 +28,43 @@
 
 | 版本 | 日期 | Release Title | 概要 |
 |------|------|---------------|------|
+| 1.2.2 | 2026-06-15 | RambosPlayer v1.2.2 | 新增拉流播放（RTMP/RTSP/HTTP-FLV/SRT），异步探测 + 自动重连 + 码率帧率统计 |
 | 1.2.1 | 2026-06-04 | RambosPlayer v1.2.1 | 修复浏览剪辑切换多段剪辑时区间残留导致误导出 |
 | 1.2.0 | 2026-05-29 | RambosPlayer v1.2.0 | 新增多段剪切、视频合并、音频混合模块，最大化浮动标题栏，多项交互修复 |
 | 1.1.0 | 2026-05-27 | RambosPlayer v1.1.0 | 新增 HTTP-MPEG-TS 低延迟推流，修复多设备卡顿、seek 重连风暴等问题 |
 | 1.0.0 | 2026-05-23 | RambosPlayer v1.0.0 | 基于 FFmpeg + Qt 的 Windows 多媒体播放器首个正式版本 |
+
+---
+
+## v1.2.2 — RambosPlayer v1.2.2 (2026-06-15)
+
+**Tag**: `v1.2.2`
+
+### Release Notes
+
+新增拉流播放功能，支持从 RTMP/RTSP/HTTP-FLV/SRT 网络流拉取播放，异步探测避免 UI 阻塞，断线自动重连。
+
+**新功能**
+
+- 拉流播放：工具菜单"拉流播放"显示控制栏，输入网络流地址点击"连接"即可播放
+- 支持协议：RTMP、RTSP、HTTP-FLV、SRT、HTTPS
+- 异步探测：`avformat_open_input` + `avformat_find_stream_info` 在独立 worker 线程执行，网络握手不阻塞 UI
+- 自动重连：网络中断后 2 秒间隔循环重试，状态栏显示"重连中..."，用户可随时点"断开"取消
+- 实时统计：码率（kbps）和视频帧率（fps）每秒刷新显示在状态栏
+- 直播模式：`duration=0` 时进度条自动禁用并显示 "LIVE"
+- 地址记忆：上次成功连接的 URL 自动保存，下次打开拉流面板自动回填
+- FFmpeg 版本兼容：`AvioBuf` 类型别名适配 FFmpeg 7.0 `const uint8_t*` 签名变化，ARM64 板卡旧版 FFmpeg 同时兼容
+
+**架构改进**
+
+- `DemuxThread::probeOpen()` 静态方法：不访问 `this`，可在任意线程调用，网络流探测与 UI 线程完全解耦
+- `PlayerController::open()` 异步化：worker 线程探测 + `onProbeFinished` 回调 + `probeGeneration_` 丢弃过期结果
+- `DemuxThread::NetworkState` 状态机：Disconnected → Connecting → Connected → Reconnecting，信号链式转发到 UI
+- 新增拉流架构图 `docs/pull-streaming-arch.html`
+
+### 下载
+
+解压 `RambosPlayer-v1.2.2.zip`，双击 `RambosPlayer.exe` 运行。
 
 ---
 
