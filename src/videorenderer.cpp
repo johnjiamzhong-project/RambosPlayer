@@ -35,6 +35,7 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
     timeBase_ = timeBase;
     sync_ = sync;
     frameQueue_ = frameQueue;
+    livePacingStartPts_ = -1.0;
     srcFormat_ = AV_PIX_FMT_YUV420P;  // 默认软解格式，硬解首次收帧时自动切换
     swsCtx_ = sws_getContext(width, height, srcFormat_,
                               width, height, AV_PIX_FMT_RGB32,
@@ -50,6 +51,7 @@ void VideoRenderer::startRendering() {
     noFrameTimerStarted_ = true;
     noFrameLogged_ = false;
     dropCount_ = 0;
+    livePacingStartPts_ = -1.0;
     timer_->start();
 }
 
@@ -66,6 +68,7 @@ void VideoRenderer::flushPendingFrame() {
     noFrameTimerStarted_ = true;
     noFrameLogged_ = false;
     dropCount_ = 0;
+    livePacingStartPts_ = -1.0;
 }
 
 void VideoRenderer::stopRendering()  {
@@ -143,6 +146,28 @@ void VideoRenderer::onTimer() {
             pendingFrame_ = frame;
         }
         return;
+    }
+
+    // 纯视频直播节拍控制（无音频时钟时启用）：
+    // SRS 按 GOP 批量投递帧，若不加速率控制，8 帧会在 <10ms 内瞬间渲完，
+    // 然后冻屏 ~533ms 等下一 GOP，视觉上呈现"一帧闪过→冻住"的规律性卡顿。
+    //
+    // 采用"短程基准"：以上一帧渲染时刻为锚点，而非全局第一帧。
+    // 每帧只等一个帧间隔（≈67ms），不会因编码器帧率与 PTS timebase 的微小
+    // 偏差（≤1%）导致 expectedMs-actualMs 随时间累积，引发延迟漂移。
+    if (audioClock < 0.0) {
+        if (livePacingStartPts_ >= 0.0) {
+            double expectedMs = (pts - livePacingStartPts_) * 1000.0;
+            qint64 actualMs   = livePacingTimer_.elapsed();
+            double holdMs = expectedMs - actualMs;
+            if (holdMs > 2.0) {
+                pendingFrame_ = frame;
+                return;
+            }
+        }
+        // 即将渲染：更新锚点为本帧，下一帧以此为基准
+        livePacingTimer_.start();
+        livePacingStartPts_ = pts;
     }
 
     // 硬解路径下帧格式可能从 YUV420P 变为 NV12，检测到变化时重建 sws 上下文

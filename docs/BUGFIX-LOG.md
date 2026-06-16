@@ -510,3 +510,38 @@
 - **根因**：MSVC 对"goto 跳转到带初始化器的局部变量声明之后"检查较松，但 C++ 标准（[stmt.dcl]）禁止跳转进入仍在作用域内、且声明时带初始化器的非平凡跳过变量；`exportworker.cpp`（`session_cleanup`/`seg_cleanup`）、`mergeworker.cpp`（`done`）、`audiomixworker.cpp`（`done`）中均有 `goto` 跳过此类声明
 - **修复**：将被跨越的变量声明上移到所有 `goto` 之前（无初始化器或在函数顶部声明后再赋值）；`mergeworker.cpp` 中编码器选择相关的局部变量与 lambda 整体用 `{ }` 包裹，使其在 `done:` 标签处已脱离作用域
 - **涉及文件**：`src/exportworker.cpp`、`src/mergeworker.cpp`、`src/audiomixworker.cpp`
+
+---
+
+## #045 — RTMP 纯视频直播流卡顿：GOP 批量投递无节拍控制
+
+- **日期**：2026-06-16
+- **现象**：播放 AlertGateway 推送的 RTMP 纯视频流（无音频），日志显示每次渲染后紧跟 `no frame for 501ms`，实际渲染帧率约 1.7fps；但 DemuxThread 统计的接收帧率正常（~14.6fps）。视觉表现为画面规律性"闪一下→冻住"
+- **根因**：SRS 服务端以 GOP 为单位缓冲投递（GOP=8，一次性送 8 帧）。流为纯视频（audioIdx=-1），`AVSync::audioClock()` 始终返回 -1，`VideoRenderer::onTimer()` 中所有 `audioClock >= 0` 的判断均为 false，`diff` 恒为 0，VideoRenderer 对每批 8 帧无任何速率控制，在 <10ms 内全部渲完。随后等待下一 GOP 到达（~533ms），画面冻屏。8 帧突发渲染期间 Qt 的 `update()` 调用会合并，实际只刷新最后一帧，帧率退化为 1 GOP/cycle ≈ 1.7fps
+- **修复**：`VideoRenderer` 中新增挂钟节拍控制，当 `audioClock < 0`（纯视频流）时启用：以第一帧渲染时刻为基准启动 `livePacingTimer_`，记录基准 PTS `livePacingStartPts_`；后续每帧到达时计算 `expectedMs = (pts - livePacingStartPts_) × 1000`，若 `expectedMs - elapsed > 2ms` 则将帧存入 `pendingFrame_` 等下次 1ms timer 触发再检查，否则立即渲染。`init()` / `startRendering()` / `flushPendingFrame()` 均重置 `livePacingStartPts_ = -1.0`
+- **效果**：8 帧从 <10ms 内突发渲完 → 均匀铺开至 ~533ms，视觉帧率从 1.7fps 恢复为 15fps；DemuxThread 统计帧率不变（衡量的是接收率，不受渲染节拍影响）
+- **涉及文件**：`src/videorenderer.h`、`src/videorenderer.cpp`
+
+---
+
+## #046 — RTMP 直播流连接延迟约 6 秒
+
+- **日期**：2026-06-16
+- **现象**：打开 `rtmp://` 直播流后，画面内容比实际摄像头延迟约 6 秒；PotPlayer 连接同一流延迟约 2 秒
+- **根因**：FFmpeg RTMP 客户端默认通过 `Set Buffer Length` 消息告知服务端预缓冲约 3000ms 数据；加上 SRS gop_cache（~533ms）、`avformat_find_stream_info` 默认 `max_analyze_duration=5s`（H.264/FLV 实际只需 1 包即可获取 SPS/PPS，但 FFmpeg 仍会读满 5 秒数据）、`videoPacketQ{8}` + `videoFrameQ{10}` 流水线缓冲（~1.2s），总延迟叠加约 6 秒。PotPlayer 有私有低延迟 RTMP 实现故延迟较低
+- **修复**：
+  1. `buildNetworkOptions()` RTMP 分支新增 `rtmp_buffer=0`（告知 SRS 无需服务端预缓冲）和 `fflags=nobuffer`
+  2. `probeOpen()` 在 `avformat_open_input` 成功后对网络流设置 `fmtCtx->flags |= AVFMT_FLAG_NOBUFFER` 和 `fmtCtx->max_analyze_duration = 0`，使 `avformat_find_stream_info` 获取到 SPS/PPS 后立即返回
+  3. `reconnect()` 重连成功后同步设置相同标志，确保重连后不回退到高延迟状态
+- **效果**：延迟从 ~6s 降至 ~0.5s（SRS gop_cache off 后的 1 GOP 固有延迟，无法在播放端消除）
+- **涉及文件**：`src/demuxthread.cpp`
+
+---
+
+## #047 — 纯视频直播流播放久后延迟持续升高，重连后恢复
+
+- **日期**：2026-06-16
+- **现象**：播放 RTMP 纯视频流数分钟后延迟逐渐升高（每分钟约增加数百毫秒），重新点击拉流后延迟立即恢复正常
+- **根因**：`#045` 引入的 live pacing 使用**全局锚点**（`livePacingStartPts_` 在第一帧时设置，整个会话不更新）。`expectedMs = (pts - startPts) × 1000` 基于 PTS timebase 推算，`actualMs` 基于真实挂钟。AlertGateway 编码器实际帧率（14.6fps）与 PTS timebase（15fps）存在约 1% 偏差，导致每帧 PTS 步进（66.7ms）略小于实际送帧间隔（68.5ms）。反向情况下（SRS GOP 批次提前到达或编码器短暂加速），`expectedMs` 持续大于 `actualMs`，`holdMs` 随时间线性增长：1% 偏差下约 30 秒累积 300ms，数分钟可达数秒。帧在 `pendingFrame_` / `videoFrameQ_` 积压 → VideoDecodeThread 阻塞 → videoPacketQ_ 满 → DemuxThread 停读 → TCP 缓冲撑满 → 延迟肉眼可见升高。重连重置 `livePacingStartPts_`，漂移归零
+- **修复**：改为**短程锚点**：每次帧即将渲染时将 `livePacingTimer_` 和 `livePacingStartPts_` 更新为当前帧，下一帧的等待时间仅相对于上一帧渲染时刻计算（≈1 帧间隔 66.7ms），漂移不跨帧累积
+- **涉及文件**：`src/videorenderer.cpp`

@@ -24,8 +24,13 @@ static AVDictionary* buildNetworkOptions(const QString& url, bool& isNetwork) {
         isNetwork = true;
         av_dict_set(&opts, "rw_timeout", "5000000", 0); // 5s，微秒（HTTP/HTTP-FLV 读写超时）
     } else if (url.startsWith("rtmp://", Qt::CaseInsensitive) ||
-               url.startsWith("rtmps://", Qt::CaseInsensitive) ||
-               url.startsWith("srt://", Qt::CaseInsensitive)) {
+               url.startsWith("rtmps://", Qt::CaseInsensitive)) {
+        isNetwork = true;
+        // 通知 SRS 无需服务端预缓冲（Set Buffer Length = 0ms），
+        // 配合 AVFMT_FLAG_NOBUFFER 可将延迟从 6s 降至 ~0.5s（1 GOP）
+        av_dict_set(&opts, "rtmp_buffer", "0", 0);
+        av_dict_set(&opts, "fflags", "nobuffer", 0);
+    } else if (url.startsWith("srt://", Qt::CaseInsensitive)) {
         isNetwork = true;
     } else {
         isNetwork = false;
@@ -64,7 +69,13 @@ DemuxThread::ProbeResult DemuxThread::probeOpen(const QString& path) {
     }
 
     // 步骤2：读取若干帧数据，推断每条流的编解码参数（帧率、采样率等）
-    // 部分格式（如 MPEG-TS）无法从文件头直接得到完整参数，必须靠此步骤补全
+    // 部分格式（如 MPEG-TS）无法从文件头直接得到完整参数，必须靠此步骤补全。
+    // 对网络直播流：禁用 FFmpeg 内部抖动缓冲，并把 analyze 时长压到最短——
+    // H.264/FLV 序列头在第一个包里就能获得完整参数，不需要读 5 秒数据。
+    if (r.isNetwork) {
+        r.fmtCtx->flags |= AVFMT_FLAG_NOBUFFER;
+        r.fmtCtx->max_analyze_duration = 0;  // 拿到 SPS/PPS 就立即返回
+    }
     int probeRet = avformat_find_stream_info(r.fmtCtx, nullptr);
     if (probeRet < 0) {
         char errbuf[64];
@@ -458,6 +469,10 @@ bool DemuxThread::reconnect() {
         int ret = avformat_open_input(&fmtCtx_, url_.toUtf8().constData(), nullptr, &opts);
         av_dict_free(&opts);
 
+        if (ret == 0) {
+            fmtCtx_->flags |= AVFMT_FLAG_NOBUFFER;
+            fmtCtx_->max_analyze_duration = 0;
+        }
         if (ret == 0 && avformat_find_stream_info(fmtCtx_, nullptr) >= 0) {
             for (unsigned i = 0; i < fmtCtx_->nb_streams; ++i) {
                 auto type = fmtCtx_->streams[i]->codecpar->codec_type;

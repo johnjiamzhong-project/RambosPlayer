@@ -54,4 +54,11 @@ private:
     int  dropCount_ = 0;                // 当前轮连续丢帧数，汇总后打印
     double lastRenderedPts_ = -1.0;     // 上次成功渲染的帧 PTS，用于检测 seek 后首帧
     bool rendering_ = false;            // startRendering/stopRendering 状态标志，onTimer() 据此提前返回
+
+    // 纯视频直播节拍控制（无音频时钟时启用）。
+    // SRS 以 GOP 为单位缓冲投递，8 帧会在 <10ms 内一次性到达，VideoRenderer
+    // 若不加控制会瞬间全部渲完，然后冻屏 ~533ms 等下一个 GOP，视觉上就是卡顿。
+    // 以第一帧挂钟时间为基准，按 (pts - startPts)*1000ms 决定每帧何时渲染。
+    QElapsedTimer livePacingTimer_;     // 节拍基准挂钟（第一帧渲染时 start()）
+    double livePacingStartPts_ = -1.0; // 节拍基准 PTS（秒），-1 表示未初始化
 };
