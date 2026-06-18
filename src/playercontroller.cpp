@@ -7,6 +7,7 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/frame.h>
 }
 
 // 构造函数：创建 100ms 位置定时器，连接 DemuxThread::finished 信号。
@@ -16,8 +17,9 @@ PlayerController::PlayerController(VideoRenderer* renderer, QObject* parent)
     posTimer_->setInterval(100);
     connect(posTimer_, &QTimer::timeout, this, &PlayerController::updatePosition);
     connect(&demux_, &DemuxThread::finished, this, &PlayerController::onDemuxFinished);
-    connect(&demux_, &DemuxThread::networkStateChanged, this, &PlayerController::networkStateChanged);
+    connect(&demux_, &DemuxThread::networkStateChanged, this, &PlayerController::onDemuxNetworkStateChanged);
     connect(&demux_, &DemuxThread::statsUpdated, this, &PlayerController::statsUpdated);
+    connect(renderer_, &VideoRenderer::fellBehindLive, this, &PlayerController::onRendererFellBehindLive);
 }
 
 // 析构函数：停止所有线程后销毁。
@@ -251,4 +253,54 @@ void PlayerController::updatePosition() {
     }
     lastPositionSec_ = ac;
     emit positionChanged((int64_t)(ac * 1000.0));
+}
+
+// 直接强制重连（不再先试 renderer_->tryLocalCatchUp() 判断"本地够不够"——实测
+// 发现那个判断不可靠：它用"上次渲染时刻+经过的挂钟时间"反推期望 pts，但这个量
+// 在不同时长的测试里（最小化 80 秒/2 分钟、遮挡 3 分钟）都稳定落在 -0.7~-0.8 秒，
+// 跟实际等待时长毫无关系，说明它测的其实是这套流水线本身解码队列固有的缓冲深度，
+// 不是真实落后量，几乎永远会判定"够了"从而拦掉本该执行的重连，导致恢复后留下
+// 1-3 秒一直追不回来的残留延迟。重连是目前唯一有真实日志验证过、能干净消除残留
+// 延迟的手段（见 docs/BUGFIX-LOG.md，代价是固定几秒的重新握手黑屏），所以恢复
+// 时统一直接重连，不再赌"本地这几帧应该够了"。
+// 先 abort() 三条队列唤醒可能阻塞在 push() 上的 DemuxThread/VideoDecodeThread
+// （否则它们卡死在 push() 里，永远到不了 run() 循环顶部处理重连请求），再调用
+// demux_.requestReconnect()。队列恢复可用（reset）和解码器/渲染器状态清理放在
+// onDemuxNetworkStateChanged() 收到 Connected 时做——重连是异步的，这里没法
+// 立刻知道它什么时候成功。
+void PlayerController::forceLiveResync() {
+    qInfo() << "PlayerController: forcing stream reconnect";
+    videoPacketQ_.abort();
+    audioPacketQ_.abort();
+    videoFrameQ_.abort();
+    demux_.requestReconnect();
+}
+
+// VideoRenderer 检测到落后直播源超过强制重连阈值（kForceReconnectBehindSec）时触发。
+void PlayerController::onRendererFellBehindLive(double behindSec) {
+    qInfo() << "PlayerController: video fell behind live by" << behindSec << "s";
+    forceLiveResync();
+}
+
+// 转发网络连接状态给 UI；Connected 时（无论是正常打开还是强制重连后）顺带清理：
+// 排空并 reset() 三条队列（强制重连场景下可能还处于 onRendererFellBehindLive()
+// 留下的 aborted 状态；reset() 前必须先用 tryPop+free 排空，不能直接 reset()，
+// 因为队列内部清空不会释放残留的 AVPacket*/AVFrame*，参考 DemuxThread::handleSeek()
+// 的同样做法）、flush 解码器、清渲染器暂存帧。正常打开时这些队列/解码器/渲染器
+// 本就是空/未初始化状态，以下操作都是安全的空操作。
+void PlayerController::onDemuxNetworkStateChanged(int state) {
+    emit networkStateChanged(state);
+    if (static_cast<DemuxThread::NetworkState>(state) != DemuxThread::NetworkState::Connected) return;
+
+    AVPacket* p;
+    while (videoPacketQ_.tryPop(p, 0)) av_packet_free(&p);
+    while (audioPacketQ_.tryPop(p, 0)) av_packet_free(&p);
+    AVFrame* f;
+    while (videoFrameQ_.tryPop(f, 0)) av_frame_free(&f);
+    videoPacketQ_.reset();
+    audioPacketQ_.reset();
+    videoFrameQ_.reset();
+
+    videoDec_.flush();
+    renderer_->flushPendingFrame();
 }

@@ -3,6 +3,7 @@
 #include <QLoggingCategory>
 #include <QPainter>
 #include <QThread>
+#include <QDateTime>
 
 Q_LOGGING_CATEGORY(lcVideo, "rambos.video", QtWarningMsg)
 
@@ -25,6 +26,46 @@ VideoRenderer::~VideoRenderer() {
     if (swsCtx_) sws_freeContext(swsCtx_);
 }
 
+// 启动看门狗线程：每 300ms 检查一次 lastOnTimerEpochMs_ 距现在过了多久。
+// 用独立线程而非 Qt 定时器，是因为如果改用 GUI 线程上的另一个 QTimer，
+// 它会和 onTimer() 一样受同样的系统限流影响，测不出问题；后台 QThread
+// 的调度不依赖 GUI 线程的消息泵，能更可靠地反映 onTimer() 是否真的停摆。
+void VideoRenderer::startWatchdog() {
+    if (watchdog_) return;
+    lastOnTimerEpochMs_.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
+    watchdog_ = QThread::create([this] {
+        bool stalled = false;
+        qint64 stallStartMs = 0;
+        while (!QThread::currentThread()->isInterruptionRequested()) {
+            QThread::msleep(300);
+            qint64 now  = QDateTime::currentMSecsSinceEpoch();
+            qint64 last = lastOnTimerEpochMs_.load(std::memory_order_relaxed);
+            qint64 gap  = now - last;
+            if (!stalled && gap > 1000) {
+                stalled = true;
+                stallStartMs = last;
+                qWarning() << "VideoRenderer::watchdog onTimer 已停止被调度，距上次调用已过去"
+                           << gap << "ms（GUI 线程的 1ms 定时器可能被系统限流："
+                           << "窗口最小化/被其他窗口覆盖/失去前台焦点）";
+            } else if (stalled && gap <= 1000) {
+                qInfo() << "VideoRenderer::watchdog onTimer 恢复调度，本次停摆约"
+                        << (now - stallStartMs) << "ms";
+                stalled = false;
+            }
+        }
+    });
+    watchdog_->start();
+}
+
+// 停止看门狗线程：请求中断后等待退出（最长 1s）并释放。
+void VideoRenderer::stopWatchdog() {
+    if (!watchdog_) return;
+    watchdog_->requestInterruption();
+    watchdog_->wait(1000);
+    delete watchdog_;
+    watchdog_ = nullptr;
+}
+
 // 初始化渲染参数：记录视频宽高和时间基，绑定 AVSync 与帧队列，
 // 创建 sws 上下文（YUV420P → RGB32）并分配 QImage 缓冲区。
 // 重新打开文件时会再次调用，需释放上一轮暂存的帧。
@@ -36,6 +77,8 @@ void VideoRenderer::init(int width, int height, AVRational timeBase,
     sync_ = sync;
     frameQueue_ = frameQueue;
     livePacingStartPts_ = -1.0;
+    reconnectRequested_ = false;
+    driftAnchorPts_ = -1.0;
     srcFormat_ = AV_PIX_FMT_YUV420P;  // 默认软解格式，硬解首次收帧时自动切换
     swsCtx_ = sws_getContext(width, height, srcFormat_,
                               width, height, AV_PIX_FMT_RGB32,
@@ -52,6 +95,9 @@ void VideoRenderer::startRendering() {
     noFrameLogged_ = false;
     dropCount_ = 0;
     livePacingStartPts_ = -1.0;
+    reconnectRequested_ = false;
+    driftAnchorPts_ = -1.0;
+    startWatchdog();
     timer_->start();
 }
 
@@ -69,10 +115,13 @@ void VideoRenderer::flushPendingFrame() {
     noFrameLogged_ = false;
     dropCount_ = 0;
     livePacingStartPts_ = -1.0;
+    reconnectRequested_ = false;
+    driftAnchorPts_ = -1.0;
 }
 
 void VideoRenderer::stopRendering()  {
     timer_->stop();
+    stopWatchdog();
     if (pendingFrame_) av_frame_free(&pendingFrame_);
 }
 
@@ -83,6 +132,10 @@ void VideoRenderer::renderOneFrame() { onTimer(); }
 // 定时回调：音视频同步的核心决策点。
 // 优先检查暂存帧，再从队列取帧；帧到得太早时暂存而非阻塞主线程。
 void VideoRenderer::onTimer() {
+    // 心跳：不管本次有没有帧可渲染，只要 onTimer 被调度到就更新，供 watchdog 线程判断
+    // GUI 线程的 1ms 定时器是否还在正常工作（而不是"队列恰好空了"这种正常情况）。
+    lastOnTimerEpochMs_.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
+
     AVFrame* frame = pendingFrame_;
     pendingFrame_ = nullptr;
 
@@ -160,12 +213,68 @@ void VideoRenderer::onTimer() {
             double expectedMs = (pts - livePacingStartPts_) * 1000.0;
             qint64 actualMs   = livePacingTimer_.elapsed();
             double holdMs = expectedMs - actualMs;
-            if (holdMs > 2.0) {
+
+            // 落后追赶：actualMs 远大于 expectedMs 说明自上一帧渲染以来，
+            // 这段挂钟时间里 onTimer 没有正常被调度（例如窗口被最小化导致
+            // GUI 线程的 1ms 定时器被系统限流），期间上游网络/解码把帧积压在了
+            // 服务端/系统缓冲区里。此时不能按 1x 速度把积压逐帧播完（那样的话
+            // 窗口最小化多久，恢复后就要多花同样的时长才能追上直播），而是直接
+            // 丢弃队列里所有积压的旧帧，跳到最新一帧立即渲染。
+            double behindSec = (actualMs - expectedMs) / 1000.0;
+            if (behindSec > kCatchUpBehindSec) {
+                AVFrame* newer;
+                int skipped = 0;
+                while (frameQueue_ && frameQueue_->tryPop(newer, 0)) {
+                    av_frame_free(&frame);
+                    frame = newer;
+                    ++skipped;
+                }
+                pts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts * av_q2d(timeBase_) : pts;
+                if (skipped > 0) {
+                    qInfo() << "VideoRenderer: catching up to live, behind=" << behindSec
+                            << "s, skipped" << skipped << "buffered frame(s), new pts=" << pts;
+                }
+                // 落后太多：本地这几帧（frameQueue_ 只有 10 帧）根本追不完堆在
+                // 服务端/系统缓冲区里看不见的积压，发一次重连请求让 PlayerController
+                // 触发 DemuxThread 整条流重连，直接拿最新 GOP；reconnectRequested_
+                // 防止追赶期间（可能持续多个 1ms tick）反复发同一个请求。
+                if (behindSec > kForceReconnectBehindSec && !reconnectRequested_) {
+                    reconnectRequested_ = true;
+                    qWarning() << "VideoRenderer: behind live by" << behindSec << "s, exceeds"
+                               << kForceReconnectBehindSec << "s threshold, requesting stream reconnect";
+                    emit fellBehindLive(behindSec);
+                }
+            } else if (holdMs > 2.0) {
                 pendingFrame_ = frame;
                 return;
+            } else {
+                reconnectRequested_ = false; // 已追平，允许下次落后时再次触发重连请求
+
+                // 长期漂移检测：每 kDriftCheckWindowSec 重新校准一次独立基准，
+                // 用来发现"每帧只差一点点、但持续累积"的缓慢漂移——这种漂移
+                // 永远不会让上面的 behindSec（相对上一帧）超过 kCatchUpBehindSec，
+                // 但攒的时间足够长（比如窗口被最小化的整段时间）还是会变成
+                // 看得见的延迟。
+                if (driftAnchorPts_ < 0.0 || driftAnchorTimer_.elapsed() > kDriftCheckWindowSec * 1000.0) {
+                    driftAnchorTimer_.start();
+                    driftAnchorPts_ = pts;
+                } else {
+                    double expectedPts = driftAnchorPts_ + driftAnchorTimer_.elapsed() / 1000.0;
+                    double longTermBehindSec = expectedPts - pts;
+                    if (longTermBehindSec > kForceReconnectBehindSec && !reconnectRequested_) {
+                        reconnectRequested_ = true;
+                        qWarning() << "VideoRenderer: long-term drift, behind live by"
+                                   << longTermBehindSec << "s over last"
+                                   << (driftAnchorTimer_.elapsed() / 1000.0)
+                                   << "s window, requesting stream reconnect";
+                        emit fellBehindLive(longTermBehindSec);
+                    }
+                }
             }
         }
         // 即将渲染：更新锚点为本帧，下一帧以此为基准
+        // （每帧都重新校准，不会像固定起点的长期锚点那样被编码帧率与 PTS
+        // timebase 间的微小偏差长期累积出虚假的"落后"判定，参考 #047）
         livePacingTimer_.start();
         livePacingStartPts_ = pts;
     }

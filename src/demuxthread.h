@@ -58,6 +58,13 @@ public:
     // fromSeconds 为 seek 前播放器显示位置，传给本地录制器精确截断超前帧。
     void seek(double seconds, double fromSeconds = -1.0);
 
+    // 外部（PlayerController）请求强制重连：用于"本地播放严重落后直播源"场景，
+    // 主动断开重连比指望本地几帧追完看不见的服务端/系统缓冲区积压更可靠。
+    // 调用方需先 abort() 掉可能阻塞 run() 在 push() 上的队列（videoQueue_/audioQueue_），
+    // 否则 run() 卡在 push() 里永远到不了循环顶部处理这个请求；原子存储，
+    // run() 下次循环顶部经 handleForceReconnect() 生效。
+    void requestReconnect();
+
     // 推流分叉接口（-c copy 模式）：网络推流用 tryPush 丢帧不阻塞播放
     void addRestreamVideoQueue(FrameQueue<AVPacket*>* q);
     void addRestreamAudioQueue(FrameQueue<AVPacket*>* q);
@@ -67,6 +74,7 @@ public:
     void clearRestreamQueues();   // 中止并清空所有分叉队列和本地录制器
 
     int64_t duration()       const { return duration_; }   // 微秒
+    bool isNetwork()         const { return isNetwork_; }  // 是否为网络流（rtmp/rtsp/http/srt）
     int videoStreamIdx()     const { return videoIdx_; }
     int audioStreamIdx()     const { return audioIdx_; }
     // 仅在 open() 成功后到析构前有效；调用方不得释放。
@@ -95,6 +103,7 @@ private:
     int                    audioIdx_   = -1;        // 音频流在 fmtCtx_ 中的索引，-1 表示无音频流
     int64_t                duration_   = 0;         // 文件总时长，单位微秒（AV_TIME_BASE）
     std::atomic<bool>      abort_{false};           // stop() 置 true，run() 循环检查后退出
+    std::atomic<bool>      forceReconnectRequested_{false}; // requestReconnect() 置 true，run() 循环顶部消费
     std::atomic<double>    seekTarget_{-1.0};        // seek 目标（秒），-1 表示无待处理 seek
     std::atomic<double>    seekFromPosition_{-1.0}; // seek 前播放器显示位置，用于录制器精确截断超前帧
     std::atomic<double>    seekExactTarget_{-1.0};       // 视频精确 seek 目标（秒），视频帧到达时清除
@@ -111,6 +120,7 @@ private:
     int64_t                                 restreamDropCount_{0};  // tryPush 丢包累计数（仅 run() 写，无需原子）
 
     void handleSeek();  // 在 run() 每次循环顶部检查并执行 seek
+    void handleForceReconnect();  // 在 run() 每次循环顶部检查并执行 requestReconnect() 的请求
 
     // 网络流读取出错/断开时调用：关闭旧连接并重试重新打开同一 URL，
     // 直到成功（返回 true）或 abort() 被调用（返回 false，run() 据此退出）。

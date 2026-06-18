@@ -57,9 +57,16 @@ DemuxThread::ProbeResult DemuxThread::probeOpen(const QString& path) {
     // 步骤1：打开容器文件，分配并填充 AVFormatContext（包含封装格式、I/O 缓冲等）
     // path 转 UTF-8 是为了兼容中文路径；网络流（rtmp/rtsp/http/srt）额外传超时选项，
     // 避免连接失败时 avformat_open_input 永久阻塞
+    // 诊断计时：跟 reconnect() 用同一套参数，拆开测 avformat_open_input 和
+    // avformat_find_stream_info 各自耗时，用来对比"首次打开"和"重连"这两条
+    // 路径是不是真的有差异，而不是凭感觉猜测。
+    QElapsedTimer stepTimer;
+    stepTimer.start();
     AVDictionary* opts = buildNetworkOptions(path, r.isNetwork);
     int openRet = avformat_open_input(&r.fmtCtx, path.toUtf8().constData(), nullptr, &opts);
     av_dict_free(&opts);
+    qInfo() << "DemuxThread::probeOpen avformat_open_input ret=" << openRet
+            << "took" << stepTimer.elapsed() << "ms";
     if (openRet < 0) {
         char errbuf[64];
         av_strerror(openRet, errbuf, sizeof(errbuf));
@@ -70,13 +77,24 @@ DemuxThread::ProbeResult DemuxThread::probeOpen(const QString& path) {
 
     // 步骤2：读取若干帧数据，推断每条流的编解码参数（帧率、采样率等）
     // 部分格式（如 MPEG-TS）无法从文件头直接得到完整参数，必须靠此步骤补全。
-    // 对网络直播流：禁用 FFmpeg 内部抖动缓冲，并把 analyze 时长压到最短——
-    // H.264/FLV 序列头在第一个包里就能获得完整参数，不需要读 5 秒数据。
+    // 对网络直播流：禁用 FFmpeg 内部抖动缓冲，并把 analyze 时长压到最短。
+    // 注意：实测过 max_analyze_duration=0 在这里并不等于"拿到关键信息就立即
+    // 返回"，而是被当成未设置，退化成 FFmpeg 默认的 5 秒探测窗口（用计时日志
+    // 测过，probeOpen 和 reconnect 两条路径都精确卡在 ~5.06 秒，不是网络抖动，
+    // 是确定性行为）。改成 1 秒（约 2 个 GOP 周期，本流 GOP=8/14.6fps≈547ms，
+    // 留出网络抖动余量）：rtmp_buffer=0 已让 SRS 不做服务端预缓冲，新连接几乎
+    // 立刻能拿到关键帧，1 秒足够拿到 H.264 SPS/PPS。probesize 同时给一个小值
+    // （32KB，约够一个关键帧的数据量）作为双重保险，避免某些情况下只靠时长
+    // 一个维度判断不够。
     if (r.isNetwork) {
         r.fmtCtx->flags |= AVFMT_FLAG_NOBUFFER;
-        r.fmtCtx->max_analyze_duration = 0;  // 拿到 SPS/PPS 就立即返回
+        r.fmtCtx->max_analyze_duration = AV_TIME_BASE;  // 1 秒
+        r.fmtCtx->probesize = 32 * 1024;                // 32KB
     }
+    stepTimer.restart();
     int probeRet = avformat_find_stream_info(r.fmtCtx, nullptr);
+    qInfo() << "DemuxThread::probeOpen avformat_find_stream_info ret=" << probeRet
+            << "took" << stepTimer.elapsed() << "ms";
     if (probeRet < 0) {
         char errbuf[64];
         av_strerror(probeRet, errbuf, sizeof(errbuf));
@@ -198,6 +216,21 @@ void DemuxThread::seek(double seconds, double fromSeconds) {
     seekTarget_.store(seconds, std::memory_order_relaxed);
 }
 
+// 原子置位，run() 下次循环顶部经 handleForceReconnect() 消费。
+void DemuxThread::requestReconnect() {
+    forceReconnectRequested_.store(true, std::memory_order_relaxed);
+    qInfo() << "DemuxThread: reconnect requested externally (player fell behind live)";
+}
+
+// 检查是否有待处理的强制重连请求。复用 reconnect()（关闭旧连接、重试打开、
+// 成功/失败均 emit networkStateChanged），跟读取出错/EOF 触发的重连走同一套逻辑，
+// 只是触发时机不同（这里是主动检测到"落后太多"，不是被动读取失败）。
+void DemuxThread::handleForceReconnect() {
+    if (!forceReconnectRequested_.exchange(false, std::memory_order_relaxed)) return;
+    qInfo() << "DemuxThread: handling reconnect request";
+    reconnect();
+}
+
 // 检查是否有待处理的 seek 请求。若有，调用 av_seek_frame 跳转到目标关键帧，
 // 然后逐一 pop+free 清空两条队列中的残留包，避免解码线程消费过期数据。
 // 使用 pop+free 而非 clear()，是因为 clear() 不释放队列中的 AVPacket* 指针。
@@ -284,6 +317,7 @@ void DemuxThread::run() {
 
     while (!abort_.load(std::memory_order_relaxed)) {
         handleSeek();
+        handleForceReconnect();
 
         int ret = av_read_frame(fmtCtx_, pkt);
         if (ret == AVERROR_EOF || ret < 0) {
@@ -465,15 +499,30 @@ bool DemuxThread::reconnect() {
 
     constexpr int kRetryIntervalMs = 2000;
     while (!abort_.load(std::memory_order_relaxed)) {
+        // 诊断计时：拆开 avformat_open_input（TCP 连接 + RTMP 握手）和
+        // avformat_find_stream_info（探测流信息）两步，分别测耗时——之前只能看到
+        // "请求重连"到"重连成功"总共 5 秒多，不知道这 5 秒花在哪一步，不能瞎猜着优化。
+        QElapsedTimer stepTimer;
+        stepTimer.start();
         AVDictionary* opts = buildNetworkOptions(url_, isNetwork_);
         int ret = avformat_open_input(&fmtCtx_, url_.toUtf8().constData(), nullptr, &opts);
         av_dict_free(&opts);
+        qInfo() << "DemuxThread: reconnect avformat_open_input ret=" << ret
+                << "took" << stepTimer.elapsed() << "ms";
 
         if (ret == 0) {
             fmtCtx_->flags |= AVFMT_FLAG_NOBUFFER;
-            fmtCtx_->max_analyze_duration = 0;
+            // 跟 probeOpen() 保持一致：max_analyze_duration=0 实测等效于 FFmpeg
+            // 默认的 5 秒探测窗口，不是"立即返回"，改成 1 秒 + 32KB probesize，
+            // 详见 probeOpen() 里的说明。
+            fmtCtx_->max_analyze_duration = AV_TIME_BASE;
+            fmtCtx_->probesize = 32 * 1024;
         }
-        if (ret == 0 && avformat_find_stream_info(fmtCtx_, nullptr) >= 0) {
+        stepTimer.restart();
+        bool probeOk = (ret == 0 && avformat_find_stream_info(fmtCtx_, nullptr) >= 0);
+        qInfo() << "DemuxThread: reconnect avformat_find_stream_info ok=" << probeOk
+                << "took" << stepTimer.elapsed() << "ms";
+        if (probeOk) {
             for (unsigned i = 0; i < fmtCtx_->nb_streams; ++i) {
                 auto type = fmtCtx_->streams[i]->codecpar->codec_type;
                 if (type == AVMEDIA_TYPE_VIDEO && videoIdx_ < 0) videoIdx_ = (int)i;

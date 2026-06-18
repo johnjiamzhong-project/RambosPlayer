@@ -13,6 +13,7 @@
 #include "mergepanel.h"
 #include "audiomixpanel.h"
 #include <QMessageBox>
+#include <QGuiApplication>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -58,6 +59,25 @@ static QString formatTimeForFilename(int64_t ms) {
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
+
+    // 诊断日志：记录应用级激活状态变化（最小化、被其他窗口覆盖切到后台、
+    // alt-tab 切走等场景在 Windows 上都会让 ApplicationState 变为 Inactive/Suspended），
+    // 用来跟 VideoRenderer::watchdog 的 onTimer 停摆日志对照，确认渲染卡顿是否
+    // 确实发生在窗口失去前台/被遮挡期间。
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        qInfo() << "MainWindow: applicationStateChanged ->" << state
+                << "(Active=前台可见, Inactive=切到后台/被其他窗口覆盖/失去焦点, Suspended=完全不可见)";
+
+        // 重新回到前台：覆盖"最小化恢复"和"被其他窗口盖住后切回来"两种场景
+        // （后者 isMinimized() 全程是 false，只有这个信号能感知到）。该信号只在
+        // 状态真正变化时才发出，所以收到 Active 就意味着刚从 Inactive/Suspended
+        // 转过来，不需要再额外记录"上一次状态"去判断跳变。只对网络直播流这么做：
+        // 本地文件重连会从头重新打开，seek 不到原来的播放位置。
+        if (state == Qt::ApplicationActive && player_ && player_->isOpened() && player_->isNetworkStream()) {
+            qInfo() << "MainWindow: regained foreground, forcing live resync";
+            player_->forceLiveResync();
+        }
+    });
 
     // 播放按钮：使用 SVG 图标，清除文字确保图标居中
     ui->playPauseBtn->setText("");
@@ -740,6 +760,16 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
 // 窗口状态变化：还原时恢复系统标题栏并停止动画
 void MainWindow::changeEvent(QEvent* event) {
     if (event->type() == QEvent::WindowStateChange) {
+        // 诊断日志：记录最小化/还原的具体时刻，跟 VideoRenderer::watchdog 的
+        // onTimer 停摆日志对照，确认渲染卡顿是否发生在最小化期间。
+        // 注意：触发"恢复直播追平"的动作不放在这里，而是统一放在下面
+        // applicationStateChanged 的处理里——最小化只是"失去前台"的其中一种
+        // 情况（被其他窗口盖住但没有最小化时，isMinimized() 全程是 false，
+        // 但 applicationStateChanged 照样会变成 Inactive/Active），用更通用的
+        // 那个信号才能覆盖所有场景，且避免两个信号在同一次恢复时各触发一次。
+        qInfo() << "MainWindow: windowStateChange isMinimized=" << isMinimized()
+                << "isMaximized=" << isMaximized();
+
         if (!isMaximized()) {
             titleAnimActive_ = false;
             titleOverlay_->hide();

@@ -545,3 +545,44 @@
 - **根因**：`#045` 引入的 live pacing 使用**全局锚点**（`livePacingStartPts_` 在第一帧时设置，整个会话不更新）。`expectedMs = (pts - startPts) × 1000` 基于 PTS timebase 推算，`actualMs` 基于真实挂钟。AlertGateway 编码器实际帧率（14.6fps）与 PTS timebase（15fps）存在约 1% 偏差，导致每帧 PTS 步进（66.7ms）略小于实际送帧间隔（68.5ms）。反向情况下（SRS GOP 批次提前到达或编码器短暂加速），`expectedMs` 持续大于 `actualMs`，`holdMs` 随时间线性增长：1% 偏差下约 30 秒累积 300ms，数分钟可达数秒。帧在 `pendingFrame_` / `videoFrameQ_` 积压 → VideoDecodeThread 阻塞 → videoPacketQ_ 满 → DemuxThread 停读 → TCP 缓冲撑满 → 延迟肉眼可见升高。重连重置 `livePacingStartPts_`，漂移归零
 - **修复**：改为**短程锚点**：每次帧即将渲染时将 `livePacingTimer_` 和 `livePacingStartPts_` 更新为当前帧，下一帧的等待时间仅相对于上一帧渲染时刻计算（≈1 帧间隔 66.7ms），漂移不跨帧累积
 - **涉及文件**：`src/videorenderer.cpp`
+
+---
+
+## #048 — 纯视频直播流：窗口最小化一段时间后展开，延迟随最小化时长线性增长
+
+- **日期**：2026-06-18
+- **现象**：拉取 AlertGateway 推送的纯视频 RTMP 流（无音频轨）时，若将播放窗口最小化一段时间再还原，画面延迟明显增大，且延迟量大致随最小化的时长增长；若全程不最小化、窗口一直停留在桌面，延迟维持正常水平。日志（`logs/rambos_20260618_172743.log`）显示：渲染连续 47.7 秒无新帧（`no frame for 501 ms (queue empty...)`），随后突然渲染出一帧，PTS 比上一帧跳跃了 363 秒
+- **根因**：该流没有音频轨（`audioIdx=-1`），`AVSync::audioClock()` 因此恒为 `-1`，`VideoRenderer::onTimer()` 中所有依赖 `audioClock >= 0` 的"落后超过 400ms 即丢帧追赶"逻辑（`#045`/`#047` 之前就存在）全部不会触发，纯视频走的是 `audioClock < 0.0` 的短程节拍分支——该分支只负责把帧匀速吐出来，从未检测过"是否已经落后直播源很多秒"。窗口最小化期间，Windows 会限流后台/不可见窗口所在进程的消息泵和定时器调度，驱动 `onTimer()` 的 1ms `QTimer` 因此长时间不被调度；而本地队列很小（`videoPacketQ_{8}`≈0.33s、`videoFrameQ_{10}`≈0.42s）且 `push()` 是阻塞的，GUI 线程一旦停止消费，队列在 1 秒内填满，反压一路传到 `DemuxThread` 的 `av_read_frame`，使其暂停从网络读取；真正的积压堆在了 TCP 缓冲区/SRS 服务端发送队列里，本地完全无感知（无报错、无重连日志）。窗口还原后 `onTimer()` 恢复调度，但播放器没有任何"发现落后太多就跳帧追平"的机制，只能按 1x 速度把整段积压逐帧播完——可见延迟约等于窗口被最小化的时长
+- **修复**：在 `VideoRenderer::onTimer()` 的短程节拍分支中复用已有的 `livePacingTimer_`/`livePacingStartPts_`（不引入新的长期锚点，避免重新引入 `#047` 的漂移问题）：计算 `behindSec = (actualMs - expectedMs) / 1000.0`，若超过阈值 `kCatchUpBehindSec`（1.0 秒），判定为"长时间未被正常调度、积压了大量帧"，直接清空 `frameQueue_` 中所有积压帧只保留最新一帧立即渲染，并重新校准节拍锚点，而不是逐帧追；同时加了独立看门狗线程（`startWatchdog()`/`stopWatchdog()`）直接检测 `onTimer()` 是否真的停摆，以及落后超过 `kForceReconnectBehindSec`（5 秒）时发 `fellBehindLive` 信号请求整条流重连（`DemuxThread::requestReconnect()`），不只依赖本地丢帧
+- **涉及文件**：`src/videorenderer.h`、`src/videorenderer.cpp`、`src/demuxthread.h`、`src/demuxthread.cpp`、`src/playercontroller.h`、`src/playercontroller.cpp`、`src/mainwindow.cpp`
+
+---
+
+## #049 — 最小化恢复的主动触发只认 isMinimized()，被其他窗口遮挡（未最小化）时检测不到
+
+- **日期**：2026-06-18
+- **现象**：`#048` 加完之后用真正的"最小化"测试表现正常，但用 WSL 终端窗口盖住 RambosPlayer（窗口本身没有被最小化，只是失去前台焦点/被遮挡）几分钟后切回来，仍然有 2-3 秒延迟。日志对比：被遮挡期间只记录到 `applicationStateChanged -> Inactive`，全程没有 `windowStateChange isMinimized=true`
+- **根因**：为了不完全依赖"落后阈值"这种被动数学判断（小幅卡顿可能压根不触发阈值），额外加了"窗口从最小化恢复时主动触发重连"的逻辑，挂在 `MainWindow::changeEvent()` 里判断 `isMinimized()` 从 `true` 变 `false`。但"被其他窗口覆盖、抢占前台焦点"这种场景下 `isMinimized()` 全程是 `false`，这个触发器完全不会命中；唯一能感知到这种场景的信号是 `QGuiApplication::applicationStateChanged`（当时已经接了用来打日志，但没有接到任何实际动作上）
+- **修复**：把"恢复时主动触发重连"统一改成挂在 `applicationStateChanged` 上——状态变回 `Active` 就触发 `PlayerController::forceLiveResync()`，同时覆盖"最小化恢复"和"被遮挡后切回来"两种场景；并去掉 `changeEvent()` 里原来重复的触发逻辑，避免真正最小化时两个信号各触发一次、导致不必要的二次重连
+- **涉及文件**：`src/mainwindow.h`、`src/mainwindow.cpp`
+
+---
+
+## #050 — "本地追赶是否足够"的判断指标失真，导致本该执行的重连被错误跳过
+
+- **日期**：2026-06-18
+- **现象**：加了"恢复时先尝试本地丢帧追赶、不够再重连"的两段式优化（`VideoRenderer::tryLocalCatchUp()`）后，多次不同时长的测试（最小化 80 秒/2 分钟、遮挡 3 分钟）都被判定为"本地追赶已经足够，跳过重连"，但实测仍然能观察到 1-3 秒延迟
+- **根因**：`tryLocalCatchUp()` 用"上次成功渲染时刻 + 之后经过的挂钟时间"反推"现在理论上该播到哪个 pts"，跟队列里最新帧的 pts 比较算出"落后量"。三次等待时长完全不同的测试（80 秒/120 秒/180 秒）算出的"落后量"几乎是同一个常数（-0.7~-0.8 秒），跟实际等待时长毫无关系——说明这个指标测的根本不是真实落后量，而是这套流水线本身解码队列固有的缓冲深度，一个跟有没有发生卡顿都无关的结构性常量。这个判断几乎永远返回"足够"，实质上把 `#048` 里已经验证过有效的重连机制绕过了
+- **修复**：撤回 `tryLocalCatchUp()` 这个优化（声明和实现一并删除），`PlayerController::forceLiveResync()` 恢复成"恢复时直接重连"，不再依赖这个不可靠的本地判断
+- **涉及文件**：`src/videorenderer.h`、`src/videorenderer.cpp`、`src/playercontroller.cpp`
+
+---
+
+## #051 — 重连（及首次打开）卡 5 秒，根因是 max_analyze_duration=0 没有按预期"立即返回"
+
+- **日期**：2026-06-18
+- **现象**：`#048`/`#049`/`#050` 加的重连机制确认能消除累积性延迟，但每次触发重连都伴随约 5.2~5.8 秒的黑屏/无画面间隙，体验上仍然很明显
+- **根因**：给 `avformat_open_input`/`avformat_find_stream_info` 分别加计时日志后发现，几乎全部耗时（三次独立测量分别是 5059ms/5063ms/5064ms，高度一致）都花在 `avformat_find_stream_info` 上，`avformat_open_input`（TCP 连接 + RTMP 握手）只要 160~210ms。进一步用同样的计时测了"首次打开"路径（`DemuxThread::probeOpen()`），发现首次打开同样卡 5059ms 在这一步——证明这根本不是"重连"特有的问题，是这条 RTMP 流每次建立连接都会触发的固定代价，只是首次打开发生在画面出现之前，用户没有参照物感觉不到。`probeOpen()`/`reconnect()` 在 `avformat_open_input` 成功后都把 `fmtCtx->max_analyze_duration` 设为 `0`，原意（见 `#046`）是"H.264 序列头在第一个包就能拿到，不需要等，0=不限制时长、立即返回"，但实测这个值在此处被 FFmpeg 当成"未设置"，退化成了默认的 5 秒探测窗口
+- **修复**：`probeOpen()`/`reconnect()` 两处都改成 `max_analyze_duration = AV_TIME_BASE`（1 秒，约为本流 2 个 GOP 周期——GOP=8、14.6fps≈547ms 一个周期，留出网络抖动余量），同时设 `probesize = 32KB` 做双重保险。修复后实测：`avformat_find_stream_info` 从 5059/5064ms 降到 22/2ms；一次完整的"最小化 → 触发重连 → 画面恢复"总耗时从 5.6~5.8 秒降到 0.6 秒
+- **涉及文件**：`src/demuxthread.cpp`
+- **教训**：设置成 `0` 这种"看起来像是禁用/无限制"的参数值时，不能假设它一定符合直觉含义，必须拿真实耗时验证。这次和 `#046`（同样涉及 `max_analyze_duration`）其实是同一类错误，只是当时没有对这个具体参数单独加计时日志逐项验证实际效果，问题被掩盖了两轮

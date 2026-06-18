@@ -72,7 +72,14 @@ public:
     int64_t duration() const;   // 毫秒
     bool isPlaying() const { return playing_; }
     bool isOpened()  const { return demux_.formatContext() != nullptr; } // 文件已打开（含暂停状态）
+    bool isNetworkStream() const { return demux_.isNetwork(); }          // 是否为网络流（rtmp/rtsp/http/srt）
     double currentPositionSeconds() const { return sync_.audioClock(); } // 当前音频时钟（秒），用于推流对齐
+
+    // 主动丢弃本地积压帧并强制重连，跳到直播最新位置。供窗口从最小化/被遮挡
+    // 恢复时主动调用（不必等渲染端用 pts 数学算出"落后多少秒"才被动触发，
+    // 那套阈值判断在轻微卡顿下可能不触发，但仍会留下一两秒能看见的延迟）。
+    // 仅对网络直播流有意义；调用方应先检查 isNetworkStream()。
+    void forceLiveResync();
 
 signals:
     void durationChanged(int64_t ms);
@@ -91,6 +98,11 @@ private slots:
     void updatePosition();
     // probeOpen() worker 线程完成回调：gen 用于丢弃被新 open() 取代的过期结果
     void onProbeFinished(std::shared_ptr<DemuxThread::ProbeResult> r, int gen);
+    // VideoRenderer 检测到落后直播源超过强制重连阈值时触发
+    void onRendererFellBehindLive(double behindSec);
+    // 转发 DemuxThread::networkStateChanged 给 UI；Connected 时顺带清理强制重连
+    // 期间可能残留 aborted 状态的队列/解码器/渲染器暂存帧
+    void onDemuxNetworkStateChanged(int state);
 
 private:
     VideoRenderer* renderer_;                       // 视频渲染组件，由外部传入，不拥有所有权
